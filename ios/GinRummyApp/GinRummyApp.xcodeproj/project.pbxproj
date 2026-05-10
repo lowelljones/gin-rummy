@@ -1,0 +1,297 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		E90100000000000000000001 /* GinRummyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000001 /* GinRummyApp.swift */; };
+		E90100000000000000000002 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000002 /* RootView.swift */; };
+		E90100000000000000000003 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000003 /* AppModel.swift */; };
+		E90100000000000000000004 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000004 /* AuthView.swift */; };
+		E90100000000000000000005 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000005 /* APIClient.swift */; };
+		E90100000000000000000006 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000006 /* AppConfig.swift */; };
+		E90100000000000000000007 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000007 /* Models.swift */; };
+		E90100000000000000000008 /* LobbyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000008 /* LobbyView.swift */; };
+		E90100000000000000000009 /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000009 /* GameView.swift */; };
+		E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000010 /* PostCutCardsStrip.swift */; };
+		E9010000000000000000000B /* PlayerFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000D /* PlayerFeedback.swift */; };
+		E9010000000000000000000C /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000E /* CardViews.swift */; };
+		E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000F /* GinRummyTableTheme.swift */; };
+		E90100000000000000000020 /* MeldSolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* MeldSolver.swift */; };
+		E9010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000A /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		E80000000000000000000001 /* GinRummyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GinRummyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E80100000000000000000001 /* GinRummyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyApp.swift; sourceTree = "<group>"; };
+		E80100000000000000000002 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		E80100000000000000000003 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		E80100000000000000000004 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		E80100000000000000000005 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		E80100000000000000000006 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		E80100000000000000000007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		E80100000000000000000008 /* LobbyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyView.swift; sourceTree = "<group>"; };
+		E80100000000000000000009 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
+		E80100000000000000000010 /* PostCutCardsStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostCutCardsStrip.swift; sourceTree = "<group>"; };
+		E8010000000000000000000D /* PlayerFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerFeedback.swift; sourceTree = "<group>"; };
+		E8010000000000000000000E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
+		E8010000000000000000000F /* GinRummyTableTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTableTheme.swift; sourceTree = "<group>"; };
+		E80100000000000000000020 /* MeldSolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeldSolver.swift; sourceTree = "<group>"; };
+		E8010000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E8010000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E8010000000000000000000C /* GinRummyApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GinRummyApp.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E70200000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E70300000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				E70300000000000000000002 /* GinRummyApp */,
+				E70300000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E70300000000000000000002 /* GinRummyApp */ = {
+			isa = PBXGroup;
+			children = (
+				E80100000000000000000001 /* GinRummyApp.swift */,
+				E80100000000000000000002 /* RootView.swift */,
+				E80100000000000000000003 /* AppModel.swift */,
+				E80100000000000000000004 /* AuthView.swift */,
+				E80100000000000000000005 /* APIClient.swift */,
+				E80100000000000000000006 /* AppConfig.swift */,
+				E80100000000000000000007 /* Models.swift */,
+				E80100000000000000000008 /* LobbyView.swift */,
+				E80100000000000000000009 /* GameView.swift */,
+				E80100000000000000000010 /* PostCutCardsStrip.swift */,
+				E8010000000000000000000D /* PlayerFeedback.swift */,
+				E8010000000000000000000E /* CardViews.swift */,
+				E8010000000000000000000F /* GinRummyTableTheme.swift */,
+				E80100000000000000000020 /* MeldSolver.swift */,
+				E8010000000000000000000A /* Assets.xcassets */,
+				E8010000000000000000000B /* Info.plist */,
+				E8010000000000000000000C /* GinRummyApp.entitlements */,
+			);
+			path = GinRummyApp;
+			sourceTree = "<group>";
+		};
+		E70300000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E80000000000000000000001 /* GinRummyApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E70400000000000000000001 /* GinRummyApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E70700000000000000000002 /* Build configuration list for PBXNativeTarget "GinRummyApp" */;
+			buildPhases = (
+				E70100000000000000000001 /* Sources */,
+				E70200000000000000000001 /* Frameworks */,
+				E70500000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GinRummyApp;
+			productName = GinRummyApp;
+			productReference = E80000000000000000000001 /* GinRummyApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E70600000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					E70400000000000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = E70700000000000000000001 /* Build configuration list for PBXProject "GinRummyApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E70300000000000000000001;
+			productRefGroup = E70300000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E70400000000000000000001 /* GinRummyApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E70500000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E9010000000000000000000A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E70100000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E90100000000000000000001 /* GinRummyApp.swift in Sources */,
+				E90100000000000000000002 /* RootView.swift in Sources */,
+				E90100000000000000000003 /* AppModel.swift in Sources */,
+				E90100000000000000000004 /* AuthView.swift in Sources */,
+				E90100000000000000000005 /* APIClient.swift in Sources */,
+				E90100000000000000000006 /* AppConfig.swift in Sources */,
+				E90100000000000000000007 /* Models.swift in Sources */,
+				E90100000000000000000008 /* LobbyView.swift in Sources */,
+				E90100000000000000000009 /* GameView.swift in Sources */,
+				E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */,
+				E9010000000000000000000B /* PlayerFeedback.swift in Sources */,
+				E9010000000000000000000C /* CardViews.swift in Sources */,
+				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
+				E90100000000000000000020 /* MeldSolver.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		E70800000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E70800000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E70800000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GinRummyApp/GinRummyApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BDDQS574XW;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GinRummyApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E70800000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GinRummyApp/GinRummyApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BDDQS574XW;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GinRummyApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E70700000000000000000001 /* Build configuration list for PBXProject "GinRummyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E70800000000000000000001 /* Debug */,
+				E70800000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E70700000000000000000002 /* Build configuration list for PBXNativeTarget "GinRummyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E70800000000000000000003 /* Debug */,
+				E70800000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E70600000000000000000001 /* Project object */;
+}

@@ -1,0 +1,14 @@
+{
+  "name": "ginrummy-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo root that delegates Railway's build/start to backend/api so the api can also see backend/rules during compilation.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "install:api": "npm install --prefix backend/api",
+    "build": "npm run install:api && npm run build --prefix backend/api",
+    "start": "npm start --prefix backend/api"
+  }
+}
