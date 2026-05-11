@@ -1,14 +1,21 @@
 import SwiftUI
-import UIKit
 
-/// Table container: full-width white (system background) to match the rest of the app.
+/// Table container: felt-style background for hands and piles.
 struct GinRummyTableChrome<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(spacing: 0) { content() }
+        ZStack {
+            GinRummyPalette.bgDeep
+            GinRummyPalette.feltGradient
+                .opacity(0.94)
+                .blendMode(.softLight)
+
+            VStack(spacing: 0) {
+                content()
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color(UIColor.systemBackground))
+        }
     }
 }
 
@@ -18,7 +25,9 @@ struct PostCutInterstitial: View {
 
     var body: some View {
         ZStack {
-            Color(UIColor.systemBackground)
+            GinRummyPalette.bgDeep
+                .ignoresSafeArea()
+            backdropBlend
                 .ignoresSafeArea()
             VStack {
                 Spacer(minLength: 24)
@@ -32,5 +41,16 @@ struct PostCutInterstitial: View {
             }
             .padding(20)
         }
+    }
+
+    private var backdropBlend: some View {
+        LinearGradient(
+            colors: [
+                GinRummyPalette.bgPanel.opacity(0.45),
+                GinRummyPalette.bgDeep.opacity(0.92),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }

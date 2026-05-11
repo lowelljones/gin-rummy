@@ -1,14 +1,26 @@
 import Combine
 import Foundation
-import Security
 import SwiftUI
+
+struct InviteAcceptPresentation: Identifiable, Equatable {
+    let inviteCode: String
+    var id: String { inviteCode }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
     /// Current bearer used for every authenticated API call. Kept in sync with `refreshToken` /
     /// `expiresAt` whenever a session is adopted or refreshed; views read it directly.
     @Published var accessToken: String?
-    @Published var pendingJoinCode: String?
+    /// Non-nil after the user taps an invite link / universal link (`ginrummy://join/…` or `…/join/CODE`).
+    @Published internal private(set) var deepLinkInviteCode: String?
+    /// Presented over the main stack when signed in, not in-game, invite link captured.
+    @Published var inviteAcceptPresentation: InviteAcceptPresentation?
+
+    /// When the user joins from InviteAcceptView, LobbyView consumes this plus a nonce bump to start polling for start.
+    @Published internal private(set) var lobbyInviteJoinHandoffNonce: UInt = 0
+    private var lobbyInviteJoinHandoffCode: String?
+
     @Published var activeGameId: String?
     @Published var lastPerspective: PlayerPerspective?
     /// Final-match settlement. Server populates `{ raw, bucket }` only when phase == matchOver;
@@ -32,24 +44,56 @@ final class AppModel: ObservableObject {
         startBackgroundRefreshLoop()
     }
 
-    func consumePendingJoin() -> String? {
-        let c = pendingJoinCode
-        pendingJoinCode = nil
-        return c?.uppercased()
+    func reconcileInviteAcceptPresentation() {
+        if restoring {
+            inviteAcceptPresentation = nil
+            return
+        }
+        if let c = deepLinkInviteCode, accessToken != nil, activeGameId == nil {
+            inviteAcceptPresentation = InviteAcceptPresentation(inviteCode: c)
+        } else {
+            inviteAcceptPresentation = nil
+        }
+    }
+
+    func consumeLobbyInviteJoinHandoff() -> String? {
+        let code = lobbyInviteJoinHandoffCode
+        lobbyInviteJoinHandoffCode = nil
+        return code?.uppercased()
     }
 
     func handleInviteURL(_ url: URL) {
+        guard activeGameId == nil else { return }
+        guard let code = Self.parseInviteCode(from: url), code.count >= 4 else { return }
+        deepLinkInviteCode = code.uppercased()
+        reconcileInviteAcceptPresentation()
+    }
+
+    func rejectInviteFromDeepLink() {
+        deepLinkInviteCode = nil
+        inviteAcceptPresentation = nil
+    }
+
+    func finishInviteAcceptedJoin(inviteCode: String) {
+        let normalized = inviteCode.uppercased()
+        deepLinkInviteCode = nil
+        inviteAcceptPresentation = nil
+        lobbyInviteJoinHandoffCode = normalized
+        lobbyInviteJoinHandoffNonce += 1
+    }
+
+    private static func parseInviteCode(from url: URL) -> String? {
         if url.scheme?.lowercased() == "ginrummy", url.host?.lowercased() == "join" {
             let code = url.pathComponents.dropFirst().first ?? ""
-            if !code.isEmpty { pendingJoinCode = code.uppercased() }
-            return
+            return code.isEmpty ? nil : code
         }
         if url.path.contains("/join/") {
             let parts = url.path.split(separator: "/")
             if let idx = parts.firstIndex(of: "join"), idx + 1 < parts.endIndex {
-                pendingJoinCode = String(parts[idx + 1]).uppercased()
+                return String(parts[idx + 1])
             }
         }
+        return nil
     }
 
     /// Apply a freshly-obtained Supabase session (sign-in or refresh). Replaces the in-memory
@@ -61,6 +105,7 @@ final class AppModel: ObservableObject {
             expiresAt = Date().addingTimeInterval(TimeInterval(exp))
         }
         persistSession()
+        reconcileInviteAcceptPresentation()
     }
 
     /// Forget the user's tokens locally and clear active-game state.
@@ -72,6 +117,7 @@ final class AppModel: ObservableObject {
         lastPerspective = nil
         lastBetting = nil
         KeychainStore.clear()
+        reconcileInviteAcceptPresentation()
     }
 
     /// Refresh the access token if it expires within the next two minutes. No-ops when there's
@@ -100,6 +146,7 @@ final class AppModel: ObservableObject {
         if saved.expiresAt.timeIntervalSinceNow > 30 {
             /* Stored access token is still good — use it directly, refresher will take over later. */
             accessToken = saved.accessToken
+            reconcileInviteAcceptPresentation()
             return
         }
         /* Access token has expired (or is about to). Block the UI on a refresh attempt instead of
@@ -108,6 +155,7 @@ final class AppModel: ObservableObject {
         Task { @MainActor in
             await refreshIfExpiringSoon()
             restoring = false
+            reconcileInviteAcceptPresentation()
         }
     }
 
@@ -127,55 +175,5 @@ final class AppModel: ObservableObject {
                 await self?.refreshIfExpiringSoon()
             }
         }
-    }
-}
-
-/// What we persist in the iOS Keychain. Refresh tokens are essentially passwords, so we don't
-/// keep them in UserDefaults (plaintext on-disk).
-struct StoredSession: Codable {
-    let accessToken: String
-    let refreshToken: String
-    let expiresAt: Date
-}
-
-enum KeychainStore {
-    private static let service = "com.lowelljones.GinRummyApp"
-    private static let account = "supabase-session"
-
-    static func saveSession(_ s: StoredSession) {
-        guard let data = try? JSONEncoder().encode(s) else { return }
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    static func loadSession() -> StoredSession? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return try? JSONDecoder().decode(StoredSession.self, from: data)
-    }
-
-    static func clear() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }

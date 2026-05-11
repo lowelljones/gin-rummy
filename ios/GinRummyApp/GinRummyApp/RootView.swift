@@ -10,6 +10,8 @@ struct RootView: View {
                     /* Stored refresh token is being exchanged at launch — avoid flashing AuthView. */
                     ProgressView("Restoring session…")
                         .progressViewStyle(.circular)
+                        .tint(GinRummyPalette.gold)
+                        .foregroundStyle(GinRummyPalette.cream)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if app.accessToken == nil {
                     AuthView()
@@ -19,19 +21,24 @@ struct RootView: View {
                     LobbyView()
                 }
             }
-            .toolbar {
-                if app.accessToken != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Sign out") { app.signOut() }
-                    }
-                }
-            }
+        }
+        .ginFeltChrome()
+        .toolbarBackground(GinRummyPalette.bgDeep.opacity(0.92), for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .tint(GinRummyPalette.gold)
+        .fullScreenCover(item: $app.inviteAcceptPresentation) { presentation in
+            InviteAcceptView(inviteCode: presentation.inviteCode)
         }
         .onOpenURL { url in
             app.handleInviteURL(url)
-            if app.accessToken != nil, app.activeGameId == nil {
-                /* Navigation stays on lobby; join code prefilled via onAppear */
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            if let url = activity.webpageURL {
+                app.handleInviteURL(url)
             }
+        }
+        .onChange(of: app.activeGameId) { _, _ in
+            app.reconcileInviteAcceptPresentation()
         }
     }
 }

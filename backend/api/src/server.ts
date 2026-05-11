@@ -11,8 +11,14 @@ import {
   type ServerTruth,
 } from "../../rules/src/index.js";
 import { computeTestBotIntent, hasTestBotWork } from "./bot.js";
+import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
+/* Railway's internal healthcheck and service-to-service network is IPv6, so when running
+ * under Railway we must bind to `::` (dual-stack) — `0.0.0.0` listens IPv4-only and the
+ * unexposed-service healthcheck will fail. Locally we keep `0.0.0.0` so the iPhone can
+ * reach the Mac over LAN IPv4. Override either side with an explicit HOST env if needed. */
+const HOST = process.env.HOST ?? (process.env.RAILWAY_ENVIRONMENT_NAME ? "::" : "0.0.0.0");
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
@@ -271,6 +277,33 @@ app.post("/lobbies", async (req, reply) => {
   }
 });
 
+/** Public-ish preview so invite links can show the host display name without joining yet. */
+app.get("/lobbies/:code/preview", async (req, reply) => {
+  const code = (req.params as { code: string }).code.toUpperCase();
+  const { data: lobby, error: lErr } = await admin
+    .from("lobbies")
+    .select("id, status, created_by")
+    .eq("invite_code", code)
+    .maybeSingle();
+  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("display_name")
+    .eq("id", lobby.created_by)
+    .maybeSingle();
+
+  const hostDisplayName = (profile?.display_name as string | undefined)?.trim()
+    ? (profile?.display_name as string)
+    : "Someone";
+
+  return {
+    invite_code: code,
+    status: lobby.status as string,
+    host_display_name: hostDisplayName,
+  };
+});
+
 /**
  * Lobby status / latest game lookup. Used by the joiner to poll for the host
  * pressing Start; once the lobby moves to in_game we surface the active gameId
@@ -308,9 +341,14 @@ app.get("/lobbies/:code", async (req, reply) => {
     gameId = (game?.id as string | undefined) ?? null;
   }
 
+  const { data: lobbyPlayers } = await admin.from("lobby_players").select("seat").eq("lobby_id", lobby.id);
+  const guestJoined =
+    lobbyPlayers?.some((p: { seat: number }) => Number(p.seat) === 1) ?? false;
+
   return {
     lobby: { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
     gameId,
+    guest_joined: guestJoined,
   };
 });
 
@@ -456,6 +494,133 @@ app.get("/games/:id/state", async (req, reply) => {
   };
 });
 
+const CHAT_PAGE = 100;
+
+type ChatRow = { id: string; user_id: string; body: string; created_at: string };
+
+async function displayNamesForUserIds(userIds: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return {};
+  const { data: profiles } = await admin.from("profiles").select("id, display_name").in("id", unique);
+  const map: Record<string, string> = {};
+  for (const id of unique) {
+    map[id] = "Player";
+  }
+  for (const row of profiles ?? []) {
+    const id = row.id as string;
+    const raw = (row.display_name as string | undefined)?.trim();
+    map[id] = raw && raw.length > 0 ? raw : "Player";
+  }
+  return map;
+}
+
+function formatChatRows(rows: ChatRow[], selfId: string, names: Record<string, string>) {
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    displayName: names[r.user_id] ?? "Player",
+    body: r.body,
+    createdAt: r.created_at,
+    fromSelf: r.user_id === selfId,
+  }));
+}
+
+app.get("/games/:id/chat", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const id = (req.params as { id: string }).id;
+  const { data: game, error: gErr } = await admin
+    .from("games")
+    .select("id, seat_for_user")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (gErr || !game) return reply.code(404).send({ error: "Game not found" });
+  if (seatForUser(game as { seat_for_user: Record<string, number> }, user.id) === null) {
+    return reply.code(403).send({ error: "Not a participant" });
+  }
+
+  const afterRaw = (req.query as { after?: string }).after?.trim();
+
+  let rows: ChatRow[] = [];
+
+  if (afterRaw) {
+    const t = Date.parse(afterRaw);
+    if (Number.isNaN(t)) {
+      return reply.code(400).send({ error: "Invalid after timestamp" });
+    }
+    const afterIso = new Date(t).toISOString();
+    const { data, error } = await admin
+      .from("game_chat_messages")
+      .select("id, user_id, body, created_at")
+      .eq("game_id", id)
+      .gt("created_at", afterIso)
+      .order("created_at", { ascending: true })
+      .limit(CHAT_PAGE);
+    if (error) return reply.code(500).send({ error: error.message });
+    rows = (data ?? []) as ChatRow[];
+  } else {
+    const { data, error } = await admin
+      .from("game_chat_messages")
+      .select("id, user_id, body, created_at")
+      .eq("game_id", id)
+      .order("created_at", { ascending: false })
+      .limit(CHAT_PAGE);
+    if (error) return reply.code(500).send({ error: error.message });
+    rows = ((data ?? []) as ChatRow[]).slice().reverse();
+  }
+
+  const names = await displayNamesForUserIds(rows.map((r) => r.user_id));
+  return { messages: formatChatRows(rows, user.id, names) };
+});
+
+app.post("/games/:id/chat", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const id = (req.params as { id: string }).id;
+  const { data: game, error: gErr } = await admin
+    .from("games")
+    .select("id, seat_for_user, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (gErr || !game) return reply.code(404).send({ error: "Game not found" });
+  if (game.status !== "active" && game.status !== "completed") {
+    return reply.code(400).send({ error: "Game not available" });
+  }
+  if (seatForUser(game as { seat_for_user: Record<string, number> }, user.id) === null) {
+    return reply.code(403).send({ error: "Not a participant" });
+  }
+
+  const mod = moderateChatText((req.body as { text?: unknown })?.text);
+  if (!mod.ok) {
+    return reply.code(400).send({ error: mod.error, code: mod.code });
+  }
+
+  const rl = assertChatRateAllowed(user.id, id);
+  if (!rl.ok) {
+    return reply.code(429).send({ error: rl.error, code: "rate_limited" });
+  }
+
+  const { data: inserted, error: insErr } = await admin
+    .from("game_chat_messages")
+    .insert({ game_id: id, user_id: user.id, body: mod.text })
+    .select("id, user_id, body, created_at")
+    .single();
+
+  if (insErr || !inserted) {
+    return reply.code(500).send({ error: insErr?.message ?? "insert failed" });
+  }
+
+  const row = inserted as ChatRow;
+  const names = await displayNamesForUserIds([row.user_id]);
+  return {
+    message: formatChatRows([row], user.id, names)[0],
+  };
+});
+
 app.post("/games/:id/move", async (req, reply) => {
   const user = await userFromAuthHeader(req.headers.authorization);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
@@ -577,5 +742,5 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
 
 app.get("/health", async () => ({ ok: true }));
 
-await app.listen({ port: PORT, host: "0.0.0.0" });
-console.log(`Gin API listening on http://localhost:${PORT}`);
+await app.listen({ port: PORT, host: HOST });
+console.log(`Gin API listening on ${HOST} port ${PORT}`);

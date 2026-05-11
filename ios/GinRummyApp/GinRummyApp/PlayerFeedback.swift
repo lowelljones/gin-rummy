@@ -73,20 +73,35 @@ enum UserFeedback {
 struct FeedbackLine: View {
     let text: String
     let isError: Bool
+    /// Matches Private Club chrome (cream / sage / burgundy) instead of system red/green.
+    var privateClubStyle = false
+
     var body: some View {
         if !text.isEmpty {
             Text(text)
                 .font(.subheadline)
+                .foregroundStyle(privateClubStyle ? GinRummyPalette.cream : Color.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isError ? Color.red.opacity(0.12) : Color.green.opacity(0.12))
-                )
+                .background(feedbackFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(isError ? Color.red.opacity(0.35) : Color.green.opacity(0.35), lineWidth: 1)
+                        .stroke(feedbackStroke, lineWidth: 1)
                 )
         }
+    }
+
+    private var feedbackFill: Color {
+        if privateClubStyle {
+            return isError ? GinRummyPalette.burgundy.opacity(0.22) : GinRummyPalette.bgPanel.opacity(0.55)
+        }
+        return isError ? Color.red.opacity(0.12) : Color.green.opacity(0.12)
+    }
+
+    private var feedbackStroke: Color {
+        if privateClubStyle {
+            return isError ? GinRummyPalette.burgundy.opacity(0.85) : GinRummyPalette.gold.opacity(0.42)
+        }
+        return isError ? Color.red.opacity(0.35) : Color.green.opacity(0.35)
     }
 }

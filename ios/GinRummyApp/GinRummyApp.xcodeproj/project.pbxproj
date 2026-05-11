@@ -16,12 +16,16 @@
 		E90100000000000000000007 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000007 /* Models.swift */; };
 		E90100000000000000000008 /* LobbyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000008 /* LobbyView.swift */; };
 		E90100000000000000000009 /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000009 /* GameView.swift */; };
-		E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000010 /* PostCutCardsStrip.swift */; };
+		E9010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000A /* Assets.xcassets */; };
 		E9010000000000000000000B /* PlayerFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000D /* PlayerFeedback.swift */; };
 		E9010000000000000000000C /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000E /* CardViews.swift */; };
 		E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000F /* GinRummyTableTheme.swift */; };
-		E90100000000000000000020 /* MeldSolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* MeldSolver.swift */; };
-		E9010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000A /* Assets.xcassets */; };
+		E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000010 /* PostCutCardsStrip.swift */; };
+		E90100000000000000000011 /* InviteAcceptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000011 /* InviteAcceptView.swift */; };
+		E90100000000000000000012 /* GameChatSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000012 /* GameChatSheet.swift */; };
+		E90100000000000000000013 /* GinRummyTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000013 /* GinRummyTheme.swift */; };
+		E90100000000000000000014 /* LobbyFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000014 /* LobbyFlows.swift */; };
+		E90100000000000000000015 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000015 /* KeychainStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,14 +39,18 @@
 		E80100000000000000000007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E80100000000000000000008 /* LobbyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyView.swift; sourceTree = "<group>"; };
 		E80100000000000000000009 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
-		E80100000000000000000010 /* PostCutCardsStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostCutCardsStrip.swift; sourceTree = "<group>"; };
-		E8010000000000000000000D /* PlayerFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerFeedback.swift; sourceTree = "<group>"; };
-		E8010000000000000000000E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
-		E8010000000000000000000F /* GinRummyTableTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTableTheme.swift; sourceTree = "<group>"; };
-		E80100000000000000000020 /* MeldSolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeldSolver.swift; sourceTree = "<group>"; };
 		E8010000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E8010000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E8010000000000000000000C /* GinRummyApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GinRummyApp.entitlements; sourceTree = "<group>"; };
+		E8010000000000000000000D /* PlayerFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerFeedback.swift; sourceTree = "<group>"; };
+		E8010000000000000000000E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
+		E8010000000000000000000F /* GinRummyTableTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTableTheme.swift; sourceTree = "<group>"; };
+		E80100000000000000000010 /* PostCutCardsStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostCutCardsStrip.swift; sourceTree = "<group>"; };
+		E80100000000000000000011 /* InviteAcceptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteAcceptView.swift; sourceTree = "<group>"; };
+		E80100000000000000000012 /* GameChatSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameChatSheet.swift; sourceTree = "<group>"; };
+		E80100000000000000000013 /* GinRummyTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTheme.swift; sourceTree = "<group>"; };
+		E80100000000000000000014 /* LobbyFlows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyFlows.swift; sourceTree = "<group>"; };
+		E80100000000000000000015 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,17 +78,21 @@
 				E80100000000000000000001 /* GinRummyApp.swift */,
 				E80100000000000000000002 /* RootView.swift */,
 				E80100000000000000000003 /* AppModel.swift */,
+				E80100000000000000000015 /* KeychainStore.swift */,
 				E80100000000000000000004 /* AuthView.swift */,
 				E80100000000000000000005 /* APIClient.swift */,
 				E80100000000000000000006 /* AppConfig.swift */,
 				E80100000000000000000007 /* Models.swift */,
 				E80100000000000000000008 /* LobbyView.swift */,
+				E80100000000000000000011 /* InviteAcceptView.swift */,
 				E80100000000000000000009 /* GameView.swift */,
+				E80100000000000000000012 /* GameChatSheet.swift */,
 				E80100000000000000000010 /* PostCutCardsStrip.swift */,
 				E8010000000000000000000D /* PlayerFeedback.swift */,
 				E8010000000000000000000E /* CardViews.swift */,
 				E8010000000000000000000F /* GinRummyTableTheme.swift */,
-				E80100000000000000000020 /* MeldSolver.swift */,
+				E80100000000000000000013 /* GinRummyTheme.swift */,
+				E80100000000000000000014 /* LobbyFlows.swift */,
 				E8010000000000000000000A /* Assets.xcassets */,
 				E8010000000000000000000B /* Info.plist */,
 				E8010000000000000000000C /* GinRummyApp.entitlements */,
@@ -168,17 +180,21 @@
 				E90100000000000000000001 /* GinRummyApp.swift in Sources */,
 				E90100000000000000000002 /* RootView.swift in Sources */,
 				E90100000000000000000003 /* AppModel.swift in Sources */,
+				E90100000000000000000015 /* KeychainStore.swift in Sources */,
 				E90100000000000000000004 /* AuthView.swift in Sources */,
 				E90100000000000000000005 /* APIClient.swift in Sources */,
 				E90100000000000000000006 /* AppConfig.swift in Sources */,
 				E90100000000000000000007 /* Models.swift in Sources */,
 				E90100000000000000000008 /* LobbyView.swift in Sources */,
+				E90100000000000000000011 /* InviteAcceptView.swift in Sources */,
 				E90100000000000000000009 /* GameView.swift in Sources */,
+				E90100000000000000000012 /* GameChatSheet.swift in Sources */,
 				E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */,
 				E9010000000000000000000B /* PlayerFeedback.swift in Sources */,
 				E9010000000000000000000C /* CardViews.swift in Sources */,
 				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
-				E90100000000000000000020 /* MeldSolver.swift in Sources */,
+				E90100000000000000000013 /* GinRummyTheme.swift in Sources */,
+				E90100000000000000000014 /* LobbyFlows.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

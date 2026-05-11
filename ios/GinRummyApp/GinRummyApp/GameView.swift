@@ -11,8 +11,8 @@ struct GameView: View {
     @State private var pendingDealerDeclineAfterCutSequence = false
     @State private var bottomLogText: String = ""
     @State private var handDisplayOrder: [String] = []
-    @State private var tableFlourish: (String, String?)? = nil
-    @State private var tableFlourishTask: Task<Void, Never>?
+    @State private var cardFlight: CardFlightModel?
+    @State private var cardFlightClearTask: Task<Void, Never>?
     @State private var messageTask: Task<Void, Never>?
     @State private var downCardStatusMessage: String?
     @State private var postCutTask: Task<Void, Never>?
@@ -21,10 +21,32 @@ struct GameView: View {
     @State private var youAcceptedDownCardPendingDiscard = false
     @State private var opponentAcceptedDownCardPendingDiscard = false
 
+    @State private var showChatSheet = false
+    @State private var chatMessages: [GameChatMessageDTO] = []
+    @State private var chatWatermarkIso: String?
+    @State private var chatBaselineLoaded = false
+    @State private var chatToasts: [ChatToastItem] = []
+    @State private var chatComposeError: String?
+    @State private var chatBaselineTask: Task<Void, Never>?
+
+    private struct ChatToastItem: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let subtitle: String
+    }
+
+    private static let chatEpochIso = "1970-01-01T00:00:00.000Z"
+
     private enum PickupSource: Equatable {
         case deck
         case discard(card: String)
         case downCard
+    }
+
+    private struct CardFlightModel: Equatable {
+        let id = UUID()
+        let route: CardFlightAnimationOverlay.Route
+        let card: String
     }
 
     /// Derived presentation segment: one active surface at a time so controls and chrome stay isolated.
@@ -39,13 +61,13 @@ struct GameView: View {
 
         var accent: Color {
             switch self {
-            case .cutForDeal: .blue
-            case .postCutReveal: .cyan
-            case .downCard: .orange
-            case .play: .green
-            case .knockLayoff: .purple
-            case .handOver: .yellow
-            case .matchOver: .mint
+            case .cutForDeal: GinRummyPalette.phaseCutDeal
+            case .postCutReveal: GinRummyPalette.phaseReveal
+            case .downCard: GinRummyPalette.phaseDownCard
+            case .play: GinRummyPalette.phasePlay
+            case .knockLayoff: GinRummyPalette.phaseKnockLayoff
+            case .handOver: GinRummyPalette.phaseHandOver
+            case .matchOver: GinRummyPalette.phaseMatchOver
             }
         }
 
@@ -123,14 +145,43 @@ struct GameView: View {
                 gameContent(gameId: gid, p: p)
             } else {
                 ContentUnavailableView("No active game", systemImage: "rectangle.stack")
+                    .foregroundStyle(GinRummyPalette.cream)
             }
         }
         .navigationTitle("Table")
+        .toolbar {
+            if app.activeGameId != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showChatSheet = true
+                        chatComposeError = nil
+                    } label: {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .foregroundStyle(GinRummyPalette.gold)
+                    }
+                    .accessibilityLabel("Open chat")
+                }
+            }
+        }
+        .sheet(isPresented: $showChatSheet) {
+            Group {
+                if let gid = app.activeGameId {
+                    GameChatSheet(
+                        gameId: gid,
+                        messages: $chatMessages,
+                        chatWatermarkIso: $chatWatermarkIso,
+                        composeError: $chatComposeError
+                    )
+                    .environmentObject(app)
+                }
+            }
+        }
         .onDisappear {
             pollTask?.cancel()
             postCutTask?.cancel()
-            tableFlourishTask?.cancel()
+            cardFlightClearTask?.cancel()
             messageTask?.cancel()
+            chatBaselineTask?.cancel()
         }
     }
 
@@ -150,6 +201,7 @@ struct GameView: View {
         }
         detectCutCompletion(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
+        updateCardFlights(before: before, after: after)
         if let b = before {
             if let msg = consolidatedStatusLine(before: b, after: after) {
                 setBottomLog(msg)
@@ -169,6 +221,80 @@ struct GameView: View {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         bottomLogText = t
+    }
+
+    private func scheduleCardFlight(route: CardFlightAnimationOverlay.Route, card: String) {
+        cardFlightClearTask?.cancel()
+        cardFlight = CardFlightModel(route: route, card: card)
+        cardFlightClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 680_000_000)
+            cardFlight = nil
+        }
+    }
+
+    /// One bounded arc animation per server snapshot: draw → hand or hand → discard.
+    private func updateCardFlights(before b: PlayerPerspective?, after a: PlayerPerspective) {
+        guard let b = b else { return }
+        let my = a.seat
+        let opp = 1 - my
+
+        let drawPhases =
+            (b.phase == "play" || b.phase == "upcardOffer")
+            && (a.phase == "play" || a.phase == "upcardOffer")
+
+        if drawPhases {
+            for seat in [my, opp] {
+                let toOpponent = seat == opp
+                if b.hands[seat].count == 10, a.hands[seat].count == 11 {
+                    let added = a.hands[seat].first { !b.hands[seat].contains($0) } ?? ""
+                    let n = CardIdValidation.normalize(added)
+                    let display = CardIdValidation.isValidFormat(n) ? n : "AS"
+
+                    if b.stockCount > a.stockCount {
+                        scheduleCardFlight(route: .drawFromStock(toOpponent: toOpponent), card: display)
+                        return
+                    }
+                    if a.discard.count < b.discard.count {
+                        scheduleCardFlight(route: .drawFromDiscard(toOpponent: toOpponent), card: display)
+                        return
+                    }
+                }
+            }
+        }
+
+        guard b.phase == "play", a.phase == "play" else { return }
+
+        if b.currentTurn == my, a.currentTurn == opp,
+           b.hands[my].count == 11, a.hands[my].count == 10,
+           let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
+        {
+            scheduleCardFlight(
+                route: .discardFromHand(isOpponent: false),
+                card: CardIdValidation.normalize(newTop)
+            )
+            return
+        }
+
+        if b.currentTurn == opp, a.currentTurn == my,
+           b.hands[opp].count == 11, a.hands[opp].count == 10,
+           let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
+        {
+            scheduleCardFlight(
+                route: .discardFromHand(isOpponent: true),
+                card: CardIdValidation.normalize(newTop)
+            )
+            return
+        }
+
+        if b.currentTurn == my, a.currentTurn == my,
+           b.hands[my].count == 11, a.hands[my].count == 10,
+           let discarded = a.discard.last, !discarded.isEmpty, discarded != b.discard.last
+        {
+            scheduleCardFlight(
+                route: .discardFromHand(isOpponent: true),
+                card: CardIdValidation.normalize(discarded)
+            )
+        }
     }
 
     private func handleAfterCutPick(before: PlayerPerspective, after: PlayerPerspective) {
@@ -222,13 +348,15 @@ struct GameView: View {
     @ViewBuilder
     private func matchSummaryPanel(p: PlayerPerspective) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(matchWinnerHeadline(p))
-                .font(.title3.bold())
+                Text(matchWinnerHeadline(p))
+                    .font(.title3.bold())
+                    .foregroundStyle(GinRummyPalette.cream)
             Text("Final score · \(p.scores[0]) – \(p.scores[1])")
                 .font(.headline.monospacedDigit())
+                .foregroundStyle(GinRummyPalette.cream)
             Text("Hands won · \(p.handsWon[0]) – \(p.handsWon[1])")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             if let b = app.lastBetting, let raw = b.raw, let bucket = b.bucket {
                 Divider().padding(.vertical, 2)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -240,7 +368,7 @@ struct GameView: View {
                 }
                 Text("Raw points · \(raw)")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
         }
         .padding(14)
@@ -263,7 +391,7 @@ struct GameView: View {
                 .font(.subheadline.weight(.medium))
             Text("Tap Continue for the next deal (or match end).")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,7 +413,7 @@ struct GameView: View {
                 .font(.subheadline.weight(.semibold))
             Text("Attach cards to knocker melds where legal, then tap Done.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -309,11 +437,12 @@ struct GameView: View {
                 systemImage: p.currentTurn == p.seat ? "hand.raised.fill" : "hourglass"
             )
             .font(.headline.weight(.heavy))
+            .foregroundStyle(GinRummyPalette.cream)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill((p.currentTurn == p.seat ? Color.green : Color.gray).opacity(0.18))
+                    .fill((p.currentTurn == p.seat ? GinRummyPalette.sage : GinRummyPalette.navy).opacity(0.24))
             )
             Spacer(minLength: 0)
         }
@@ -324,12 +453,14 @@ struct GameView: View {
     private func bottomActivityLog() -> some View {
         Text(bottomLogText.isEmpty ? " " : bottomLogText)
             .font(.subheadline.weight(.medium))
-            .foregroundStyle(.primary)
+            .foregroundStyle(GinRummyPalette.cream)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(UIColor.secondarySystemBackground)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.06)))
+            .background(
+                RoundedRectangle(cornerRadius: 12).fill(GinRummyPalette.bgPanel.opacity(0.55))
+            )
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.gold.opacity(0.22)))
     }
 
     @ViewBuilder
@@ -342,9 +473,10 @@ struct GameView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(phaseRibbonTitle(surface, p: p))
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(GinRummyPalette.cream)
                 Text(phaseRibbonSubtitle(surface, p: p))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -363,16 +495,12 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func phaseBackdrop(surface: GamePlaySurface) -> some View {
-        LinearGradient(
-            colors: [surface.accent.opacity(0.11), Color(UIColor.systemBackground)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 220, alignment: .top)
-        .allowsHitTesting(false)
-        .contentTransition(.opacity)
+    private func phaseBackdrop(surface _: GamePlaySurface) -> some View {
+        GinRummyPalette.bgDeep.opacity(0.35)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 220, alignment: .top)
+            .allowsHitTesting(false)
+            .contentTransition(.opacity)
     }
 
     @ViewBuilder
@@ -380,6 +508,7 @@ struct GameView: View {
         if surface == .cutForDeal, p.cut != nil {
             Text(cutStageTitle(p))
                 .font(.title2.bold())
+                .foregroundStyle(GinRummyPalette.cream)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .multilineTextAlignment(.center)
                 .contentTransition(.opacity)
@@ -396,13 +525,14 @@ struct GameView: View {
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(p.scores[0]) – \(p.scores[1])")
                         .font(.headline.monospacedDigit())
+                        .foregroundStyle(GinRummyPalette.cream)
                     Text("Race \(p.raceTarget)")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                 }
             }
             SeatInfoBar(p: p)
-            opponentBlock(p: p)
+            opponentPresenceStrip(p: p)
         } else {
             EmptyView()
         }
@@ -414,12 +544,12 @@ struct GameView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Match · Cut reveal")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .center, spacing: 6) {
                         Text("Your Card")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                         PlayingCardView(card: hold.yourCard, compact: true, onTap: nil)
                     }
                     .frame(maxWidth: .infinity)
@@ -427,7 +557,7 @@ struct GameView: View {
                     VStack(alignment: .center, spacing: 6) {
                         Text("Opponent Card")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                         if hold.mode == .both {
                             PlayingCardView(card: hold.oppCard, compact: true, onTap: nil)
                         } else {
@@ -439,7 +569,7 @@ struct GameView: View {
                         if hold.mode == .yourOnly {
                             Text("Opponent drawing…")
                                 .font(.caption.italic())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -447,8 +577,8 @@ struct GameView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(UIColor.secondarySystemBackground)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 12).fill(GinRummyPalette.bgPanel.opacity(0.72)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.gold.opacity(0.2)))
         } else {
             EmptyView()
         }
@@ -477,13 +607,13 @@ struct GameView: View {
                 if surface == .play, p.currentTurn != p.seat {
                     Label("Opponent’s turn", systemImage: "hourglass")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                 }
                 if let kc = p.knockCheckCard, !kc.isEmpty {
                     HStack(alignment: .center, spacing: 8) {
                         Text("Knock limit card")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                         PlayingCardView(card: kc, compact: true, onTap: nil)
                     }
                 }
@@ -523,10 +653,6 @@ struct GameView: View {
                                 scoreRail(surface: surface, p: p)
                                 postCutStrip(p: p)
                                 centerTableForSurface(gameId: gameId, surface: surface, p: p)
-
-                                if let tf = tableFlourish, surface == .play || surface == .downCard {
-                                    TableActivityFlourish(kind: tf.0, card: tf.1)
-                                }
 
                                 if surface == .matchOver {
                                     matchSummaryPanel(p: p)
@@ -570,8 +696,28 @@ struct GameView: View {
         }
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
         .animation(.easeInOut(duration: 0.28), value: surface)
+        .overlay(alignment: .topTrailing) {
+            chatToastStack()
+                .padding(.top, 6)
+                .padding(.trailing, 6)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            if let cf = cardFlight, surface == .play || surface == .downCard {
+                CardFlightAnimationOverlay(route: cf.route, card: cf.card)
+                    .id(cf.id)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
         .onAppear {
             mergeHandOrder(with: p.hands[p.seat])
+            chatMessages = []
+            chatWatermarkIso = nil
+            chatBaselineLoaded = false
+            chatToasts = []
+            chatBaselineTask?.cancel()
+            chatBaselineTask = Task { await loadChatBaseline(gameId: gameId) }
             pollTask?.cancel()
             pollTask = Task { await pollLoop(gameId: gameId) }
         }
@@ -864,18 +1010,34 @@ struct GameView: View {
         return "Layoff · \(whose) turn"
     }
 
+    /// Scoreboard strip only — opponent hand is hidden during play (count only).
     @ViewBuilder
-    private func opponentBlock(p: PlayerPerspective) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+    private func opponentPresenceStrip(p: PlayerPerspective) -> some View {
+        let oppSeat = 1 - p.seat
+        HStack(spacing: 14) {
             Image(systemName: "person.crop.circle.fill")
                 .font(.title2)
+                .foregroundStyle(GinRummyPalette.gold.opacity(0.9))
                 .symbolRenderingMode(.hierarchical)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Opponent")
                     .font(.caption.weight(.semibold))
-                FannedOpponentHandRow(cardCount: p.hands[1 - p.seat].count)
+                    .foregroundStyle(GinRummyPalette.cream)
+                HStack(spacing: 8) {
+                    Text("Cards")
+                        .font(.caption2)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                    Text("\(p.hands[oppSeat].count)")
+                        .font(.caption.bold().monospacedDigit())
+                        .foregroundStyle(GinRummyPalette.gold)
+                    Text("· Points \(p.scores[oppSeat])")
+                        .font(.caption2)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                }
             }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -889,9 +1051,10 @@ struct GameView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "person.fill")
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(GinRummyPalette.gold)
                     Text("YOU")
                         .font(.caption.weight(.bold))
+                        .foregroundStyle(GinRummyPalette.cream)
                 }
                 FannedHandRow(
                     displayOrder: handDisplayFor(hand: p.hands[p.seat]),
@@ -962,6 +1125,76 @@ struct GameView: View {
         return nil
     }
 
+    @ViewBuilder
+    private func chatToastStack() -> some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ForEach(chatToasts) { toast in
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(toast.title)
+                        .font(.caption.bold())
+                    Text(toast.subtitle)
+                        .font(.caption2)
+                        .multilineTextAlignment(.trailing)
+                }
+                .padding(10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
+    private func loadChatBaseline(gameId: String) async {
+        guard let token = await MainActor.run(body: { app.accessToken }) else { return }
+        do {
+            let r = try await app.api.fetchGameChat(gameId: gameId, token: token, after: nil)
+            await MainActor.run {
+                chatMessages = r.messages.sorted { $0.createdAt < $1.createdAt }
+                chatWatermarkIso = chatMessages.map(\.createdAt).max() ?? Self.chatEpochIso
+                chatBaselineLoaded = true
+            }
+        } catch {
+            await MainActor.run {
+                chatBaselineLoaded = true
+                chatWatermarkIso = Self.chatEpochIso
+            }
+        }
+    }
+
+    private func fetchAndMergeChatFromPoll(gameId: String, token: String) async {
+        let loaded = await MainActor.run { chatBaselineLoaded }
+        guard loaded else { return }
+        let after = await MainActor.run { chatWatermarkIso } ?? Self.chatEpochIso
+        let sheetOpen = await MainActor.run { showChatSheet }
+        do {
+            let r = try await app.api.fetchGameChat(gameId: gameId, token: token, after: after)
+            await MainActor.run {
+                var known = Set(chatMessages.map(\.id))
+                for m in r.messages {
+                    guard !known.contains(m.id) else { continue }
+                    known.insert(m.id)
+                    chatMessages.append(m)
+                    if !m.fromSelf && !sheetOpen {
+                        enqueueChatToast(for: m)
+                    }
+                }
+                chatMessages.sort { $0.createdAt < $1.createdAt }
+                chatWatermarkIso = chatMessages.map(\.createdAt).max() ?? Self.chatEpochIso
+            }
+        } catch {}
+    }
+
+    private func enqueueChatToast(for message: GameChatMessageDTO) {
+        let subtitle =
+            message.body.count > 100 ? String(message.body.prefix(100)) + "…" : message.body
+        let item = ChatToastItem(id: message.id, title: message.displayName, subtitle: subtitle)
+        chatToasts.append(item)
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run {
+                chatToasts.removeAll { $0.id == message.id }
+            }
+        }
+    }
+
     private func pollLoop(gameId: String) async {
         while !Task.isCancelled {
             /* Re-read the token each iteration so a background refresh's new access_token
@@ -978,30 +1211,13 @@ struct GameView: View {
                     app.lastBetting = s.betting
                     let a = s.perspective
                     handleAfterPerspectiveUpdate(before: before, after: a)
-                    if let b = before, a.phase == "play" {
-                        let my = a.seat
-                        let bMine = b.hands[my], aMine = a.hands[my]
-                        if aMine.count == bMine.count + 1, aMine.count == 11, a.currentTurn == my {
-                            let added = aMine.first { !bMine.contains($0) } ?? aMine.last
-                            if b.phase == "upcardOffer", a.discard.count < b.discard.count {
-                                tableFlourish = ("You drew down card", added)
-                            } else if b.stockCount > a.stockCount {
-                                tableFlourish = ("Drew from Deck", added)
-                            } else if a.discard.count < b.discard.count {
-                                let top = b.discard.last ?? ""
-                                tableFlourish = ("Picked up \(cardName(top))", added)
-                            } else {
-                                tableFlourish = ("Drew a card", added)
-                            }
-                            tableFlourishTask?.cancel()
-                            tableFlourishTask = Task {
-                                try? await Task.sleep(nanoseconds: 3_500_000_000)
-                                await MainActor.run { tableFlourish = nil }
-                            }
-                        }
-                        let o = 1 - my
+                    if let b = before {
+                        let o = 1 - a.seat
                         let bOpp = b.hands[o], aOpp = a.hands[o]
-                        if aOpp.count == bOpp.count + 1, b.phase == "upcardOffer", a.discard.count < b.discard.count {
+                        if aOpp.count == bOpp.count + 1,
+                           b.phase == "upcardOffer",
+                           a.discard.count < b.discard.count
+                        {
                             downCardStatusMessage = "Opponent Drew Down Card"
                             messageTask?.cancel()
                             messageTask = Task {
@@ -1015,6 +1231,7 @@ struct GameView: View {
                         }
                     }
                 }
+                await fetchAndMergeChatFromPoll(gameId: gameId, token: token)
             } catch {
                 await MainActor.run { setFeedback(UserFeedback.from(error), error: true) }
             }
@@ -1061,13 +1278,14 @@ struct GameView: View {
                 Button("Return to lobby") {
                     pollTask?.cancel()
                     postCutTask?.cancel()
-                    tableFlourishTask?.cancel()
+                    cardFlightClearTask?.cancel()
                     messageTask?.cancel()
                     app.activeGameId = nil
                     app.lastPerspective = nil
                     app.lastBetting = nil
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.burgundy)
                 .controlSize(.large)
             case .cutForDeal:
                 // Cut actions live in CutForDealView (center table).
@@ -1118,6 +1336,8 @@ struct GameView: View {
                         )
                     }
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.navy)
             }
         }
     }
@@ -1132,12 +1352,14 @@ struct GameView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(downCardStageTitle(p))
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.cream)
             Text(turnLine(p))
                 .font(.headline.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.gold.opacity(0.95))
             if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
                 Text("Take or pass the up-card.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
 
             HStack(spacing: 10) {
@@ -1168,6 +1390,8 @@ struct GameView: View {
                     }
                 }
             }
+            .buttonStyle(.bordered)
+            .tint(GinRummyPalette.gold)
         }
     }
 
@@ -1186,6 +1410,8 @@ struct GameView: View {
                     Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO (big gin).", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
                 }
                 .disabled(!canEO)
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.navy)
                 DiscardHelper(
                     gameId: gameId,
                     hand: p.hands[p.seat],
@@ -1216,6 +1442,8 @@ struct GameView: View {
             Button("Done") {
                 Task { await send(gameId: gameId, token: token, intent: ["type": "layoffDone"], success: "Layoffs finished.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
             }
+            .buttonStyle(.borderedProminent)
+            .tint(GinRummyPalette.navy)
         }
     }
 
@@ -1369,11 +1597,12 @@ private struct DiscardHelper: View {
                     .disabled(!canKnock)
             }
             .buttonStyle(.bordered)
+            .tint(GinRummyPalette.gold)
 
             if haveSelection, let hint = inlineHint(canPlain: canPlain, canGin: canGin, canKnock: canKnock) {
                 Text(hint)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
         }
         .onAppear { recomputeIfNeeded() }
@@ -1464,165 +1693,3 @@ private struct DiscardHelper: View {
     }
 }
 
-/// Lightweight Swift port of the rules-engine meld solver (`backend/rules/src/melds.ts`).
-/// Used only to drive UI affordances — the server is still the source of truth and revalidates.
-/// Kept inline in GameView.swift so we don't need to register a new file in `project.pbxproj`.
-enum MeldSolver {
-    struct DiscardEligibility {
-        /// Discards (from the 11-card hand) where the remaining 10 form deadwood > 0 — plain Discard legal.
-        var plain: Set<String> = []
-        /// Discards leading to deadwood == 0 — Gin legal.
-        var ginable: Set<String> = []
-        /// Discards leading to 0 ≤ deadwood ≤ knockValue (and knock card isn't an Ace) — Knock legal.
-        var knockable: Set<String> = []
-    }
-
-    static func parseRank(_ card: String) -> Character { card.first ?? "?" }
-    static func parseSuit(_ card: String) -> Character { card.last ?? "?" }
-
-    static func rankIndex(_ r: Character) -> Int {
-        switch r {
-        case "A": return 1
-        case "2": return 2
-        case "3": return 3
-        case "4": return 4
-        case "5": return 5
-        case "6": return 6
-        case "7": return 7
-        case "8": return 8
-        case "9": return 9
-        case "T": return 10
-        case "J": return 11
-        case "Q": return 12
-        case "K": return 13
-        default: return 0
-        }
-    }
-
-    static func deadwoodValue(_ card: String) -> Int {
-        let r = parseRank(card)
-        if r == "T" || r == "J" || r == "Q" || r == "K" { return 10 }
-        if r == "A" { return 1 }
-        return rankIndex(r)
-    }
-
-    static func upcardKnockValue(_ card: String?) -> Int? {
-        guard let c = card, !c.isEmpty else { return nil }
-        if parseRank(c) == "A" { return nil }
-        return deadwoodValue(c)
-    }
-
-    static func isValidSet(_ cards: [String]) -> Bool {
-        if cards.count < 3 || cards.count > 4 { return false }
-        let ranks = Set(cards.map { parseRank($0) })
-        if ranks.count != 1 { return false }
-        let suits = cards.map { parseSuit($0) }
-        return Set(suits).count == cards.count
-    }
-
-    static func isValidRun(_ cards: [String]) -> Bool {
-        if cards.count < 3 { return false }
-        let suit = parseSuit(cards[0])
-        if !cards.allSatisfy({ parseSuit($0) == suit }) { return false }
-        let orders = cards.map { rankIndex(parseRank($0)) }
-        let unique = Array(Set(orders)).sorted()
-        if unique.count != orders.count { return false }
-        for i in 1 ..< unique.count {
-            if unique[i] != unique[i - 1] + 1 { return false }
-        }
-        return true
-    }
-
-    static func deadwoodSum(_ cards: [String]) -> Int {
-        cards.reduce(0) { $0 + deadwoodValue($1) }
-    }
-
-    private static func subsetsOfSize(_ arr: [String], _ k: Int) -> [[String]] {
-        var result: [[String]] = []
-        var chosen: [String] = []
-        chosen.reserveCapacity(k)
-        func rec(_ start: Int) {
-            if chosen.count == k { result.append(chosen); return }
-            for i in start ..< arr.count {
-                chosen.append(arr[i])
-                rec(i + 1)
-                chosen.removeLast()
-            }
-        }
-        rec(0)
-        return result
-    }
-
-    /// Minimum deadwood total achievable for `hand` (any size). DFS with set/run pruning;
-    /// O(exponential) in theory but very fast for ≤11 cards.
-    static func bestDeadwoodSum(_ hand: [String]) -> Int {
-        let sorted = hand.sorted()
-        var best = Int.max
-
-        func dfs(_ remaining: [String]) {
-            if remaining.isEmpty {
-                if 0 < best { best = 0 }
-                return
-            }
-            if remaining.count < 3 {
-                let s = deadwoodSum(remaining)
-                if s < best { best = s }
-                return
-            }
-            let len4 = min(4, remaining.count)
-            for len in stride(from: len4, through: 3, by: -1) {
-                for combo in subsetsOfSize(remaining, len) {
-                    let sortedCombo = combo.sorted()
-                    if isValidSet(sortedCombo) || isValidRun(sortedCombo) {
-                        let used = Set(sortedCombo)
-                        let rest = remaining.filter { !used.contains($0) }
-                        dfs(rest)
-                    }
-                }
-            }
-            let s = deadwoodSum(remaining)
-            if s < best { best = s }
-        }
-
-        dfs(sorted)
-        return best == Int.max ? deadwoodSum(sorted) : best
-    }
-
-    /// True iff all 11 cards partition cleanly into valid melds — i.e. EO / Big Gin.
-    static func isBigGin11(_ hand: [String]) -> Bool {
-        if hand.count != 11 { return false }
-        func canPartition(_ remaining: [String]) -> Bool {
-            if remaining.isEmpty { return true }
-            if remaining.count < 3 { return false }
-            let len4 = min(4, remaining.count)
-            for len in stride(from: len4, through: 3, by: -1) {
-                for combo in subsetsOfSize(remaining, len) {
-                    let sortedCombo = combo.sorted()
-                    if isValidSet(sortedCombo) || isValidRun(sortedCombo) {
-                        let used = Set(sortedCombo)
-                        let rest = remaining.filter { !used.contains($0) }
-                        if canPartition(rest) { return true }
-                    }
-                }
-            }
-            return false
-        }
-        return canPartition(hand.sorted())
-    }
-
-    /// Per-card eligibility for the 11-card hand. Costs ~11 calls to `bestDeadwoodSum(10 cards)`,
-    /// which is well under 100ms even on older iPhones; called once per hand change.
-    static func eligibility(forHand11 hand: [String], knockCheckCard: String?) -> DiscardEligibility {
-        guard hand.count == 11, Set(hand).count == 11 else { return DiscardEligibility() }
-        let knockVal = upcardKnockValue(knockCheckCard)
-        var e = DiscardEligibility()
-        for c in hand {
-            let hand10 = hand.filter { $0 != c }
-            let best = bestDeadwoodSum(hand10)
-            if best > 0 { e.plain.insert(c) }
-            if best == 0 { e.ginable.insert(c) }
-            if let kv = knockVal, best <= kv { e.knockable.insert(c) }
-        }
-        return e
-    }
-}

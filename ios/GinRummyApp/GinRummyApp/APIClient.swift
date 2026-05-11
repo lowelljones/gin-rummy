@@ -110,6 +110,11 @@ final class APIClient {
         return nil
     }
 
+    func lobbyInvitePreview(inviteCode: String) async throws -> LobbyInvitePreviewResponse {
+        let code = inviteCode.uppercased()
+        return try await request(path: "/lobbies/\(code)/preview", method: "GET", token: nil)
+    }
+
     func createLobby(token: String) async throws -> LobbyCreateResponse {
         let body = Data("{}".utf8)
         return try await request(path: "/lobbies", method: "POST", token: token, body: body)
@@ -142,5 +147,33 @@ final class APIClient {
     func submitMove(gameId: String, token: String, intent: [String: Any]) async throws -> MoveResponse {
         let body = try JSONSerialization.data(withJSONObject: ["intent": intent])
         return try await request(path: "/games/\(gameId)/move", method: "POST", token: token, body: body)
+    }
+
+    func fetchGameChat(gameId: String, token: String, after: String?) async throws -> GameChatListResponse {
+        guard var comp = URLComponents(string: "\(baseURL)/games/\(gameId)/chat") else { throw APIError.invalidURL }
+        if let after {
+            comp.queryItems = [URLQueryItem(name: "after", value: after)]
+        }
+        guard let url = comp.url else { throw APIError.invalidURL }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, resp) = try await session.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+            let msg = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.badStatus(code, msg)
+        }
+        do {
+            return try JSONDecoder().decode(GameChatListResponse.self, from: data)
+        } catch {
+            throw APIError.decoding(error)
+        }
+    }
+
+    func sendGameChat(gameId: String, token: String, text: String) async throws -> GameChatPostResponse {
+        let body = try JSONSerialization.data(withJSONObject: ["text": text])
+        return try await request(path: "/games/\(gameId)/chat", method: "POST", token: token, body: body)
     }
 }

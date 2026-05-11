@@ -21,8 +21,10 @@ enum PlayingCard {
 
     static func suitColor(_ card: String) -> Color {
         let u = CardIdValidation.normalize(card)
-        guard u.count == 2 else { return .primary }
-        return u.last == "H" || u.last == "D" ? .red : .primary
+        guard u.count == 2 else { return GinRummyPalette.navy }
+        return u.last == "H" || u.last == "D"
+            ? Color(red: 0.62, green: 0.12, blue: 0.12)
+            : GinRummyPalette.navy.opacity(0.93)
     }
 
     static func suitSymbol(_ card: String) -> String {
@@ -75,15 +77,34 @@ struct PlayingCardView: View {
     private var suitFont: Font { compact ? .body : .title2 }
     private var pad: CGFloat { compact ? 3 : 5 }
 
+    private var cardBackGradient: LinearGradient {
+        LinearGradient(
+            colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.9)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var cardBackFiligree: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(GinRummyPalette.gold.opacity(0.22), lineWidth: 1)
+                .padding(3)
+            Image(systemName: "suit.spade.fill")
+                .font(compact ? .caption : .title3)
+                .foregroundStyle(GinRummyPalette.gold.opacity(0.22))
+        }
+    }
+
     var body: some View {
         Group {
             if faceDown {
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(.indigo.gradient)
-                    .overlay { Text("?").font(compact ? .caption : .title2).foregroundStyle(.white) }
+                    .fill(cardBackGradient)
+                    .overlay { cardBackFiligree.opacity(0.35) }
             } else {
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(Color(UIColor.secondarySystemBackground))
+                    .fill(GinRummyPalette.cream.opacity(0.97))
                     .overlay(
                         VStack(spacing: 0) {
                             HStack {
@@ -108,7 +129,10 @@ struct PlayingCardView: View {
         .frame(width: cw, height: ch)
         .overlay(
             RoundedRectangle(cornerRadius: 5)
-                .stroke(selected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: selected ? 2.5 : 1)
+                .stroke(
+                    selected ? GinRummyPalette.burgundy : GinRummyPalette.gold.opacity(0.42),
+                    lineWidth: selected ? 2.5 : 1
+                )
         )
         .onTapGesture { onTap?() }
     }
@@ -165,7 +189,7 @@ private enum CardFanLayout {
 }
 
 /// Hand along the bottom of the row: same baseline, slight rotation, arc opens toward the table center.
-/// Long-press a card to lift it; drag to rearrange the hand. Quick taps still select.
+/// Drag a card to rearrange the hand (no long-press). Small movements still allow tap to select.
 struct FannedHandRow: View {
     let displayOrder: [String]
     @Binding var selected: String?
@@ -241,24 +265,15 @@ struct FannedHandRow: View {
         )
     }
 
+    private static let reorderDragMinimumDistance: CGFloat = 10
+
     private func makeReorderGesture(cardId: String, step: CGFloat) -> some Gesture {
-        let press = LongPressGesture(minimumDuration: 0.35)
-        let drag = DragGesture(minimumDistance: 0)
-        return press.sequenced(before: drag)
+        DragGesture(minimumDistance: Self.reorderDragMinimumDistance)
             .onChanged { value in
-                switch value {
-                case .first:
-                    break
-                case .second(true, let dg):
-                    if draggingId == nil {
-                        beginDrag(cardId: cardId)
-                    }
-                    if let dg {
-                        updateDrag(translation: dg.translation, step: step)
-                    }
-                default:
-                    break
+                if draggingId == nil {
+                    beginDrag(cardId: cardId)
                 }
+                updateDrag(translation: value.translation, step: step)
             }
             .onEnded { _ in
                 commitDrag()
@@ -385,7 +400,7 @@ struct SeatInfoBar: View {
     var body: some View {
         Text(dealerLine)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
     }
 
     private var dealerLine: String {
@@ -455,19 +470,19 @@ struct StockAndDiscardPiles: View {
                         RoundedRectangle(cornerRadius: 5)
                             .fill(
                                 LinearGradient(
-                                    colors: [Color.orange.opacity(0.85), Color.red.opacity(0.55)],
+                                    colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.78)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
                             .frame(width: 42, height: 62)
-                        Circle()
-                            .fill(Color(white: 0.2))
-                            .frame(width: 26, height: 26)
+                        Image(systemName: "suit.spade.fill")
+                            .font(.caption)
+                            .foregroundStyle(GinRummyPalette.gold.opacity(0.28))
                         Text("\(max(0, stockCount))")
                             .font(.caption.weight(.bold))
                             .monospacedDigit()
-                            .foregroundStyle(.white)
+                            .foregroundStyle(GinRummyPalette.cream)
                     }
                 }
                 .buttonStyle(.plain)
@@ -475,24 +490,24 @@ struct StockAndDiscardPiles: View {
                 .opacity(stockOnTap == nil || stockCount <= 0 ? 0.55 : 1)
                 Text("Deck")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
             }
             VStack(spacing: 6) {
                 if let d = discardTop, !d.isEmpty {
                     PlayingCardView(card: d, compact: true, onTap: discardOnTap)
                         .overlay(
                             RoundedRectangle(cornerRadius: 5)
-                                .stroke(discardOnTap == nil ? Color.clear : Color.accentColor.opacity(0.55), lineWidth: discardOnTap == nil ? 0 : 2)
+                                .stroke(discardOnTap == nil ? Color.clear : GinRummyPalette.gold.opacity(0.72), lineWidth: discardOnTap == nil ? 0 : 2)
                         )
                 } else {
                     RoundedRectangle(cornerRadius: 5)
-                        .fill(Color(UIColor.secondarySystemBackground))
+                        .fill(GinRummyPalette.bgPanel.opacity(0.82))
                         .frame(width: 51, height: 75)
-                        .overlay { Text("—").foregroundStyle(.tertiary) }
+                        .overlay { Text("—").foregroundStyle(GinRummyPalette.sage.opacity(0.85)) }
                 }
                 Text("Discard")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
             }
         }
     }
@@ -791,26 +806,108 @@ struct StaggeredCutResultBanner: View {
     }
 }
 
-// MARK: - Draw / upcard flourish
+// MARK: - Draw / discard flight (table → hand or hand → discard)
 
-struct TableActivityFlourish: View {
-    let kind: String
-    let card: String?
+/// Full-screen overlay: a card moves along a curved path with spin between canonical table zones.
+struct CardFlightAnimationOverlay: View {
+    enum Route: Equatable {
+        case drawFromStock(toOpponent: Bool)
+        case drawFromDiscard(toOpponent: Bool)
+        case discardFromHand(isOpponent: Bool)
+    }
+
+    let route: Route
+    let card: String
+
+    @State private var progress: CGFloat = 0
+
+    private var faceDown: Bool {
+        switch route {
+        case .drawFromStock(let opp), .drawFromDiscard(let opp): return opp
+        case .discardFromHand: return false
+        }
+    }
+
+    private var displayCard: String {
+        if faceDown { return "AS" }
+        let n = CardIdValidation.normalize(card)
+        return CardIdValidation.isValidFormat(n) ? n : "AS"
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles")
-                .foregroundStyle(.blue)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(kind)
-                    .font(.subheadline.weight(.semibold))
-                if let c = card {
-                    HStack { PlayingCardView(card: c, compact: true, onTap: nil) }
-                }
+        GeometryReader { g in
+            let w = g.size.width
+            let h = g.size.height
+            let from = point(fromAnchor: fromAnchor, width: w, height: h)
+            let to = point(fromAnchor: toAnchor, width: w, height: h)
+            let arcX = sin(.pi * progress) * min(w, h) * 0.05
+            let cx = from.x + (to.x - from.x) * progress + arcX
+            let cy = from.y + (to.y - from.y) * progress
+            let spin = Double(progress) * 420
+            let wobble = Double(1 - progress) * 22 * (routeDiscardsToRight ? 1 : -1)
+
+            PlayingCardView(
+                card: displayCard,
+                faceDown: faceDown,
+                compact: true,
+                onTap: nil
+            )
+            .position(x: cx, y: cy)
+            .rotationEffect(.degrees(wobble + spin))
+            .scaleEffect(1 + 0.1 * sin(.pi * Double(progress)))
+            .shadow(color: Color.black.opacity(0.22), radius: progress > 0.1 ? 8 : 2, y: 5)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            progress = 0
+            withAnimation(.timingCurve(0.33, 0.0, 0.2, 1.0, duration: 0.62)) {
+                progress = 1
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.blue.opacity(0.1)))
+    }
+
+    private var routeDiscardsToRight: Bool {
+        switch route {
+        case .discardFromHand: return true
+        case .drawFromStock, .drawFromDiscard: return false
+        }
+    }
+
+    private enum Anchor {
+        case stock, discardPile, myHand, opponentHand
+    }
+
+    private var fromAnchor: Anchor {
+        switch route {
+        case .drawFromStock:
+            return .stock
+        case .drawFromDiscard:
+            return .discardPile
+        case .discardFromHand(let isOpponent):
+            return isOpponent ? .opponentHand : .myHand
+        }
+    }
+
+    private var toAnchor: Anchor {
+        switch route {
+        case .drawFromStock(let toOpponent), .drawFromDiscard(let toOpponent):
+            return toOpponent ? .opponentHand : .myHand
+        case .discardFromHand:
+            return .discardPile
+        }
+    }
+
+    /// Normalized layout tuned for portrait table: stock left-of-center, discard right-of-center, hands top/bottom.
+    private func point(fromAnchor a: Anchor, width: CGFloat, height: CGFloat) -> CGPoint {
+        switch a {
+        case .stock:
+            return CGPoint(x: width * 0.36, y: height * 0.46)
+        case .discardPile:
+            return CGPoint(x: width * 0.64, y: height * 0.46)
+        case .myHand:
+            return CGPoint(x: width * 0.44, y: height * 0.88)
+        case .opponentHand:
+            return CGPoint(x: width * 0.44, y: height * 0.23)
+        }
     }
 }

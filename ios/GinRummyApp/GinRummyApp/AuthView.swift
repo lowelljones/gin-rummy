@@ -9,29 +9,52 @@ struct AuthView: View {
     @State private var messageIsError = true
 
     var body: some View {
-        Form {
-            Section("Supabase auth") {
-                TextField("Email", text: $email)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                SecureField("Password", text: $password)
-                Button(busy ? "Working…" : "Sign in") {
-                    Task { await signIn() }
-                }
-                .disabled(busy || email.isEmpty || password.isEmpty)
+        ScrollView {
+            VStack(spacing: 28) {
+                GinRummyLogoBlock(subtitle: "Sign in to play")
+                    .padding(.top, 32)
 
-                Button("Create account (sign up)") {
-                    Task { await signUp() }
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Email")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.gold.opacity(0.9))
+                    TextField("", text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .ginOutlinedField()
+
+                    Text("Password")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.gold.opacity(0.9))
+                    SecureField("", text: $password)
+                        .ginOutlinedField()
+
+                    Button(busy ? "Working…" : "Sign in") {
+                        Task { await signIn() }
+                    }
+                    .buttonStyle(GinPrimaryButtonStyle())
+                    .disabled(busy || email.isEmpty || password.isEmpty)
+                    .opacity(busy ? 0.7 : 1)
+
+                    Button("Create account (sign up)") {
+                        Task { await signUp() }
+                    }
+                    .buttonStyle(GinGhostButtonStyle())
+                    .disabled(busy || email.isEmpty || password.isEmpty)
+
+                    if !message.isEmpty {
+                        FeedbackLine(text: message, isError: messageIsError, privateClubStyle: true)
+                            .padding(.top, 4)
+                    }
                 }
-                .disabled(busy || email.isEmpty || password.isEmpty)
-            }
-            if !message.isEmpty {
-                Section {
-                    FeedbackLine(text: message, isError: messageIsError)
-                }
+                .padding(.horizontal, 24)
+
+                Spacer(minLength: 24)
             }
         }
-        .navigationTitle("Gin Rummy")
+        .scrollDismissesKeyboard(.interactively)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("")
     }
 
     private func signIn() async {
