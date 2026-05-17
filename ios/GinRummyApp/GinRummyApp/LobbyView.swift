@@ -19,11 +19,8 @@ struct LobbyView: View {
                     case .joinEnter:
                         JoinLobbyEnterCodeView(path: $path)
                             .environmentObject(app)
-                    case let .hostWait(code):
-                        HostWaitingRoomView(inviteCode: code)
-                            .environmentObject(app)
-                    case let .joinWait(code):
-                        JoinWaitingForHostView(joinCode: code)
+                    case let .wait(code, isHost):
+                        LobbyWaitingRoomView(inviteCode: code, isHost: isHost)
                             .environmentObject(app)
                     }
                 }
@@ -83,12 +80,13 @@ struct LobbyView: View {
         }
     }
 
-    /// After accepting an invite sheet, navigate to waiting-for-host and poll like a normal join.
+    /// After accepting an invite sheet, drop into the unified waiting room so the
+    /// guest can see the host's name and ready up.
     private func applyLobbyInviteJoinHandoffIfNeeded() {
         guard let code = app.consumeLobbyInviteJoinHandoff() else { return }
         path = NavigationPath()
         toast = ""
-        path.append(LobbyRoute.joinWait(code))
+        path.append(LobbyRoute.wait(code: code, isHost: false))
     }
 
     private func createLobbyAndWait() async {
@@ -99,7 +97,7 @@ struct LobbyView: View {
         do {
             let res = try await app.api.createLobby(token: token)
             let code = res.lobby.invite_code
-            path.append(LobbyRoute.hostWait(code))
+            path.append(LobbyRoute.wait(code: code, isHost: true))
         } catch {
             toast = UserFeedback.from(error)
             toastIsError = true

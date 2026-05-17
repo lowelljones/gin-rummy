@@ -123,7 +123,7 @@ async function ensureHand(gameId: string, truth: ServerTruth): Promise<string> {
   return inserted!.id as string;
 }
 
-async function processTestBotIfNeeded(gameId: string) {
+async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number }) {
   const { data: row, error } = await admin
     .from("games")
     .select("id, status, server_truth, move_seq, lobby_id, is_bot_game")
@@ -137,7 +137,8 @@ async function processTestBotIfNeeded(gameId: string) {
   let state = row.server_truth as ServerTruth;
   let seq = Number(row.move_seq);
   const lobbyId = (row as { lobby_id: string | null }).lobby_id;
-  const maxSteps = 200;
+  /** GET /state polls frequently — cap work per request so the client sees JSON quickly; POST /move keeps default high for immediate bot replies after human intents. */
+  const maxSteps = opts?.maxSteps ?? 200;
 
   for (let i = 0; i < maxSteps; i++) {
     if (state.phase === "matchOver") {
@@ -304,10 +305,163 @@ app.get("/lobbies/:code/preview", async (req, reply) => {
   };
 });
 
+type LobbyPlayerRow = {
+  user_id: string;
+  seat: number;
+  ready: boolean;
+};
+
+type LobbyPlayerPublic = {
+  seat: number;
+  user_id: string;
+  display_name: string;
+  ready: boolean;
+  is_self: boolean;
+};
+
+async function fetchLobbyPlayersWithNames(
+  lobbyId: string,
+  selfId: string
+): Promise<LobbyPlayerPublic[]> {
+  const { data: rows } = await admin
+    .from("lobby_players")
+    .select("user_id, seat, ready")
+    .eq("lobby_id", lobbyId)
+    .order("seat", { ascending: true });
+  const players = (rows ?? []) as LobbyPlayerRow[];
+  if (players.length === 0) return [];
+  const names = await displayNamesForUserIds(players.map((p) => p.user_id));
+  return players.map((p) => ({
+    seat: Number(p.seat),
+    user_id: p.user_id,
+    display_name: names[p.user_id] ?? "Player",
+    ready: Boolean(p.ready),
+    is_self: p.user_id === selfId,
+  }));
+}
+
+async function findLatestGameId(lobbyId: string): Promise<string | null> {
+  const { data: game } = await admin
+    .from("games")
+    .select("id")
+    .eq("lobby_id", lobbyId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (game?.id as string | undefined) ?? null;
+}
+
+type LobbyStatusPayload = {
+  lobby: { id: string; invite_code: string; status: string };
+  gameId: string | null;
+  guest_joined: boolean;
+  you_seat: number | null;
+  players: LobbyPlayerPublic[];
+  both_ready: boolean;
+};
+
+async function buildLobbyStatusPayload(
+  lobby: { id: string; invite_code: string; status: string },
+  selfId: string
+): Promise<LobbyStatusPayload> {
+  const players = await fetchLobbyPlayersWithNames(lobby.id, selfId);
+  const guestJoined = players.some((p) => p.seat === 1);
+  const you = players.find((p) => p.is_self);
+  const seat0 = players.find((p) => p.seat === 0);
+  const seat1 = players.find((p) => p.seat === 1);
+  const bothReady = Boolean(seat0?.ready && seat1?.ready);
+
+  let gameId: string | null = null;
+  if (lobby.status === "in_game" || lobby.status === "closed") {
+    gameId = await findLatestGameId(lobby.id);
+  }
+
+  return {
+    lobby,
+    gameId,
+    guest_joined: guestJoined,
+    you_seat: you ? you.seat : null,
+    players,
+    both_ready: bothReady,
+  };
+}
+
 /**
- * Lobby status / latest game lookup. Used by the joiner to poll for the host
- * pressing Start; once the lobby moves to in_game we surface the active gameId
- * so the joiner can transition to the table without an extra "I'm here" round-trip.
+ * Try to atomically transition an "open" lobby to "in_game" and create the game row.
+ * Returns the resulting gameId (newly created or one another writer already created),
+ * or null when the lobby isn't ready to start (e.g. only one player, not both ready,
+ * or the lobby has been closed). Used by POST /lobbies/:code/ready when both seats
+ * have flipped ready=true, so neither client needs an explicit "Start" press.
+ */
+async function tryStartHumanGameIfReady(lobbyId: string): Promise<string | null> {
+  const { data: players } = await admin
+    .from("lobby_players")
+    .select("user_id, seat, ready")
+    .eq("lobby_id", lobbyId)
+    .order("seat", { ascending: true });
+  const seats = (players ?? []) as LobbyPlayerRow[];
+  const seat0 = seats.find((p) => Number(p.seat) === 0);
+  const seat1 = seats.find((p) => Number(p.seat) === 1);
+  if (!seat0 || !seat1) return null;
+  if (!seat0.ready || !seat1.ready) return null;
+
+  // Atomic "claim the start" — only one concurrent caller updates the row.
+  const { data: claimed, error: claimErr } = await admin
+    .from("lobbies")
+    .update({ status: "in_game" })
+    .eq("id", lobbyId)
+    .eq("status", "open")
+    .select("id")
+    .maybeSingle();
+  if (claimErr) {
+    app.log.error({ err: claimErr.message, lobbyId }, "ready: lobby claim failed");
+    return findLatestGameId(lobbyId);
+  }
+  if (!claimed) {
+    // Someone else already transitioned the lobby — return whatever game they created.
+    return findLatestGameId(lobbyId);
+  }
+
+  const truth = createNewMatch(`lobby-${lobbyId}`, rng());
+  const handId = crypto.randomUUID();
+  const { data: game, error: gErr } = await admin
+    .from("games")
+    .insert({
+      lobby_id: lobbyId,
+      status: "active",
+      race_target: truth.raceTarget,
+      player_ids: [seat0.user_id, seat1.user_id] as [string, string],
+      is_bot_game: false,
+      seat_for_user: { [seat0.user_id]: 0, [seat1.user_id]: 1 },
+      server_truth: truth,
+      move_seq: 0,
+      current_hand_id: handId,
+    })
+    .select("id")
+    .single();
+
+  if (gErr || !game) {
+    app.log.error({ err: gErr?.message ?? "no row", lobbyId }, "ready: game insert failed");
+    // Roll the lobby back so a retry can re-attempt.
+    await admin.from("lobbies").update({ status: "open" }).eq("id", lobbyId).eq("status", "in_game");
+    return null;
+  }
+
+  await admin.from("hands").insert({
+    id: handId,
+    game_id: game.id,
+    index: truth.handIndex,
+    dealer_seat: truth.dealer,
+  });
+
+  return game.id as string;
+}
+
+/**
+ * Lobby status / latest game lookup. Both the host and the joiner poll this
+ * while sitting in the waiting room — they see each other's display name,
+ * the per-seat ready flag, and once `gameId` is non-null they transition to
+ * the table.
  */
 app.get("/lobbies/:code", async (req, reply) => {
   const user = await userFromAuthHeader(req.headers.authorization);
@@ -329,27 +483,78 @@ app.get("/lobbies/:code", async (req, reply) => {
     .maybeSingle();
   if (!isCreator && !membership) return reply.code(403).send({ error: "Not a member" });
 
-  let gameId: string | null = null;
-  if (lobby.status === "in_game" || lobby.status === "closed") {
-    const { data: game } = await admin
-      .from("games")
-      .select("id")
-      .eq("lobby_id", lobby.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    gameId = (game?.id as string | undefined) ?? null;
+  return buildLobbyStatusPayload(
+    { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+    user.id
+  );
+});
+
+/**
+ * Toggle the caller's ready flag in the lobby waiting room. When both seats
+ * are ready, this handler atomically transitions the lobby to in_game and
+ * creates the game; the caller and the other player (via polling) both pick
+ * up the new gameId and move to the table.
+ *
+ * Body: { ready: boolean } — explicit value for idempotence (clients that
+ * tap twice quickly don't accidentally un-ready themselves).
+ */
+app.post("/lobbies/:code/ready", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const code = (req.params as { code: string }).code.toUpperCase();
+  const { data: lobby, error: lErr } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status, created_by")
+    .eq("invite_code", code)
+    .maybeSingle();
+  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+
+  const { data: membership } = await admin
+    .from("lobby_players")
+    .select("seat")
+    .eq("lobby_id", lobby.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  // /ready toggles the caller's lobby_players row, so they must have one.
+  // The creator is auto-inserted by POST /lobbies, but defensively reject if missing.
+  if (!membership) return reply.code(403).send({ error: "Not a member" });
+
+  if (lobby.status !== "open") {
+    // Already started — just return the current state so the client can
+    // transition into the game on its next poll cycle.
+    return buildLobbyStatusPayload(
+      { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+      user.id
+    );
   }
 
-  const { data: lobbyPlayers } = await admin.from("lobby_players").select("seat").eq("lobby_id", lobby.id);
-  const guestJoined =
-    lobbyPlayers?.some((p: { seat: number }) => Number(p.seat) === 1) ?? false;
+  const body = (req.body ?? {}) as { ready?: unknown };
+  const ready = body.ready === undefined ? true : Boolean(body.ready);
 
-  return {
-    lobby: { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
-    gameId,
-    guest_joined: guestJoined,
-  };
+  const { error: rErr } = await admin
+    .from("lobby_players")
+    .update({ ready })
+    .eq("lobby_id", lobby.id)
+    .eq("user_id", user.id);
+  if (rErr) return reply.code(500).send({ error: rErr.message });
+
+  if (ready) {
+    await tryStartHumanGameIfReady(lobby.id);
+  }
+
+  // Re-read lobby (its status may have flipped to in_game) so the payload
+  // includes the freshly-created gameId for the caller.
+  const { data: lobbyAfter } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status")
+    .eq("id", lobby.id)
+    .single();
+
+  return buildLobbyStatusPayload(
+    lobbyAfter ?? { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+    user.id
+  );
 });
 
 app.post("/lobbies/:code/join", async (req, reply) => {
@@ -381,6 +586,13 @@ app.post("/lobbies/:code/join", async (req, reply) => {
   return { ok: true, seat: 1 };
 });
 
+/**
+ * Solo bot game starter (`bot: true` required). Human-vs-human games go through
+ * POST /lobbies/:code/ready and are auto-created when both seats are ready, so
+ * this endpoint is bot-only now — older clients that POST without `bot: true`
+ * are rejected with 400 to prevent a stale UI from racing the ready flow and
+ * double-creating a game for the same lobby.
+ */
 app.post("/lobbies/:code/start", async (req, reply) => {
   const user = await userFromAuthHeader(req.headers.authorization);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
@@ -389,8 +601,14 @@ app.post("/lobbies/:code/start", async (req, reply) => {
   const { data: lobby } = await admin.from("lobbies").select("id, status, created_by").eq("invite_code", code).maybeSingle();
   if (!lobby) return reply.code(404).send({ error: "Lobby not found" });
   if (lobby.created_by !== user.id) return reply.code(403).send({ error: "Only host can start" });
+  if (lobby.status !== "open") return reply.code(400).send({ error: "Lobby already started" });
 
   const withBot = (req.body as { bot?: boolean } | null)?.bot === true;
+  if (!withBot) {
+    return reply.code(400).send({
+      error: "Human matches now use the ready-up flow. Tap Ready in the lobby instead.",
+    });
+  }
 
   const { data: players, error: pErr } = await admin
     .from("lobby_players")
@@ -402,20 +620,12 @@ app.post("/lobbies/:code/start", async (req, reply) => {
     return reply.code(500).send({ error: pErr?.message ?? "players query failed" });
   }
 
-  if (withBot) {
-    if (players.length !== 1) {
-      return reply.code(400).send({ error: "Solo test bot: lobby must have only the host" });
-    }
-  } else if (players.length !== 2) {
-    return reply.code(400).send({ error: "Need two players" });
+  if (players.length !== 1) {
+    return reply.code(400).send({ error: "Solo test bot: lobby must have only the host" });
   }
 
-  const p0 = withBot
-    ? (players[0] as { user_id: string; seat: number })
-    : (players.find((p) => p.seat === 0) as (typeof players)[0]);
-  const p1 = withBot
-    ? ({ user_id: BOT_USER_ID, seat: 1 } as { user_id: string; seat: number })
-    : (players.find((p) => p.seat === 1) as (typeof players)[0]);
+  const p0 = players[0] as { user_id: string; seat: number };
+  const p1 = { user_id: BOT_USER_ID, seat: 1 } as { user_id: string; seat: number };
 
   const truth = createNewMatch(`lobby-${lobby.id}`, rng());
   const handId = crypto.randomUUID();
@@ -427,7 +637,7 @@ app.post("/lobbies/:code/start", async (req, reply) => {
       status: "active",
       race_target: truth.raceTarget,
       player_ids: [p0.user_id, p1.user_id] as [string, string],
-      is_bot_game: withBot,
+      is_bot_game: true,
       seat_for_user: { [p0.user_id]: 0, [p1.user_id]: 1 },
       server_truth: truth,
       move_seq: 0,
@@ -460,7 +670,7 @@ app.post("/lobbies/:code/start", async (req, reply) => {
   return {
     gameId: game.id,
     perspective: buildPerspective(finalTruth, seat),
-    testBot: withBot,
+    testBot: true,
   };
 });
 
@@ -469,7 +679,7 @@ app.get("/games/:id/state", async (req, reply) => {
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
 
   const id = (req.params as { id: string }).id;
-  await processTestBotIfNeeded(id);
+  await processTestBotIfNeeded(id, { maxSteps: 12 });
 
   const { data: game, error } = await admin
     .from("games")

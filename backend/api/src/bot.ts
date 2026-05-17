@@ -8,7 +8,13 @@ export function getTestBotSeat(): Seat {
 
 /**
  * Dumb test bot: pass on upcard offers, first spread card on cut, then always draw
- * from stock and discard the last card in hand. Auto ack hands. On knock layoff, ends layoff immediately.
+ * from stock and discard the last card in hand. On knock layoff, ends layoff immediately.
+ *
+ * The bot intentionally does NOT ack `handOver`: `ackHandOver` is unscoped (no seat),
+ * so if the bot acked, it would advance straight into the next hand's down-card phase
+ * before the human ever saw the End-of-hand screen. Instead, the human must always
+ * tap Continue, which guarantees they see the handOver UI and then the down-card phase
+ * for hand 2 and beyond.
  */
 function cutActivePicker(cut: NonNullable<ServerTruth["cut"]>): Seat {
   const first = (cut.firstSeat ?? 0) as Seat;
@@ -22,7 +28,9 @@ function cutActivePicker(cut: NonNullable<ServerTruth["cut"]>): Seat {
 export function computeTestBotIntent(state: ServerTruth): Intent | null {
   if (state.phase === "matchOver") return null;
   if (state.phase === "handOver") {
-    return { type: "ackHandOver" };
+    /* Wait for the human to ackHandOver; otherwise the bot would auto-advance
+     * past the End-of-hand screen and the hand-2+ down-card phase. */
+    return null;
   }
   if (state.phase === "cutForDeal" && state.cut) {
     if (state.cut.picks[TEST_BOT_SEAT] !== null) return null;
@@ -60,7 +68,9 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
 
 export function hasTestBotWork(state: ServerTruth): boolean {
   if (state.phase === "matchOver") return false;
-  if (state.phase === "handOver") return true;
+  /* Never auto-ack handOver — the human must press Continue so they see the
+   * end-of-hand UI and the upcardOffer ("down card") UI on the next deal. */
+  if (state.phase === "handOver") return false;
   if (state.phase === "cutForDeal" && state.cut) {
     if (state.cut.picks[TEST_BOT_SEAT] !== null) return false;
     return cutActivePicker(state.cut) === TEST_BOT_SEAT;

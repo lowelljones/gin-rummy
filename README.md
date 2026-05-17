@@ -41,6 +41,12 @@ Apply migrations in order from [`supabase/migrations`](supabase/migrations) in t
 npx supabase db push   # if using Supabase CLI linked project
 ```
 
+> **Lobby ready flow** (migration [`20260517000000_lobby_ready.sql`](supabase/migrations/20260517000000_lobby_ready.sql))
+> adds a `ready` boolean to `lobby_players`. Both seats must tap **Ready up** in the
+> waiting room — the server auto-creates the game when both flip true. Apply this
+> migration before deploying the latest API/iOS build, otherwise `/lobbies/:code/ready`
+> will fail with `column "ready" does not exist`.
+
 ## Run API locally
 
 ```bash

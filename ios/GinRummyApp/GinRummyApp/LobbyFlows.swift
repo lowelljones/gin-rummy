@@ -3,8 +3,18 @@ import UIKit
 
 enum LobbyRoute: Hashable {
     case joinEnter
-    case hostWait(String)
-    case joinWait(String)
+    /// Unified waiting room used by both the host and the joiner. The host gets the
+    /// share panel because they own the invite code; both sides see player cards
+    /// with display name + ready badge and a Ready Up button that auto-starts the
+    /// game once both seats are ready.
+    ///
+    /// `isHost` is carried in the route so the waiting room can render the share
+    /// panel and the "You" badge on the correct seat **before** the first
+    /// `/lobbies/:code` poll lands (or in the worst case, before the backend has
+    /// been redeployed with the player-roster fields). Without this, a freshly
+    /// arrived host saw an empty card on seat 0 and no share/copy controls until
+    /// polling caught up — and a guest never saw whose lobby they were in.
+    case wait(code: String, isHost: Bool)
     case instructions
 }
 
@@ -146,7 +156,7 @@ struct JoinLobbyEnterCodeView: View {
             try await app.api.joinLobby(code: code, token: token)
             messageIsError = false
             message = "Joined \(code)."
-            path.append(LobbyRoute.joinWait(code))
+            path.append(LobbyRoute.wait(code: code, isHost: false))
         } catch {
             message = UserFeedback.from(error)
             messageIsError = true
@@ -154,146 +164,403 @@ struct JoinLobbyEnterCodeView: View {
     }
 }
 
-struct JoinWaitingForHostView: View {
-    @EnvironmentObject private var app: AppModel
-    let joinCode: String
-
-    @State private var lobbyPollTask: Task<Void, Never>?
-    @State private var message = "Waiting for the host to start the game."
-
-    private var muted: Color { GinRummyPalette.cream.opacity(0.76) }
-
-    var body: some View {
-        VStack(spacing: 28) {
-            ProgressView()
-                .scaleEffect(1.2)
-                .tint(GinRummyPalette.gold)
-
-            Text("Lobby \(joinCode)")
-                .font(.title3.bold().monospaced())
-                .foregroundStyle(GinRummyPalette.gold)
-
-            Text("When the host starts, you’ll go to the table automatically.")
-                .font(.subheadline)
-                .foregroundStyle(muted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            FeedbackLine(text: message, isError: false, privateClubStyle: true)
-
-            Spacer()
-        }
-        .padding(24)
-        .navigationTitle("Waiting")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear { startPolling() }
-        .onDisappear {
-            lobbyPollTask?.cancel()
-            lobbyPollTask = nil
-        }
-    }
-
-    private func startPolling() {
-        let code = joinCode.uppercased()
-        lobbyPollTask?.cancel()
-        lobbyPollTask = Task { @MainActor in
-            while !Task.isCancelled, app.activeGameId == nil {
-                guard let token = app.accessToken else {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    continue
-                }
-                do {
-                    let s = try await app.api.lobbyStatus(code: code, token: token)
-                    if let gid = s.gameId, s.lobby.status == "in_game" || s.lobby.status == "closed" {
-                        let st = try await app.api.gameState(gameId: gid, token: token)
-                        app.lastPerspective = st.perspective
-                        app.lastBetting = st.betting
-                        app.activeGameId = gid
-                        message = "Game starting…"
-                        return
-                    }
-                } catch {}
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-        }
-    }
-}
-
-struct HostWaitingRoomView: View {
+/// Unified lobby waiting room used by both the host and the joiner.
+///
+/// Behavior:
+///   - Polls `/lobbies/:code` every 2s while we're waiting; when the response
+///     comes back with a non-null `gameId` (i.e. both players have readied up
+///     and the server has created the game), we fetch game state and flip
+///     `app.activeGameId` so RootView swaps to the game table.
+///   - Renders a player card per seat. Empty seat 1 shows "Waiting for player…".
+///     Each filled seat shows the display name + "Ready" / "Not ready" badge.
+///   - Shows the share panel (code + share/copy buttons) for the host so they
+///     can hand off the invite. The guest already has the code and just sees
+///     the lobby header.
+///   - Bottom button toggles the caller's ready flag. Once both seats are
+///     ready, the server-side handler atomically transitions the lobby to
+///     in_game and creates the game; the optimistic response from this same
+///     call includes the gameId, so the player who tapped Ready last lands
+///     on the table immediately.
+struct LobbyWaitingRoomView: View {
     @EnvironmentObject private var app: AppModel
     let inviteCode: String
+    /// Carried in from `LobbyRoute.wait` so we can render the share panel and the
+    /// "You" badge on the right seat immediately, without waiting for the first
+    /// `/lobbies/:code` poll to land. The polled `players` array (when present)
+    /// is the source of truth for the *opponent's* display name and the per-seat
+    /// ready flags; the role itself never needs to come from the server.
+    let isHost: Bool
 
-    private var panelFill: Color { GinRummyPalette.bgPanel.opacity(0.72) }
-
-    private var shareLinkMuted: Color { GinRummyPalette.gold.opacity(0.92) }
-
-    private var hintColor: Color { GinRummyPalette.sage.opacity(0.82) }
-
-    @State private var guestJoined = false
-    @State private var startBusy = false
+    @State private var status: LobbyStatusResponse?
     @State private var pollTask: Task<Void, Never>?
+    @State private var readyBusy = false
     @State private var feedback = ""
     @State private var feedbackIsError = true
+    /// Optimistic "I tapped Ready and the call succeeded locally" flag. Used so
+    /// the UI flips to "Ready" immediately instead of waiting for the next poll
+    /// (which can be up to 2s away). Reset whenever a server payload arrives
+    /// that disagrees with us.
+    @State private var localReady = false
+    /// Cached host display name fetched via `/lobbies/:code/preview`. Guests use
+    /// this to render seat 0 with the host's name even before the new backend's
+    /// `players` array is available (and on the very first frame after joining).
+    @State private var previewHostName: String?
+    /// Shown discreetly when polling repeatedly fails so the user understands
+    /// why the roster isn't updating instead of staring at a placeholder card.
+    @State private var pollErrorHint: String?
+
+    private var normalizedCode: String { inviteCode.uppercased() }
+
+    private var panelFill: Color { GinRummyPalette.bgPanel.opacity(0.72) }
+    private var shareLinkMuted: Color { GinRummyPalette.gold.opacity(0.92) }
+    private var hintColor: Color { GinRummyPalette.sage.opacity(0.82) }
+    private var mutedCream: Color { GinRummyPalette.cream.opacity(0.76) }
+
+    private var seat0Player: LobbyPlayerDTO? {
+        status?.players.first { $0.seat == 0 }
+    }
+
+    private var seat1Player: LobbyPlayerDTO? {
+        status?.players.first { $0.seat == 1 }
+    }
+
+    private var youPlayer: LobbyPlayerDTO? {
+        status?.players.first { $0.isSelf }
+    }
+
+    /// True when the guest has actually claimed seat 1. Prefers the polled
+    /// player list (so we know their *name*), but falls back to the legacy
+    /// `guest_joined` flag — that way the host's UI still flips to "Guest
+    /// joined" even on a deployed backend that hasn't shipped the new
+    /// `players` array yet.
+    private var guestPresent: Bool {
+        if seat1Player != nil { return true }
+        if !isHost { return true } // I am the guest; seat 1 is occupied by me.
+        return status?.guestJoined == true
+    }
+
+    private var iAmReady: Bool {
+        if let me = youPlayer { return me.ready }
+        return localReady
+    }
+
+    private var canToggleReady: Bool {
+        guard guestPresent else { return false }
+        // Treat unknown status as "still loading, don't gate" so the button
+        // isn't permanently disabled when the poll is slow or has only ever
+        // returned the legacy payload. The server is the final arbiter.
+        let s = status?.lobby.status ?? "open"
+        return s == "open"
+    }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 28) {
-                if !guestJoined {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .tint(GinRummyPalette.gold)
-                    Text("Waiting on another player")
-                        .font(.headline)
-                        .foregroundStyle(GinRummyPalette.gold)
+            VStack(spacing: 22) {
+                lobbyHeader
 
-                    Text("Share the invite code or copy the link so your friend can join.")
-                        .font(.subheadline)
-                        .foregroundStyle(GinRummyPalette.cream.opacity(0.76))
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Image(systemName: "person.2.fill")
-                        .font(.system(size: 36))
-                        .foregroundStyle(GinRummyPalette.sage.opacity(1.06))
-                        .padding(.bottom, 4)
-                    Text("Guest joined · start when you're ready.")
-                        .font(.headline)
-                        .foregroundStyle(GinRummyPalette.gold)
-                        .multilineTextAlignment(.center)
+                playerRoster
 
-                    Button(startBusy ? "Starting…" : "Start game") {
-                        Task { await startVsHuman() }
-                    }
-                    .buttonStyle(GinPrimaryButtonStyle())
-                    .disabled(startBusy || app.accessToken == nil)
+                if isHost {
+                    sharePanel
                 }
 
-                sharePanel
+                readyButton
+
+                if !guestPresent {
+                    Text("Ready up is available once the other player joins.")
+                        .font(.caption)
+                        .foregroundStyle(hintColor)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8)
+                }
+
+                if let hint = pollErrorHint {
+                    FeedbackLine(text: hint, isError: true, privateClubStyle: true)
+                }
 
                 if !feedback.isEmpty {
                     FeedbackLine(text: feedback, isError: feedbackIsError, privateClubStyle: true)
                 }
             }
             .padding(24)
+            .animation(.easeInOut(duration: 0.22), value: status?.players)
+            .animation(.easeInOut(duration: 0.22), value: status?.gameId)
         }
         .navigationTitle("Lobby")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            startGuestPolling()
+            startPolling()
+            if !isHost { Task { await loadHostPreviewIfNeeded() } }
         }
         .onDisappear {
             pollTask?.cancel()
             pollTask = nil
         }
+        .onChange(of: guestPresent) { _, joined in
+            if joined { notify(.light) }
+        }
+        .onChange(of: opponent?.ready ?? false) { _, ready in
+            if ready { notify(.medium) }
+        }
+        .onChange(of: status?.gameId) { _, gid in
+            if gid != nil { notify(.success) }
+        }
     }
 
-    private var sharePanel: some View {
-        VStack(spacing: 12) {
-            Text(inviteCode.uppercased())
-                .font(.system(size: 32, weight: .bold, design: .rounded))
+    private enum Haptic { case light, medium, success }
+
+    private func notify(_ kind: Haptic) {
+        switch kind {
+        case .light:
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case .medium:
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case .success:
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    // MARK: - Header / roster
+
+    private var lobbyHeader: some View {
+        VStack(spacing: 6) {
+            Text("Lobby")
+                .font(.caption.weight(.semibold))
+                .tracking(2)
+                .foregroundStyle(GinRummyPalette.sage)
+
+            Text(normalizedCode)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
                 .monospaced()
                 .foregroundStyle(GinRummyPalette.gold)
 
+            Text(headlineMessage)
+                .font(.subheadline)
+                .foregroundStyle(mutedCream)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 8)
+        }
+    }
+
+    private var headlineMessage: String {
+        if status?.gameId != nil { return "Game starting…" }
+        let s0 = seatDisplay(forSeat: 0)
+        let s1 = seatDisplay(forSeat: 1)
+        if s0.filled, s1.filled {
+            if s0.ready, s1.ready { return "Both players ready — starting…" }
+            if iAmReady { return "Waiting on \(opponentName())." }
+            let oppName = oppNameFromSeats(mySeat: isHost ? 0 : 1)
+            if let oppReady = (isHost ? s1 : s0).readyKnown, oppReady {
+                return "\(oppName) is ready — tap Ready when you are."
+            }
+            return "Tap Ready when you're both set."
+        }
+        if isHost {
+            return "Share the code or link — waiting for another player to join."
+        }
+        let host = previewHostName ?? seat0Player?.displayName ?? "the host"
+        return "You're in \(host)'s lobby. Waiting for the other seat to fill up."
+    }
+
+    private var opponent: LobbyPlayerDTO? {
+        guard let me = youPlayer else { return nil }
+        return status?.players.first { $0.userId != me.userId }
+    }
+
+    private func opponentName() -> String {
+        if let opp = opponent { return opp.displayName }
+        if isHost { return seat1Player?.displayName ?? "the other player" }
+        return previewHostName ?? seat0Player?.displayName ?? "the host"
+    }
+
+    private func oppNameFromSeats(mySeat: Int) -> String {
+        let opp = seatDisplay(forSeat: mySeat == 0 ? 1 : 0)
+        return opp.displayName
+    }
+
+    /// Local presentation model for a seat in the waiting room. Built from the
+    /// polled `players` array when available, otherwise synthesized from what
+    /// we already know locally (you're the host, the guest's `guest_joined`
+    /// flag, the host name we fetched from `/preview`). This is what lets the
+    /// roster look right *before* the new backend has redeployed and started
+    /// returning `players` / `is_self` / `display_name`.
+    private struct SeatDisplay {
+        let displayName: String
+        let isSelf: Bool
+        let ready: Bool
+        let readyKnown: Bool?
+        let filled: Bool
+        let seat: Int
+    }
+
+    private func seatDisplay(forSeat seat: Int) -> SeatDisplay {
+        let polled = status?.players.first { $0.seat == seat }
+        if let p = polled {
+            return SeatDisplay(
+                displayName: p.displayName,
+                isSelf: p.isSelf,
+                ready: p.ready,
+                readyKnown: p.ready,
+                filled: true,
+                seat: seat
+            )
+        }
+        let mineSeat = isHost ? 0 : 1
+        if seat == mineSeat {
+            return SeatDisplay(
+                displayName: "You",
+                isSelf: true,
+                ready: localReady,
+                readyKnown: nil,
+                filled: true,
+                seat: seat
+            )
+        }
+        if seat == 0 {
+            if let host = previewHostName {
+                return SeatDisplay(
+                    displayName: host,
+                    isSelf: false,
+                    ready: false,
+                    readyKnown: nil,
+                    filled: true,
+                    seat: 0
+                )
+            }
+            return SeatDisplay(
+                displayName: "Host",
+                isSelf: false,
+                ready: false,
+                readyKnown: nil,
+                filled: false,
+                seat: 0
+            )
+        }
+        if status?.guestJoined == true {
+            return SeatDisplay(
+                displayName: "Guest",
+                isSelf: false,
+                ready: false,
+                readyKnown: nil,
+                filled: true,
+                seat: 1
+            )
+        }
+        return SeatDisplay(
+            displayName: "Waiting for player…",
+            isSelf: false,
+            ready: false,
+            readyKnown: nil,
+            filled: false,
+            seat: 1
+        )
+    }
+
+    private var playerRoster: some View {
+        VStack(spacing: 10) {
+            playerCard(seatDisplay(forSeat: 0))
+            playerCard(seatDisplay(forSeat: 1))
+        }
+    }
+
+    @ViewBuilder
+    private func playerCard(_ slot: SeatDisplay) -> some View {
+        let filled = slot.filled
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(filled ? GinRummyPalette.bgPanel.opacity(0.85) : GinRummyPalette.bgPanel.opacity(0.45))
+                    .frame(width: 44, height: 44)
+                Image(systemName: filled ? (slot.seat == 0 ? "crown.fill" : "person.fill") : "person.fill.questionmark")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(filled ? GinRummyPalette.gold : GinRummyPalette.sage.opacity(0.85))
+            }
+            .overlay(
+                Circle()
+                    .stroke(GinRummyPalette.gold.opacity(filled ? 0.5 : 0.25), lineWidth: 1)
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(slot.displayName)
+                        .font(.headline)
+                        .foregroundStyle(filled ? GinRummyPalette.cream : mutedCream)
+                        .lineLimit(1)
+
+                    if filled, slot.isSelf {
+                        Text("You")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(GinRummyPalette.gold.opacity(0.22))
+                            .foregroundStyle(GinRummyPalette.gold)
+                            .clipShape(Capsule())
+                    }
+                }
+                Text(slot.seat == 0 ? "Host" : "Guest")
+                    .font(.caption)
+                    .foregroundStyle(GinRummyPalette.sage)
+            }
+
+            Spacer(minLength: 8)
+
+            readyBadge(for: slot)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .background(panelFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    slot.ready
+                        ? GinRummyPalette.sage.opacity(0.8)
+                        : GinRummyPalette.gold.opacity(filled ? 0.32 : 0.18),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func readyBadge(for slot: SeatDisplay) -> some View {
+        if slot.filled, slot.readyKnown != nil {
+            HStack(spacing: 6) {
+                Image(systemName: slot.ready ? "checkmark.seal.fill" : "hourglass")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(slot.ready ? "Ready" : "Not ready")
+                    .font(.caption.weight(.semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                slot.ready
+                    ? GinRummyPalette.sage.opacity(0.22)
+                    : GinRummyPalette.bgPanel.opacity(0.85)
+            )
+            .foregroundStyle(
+                slot.ready ? GinRummyPalette.cream : GinRummyPalette.sage
+            )
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(
+                        slot.ready ? GinRummyPalette.sage.opacity(0.75) : GinRummyPalette.gold.opacity(0.28),
+                        lineWidth: 1
+                    )
+            )
+        } else {
+            Text("—")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.6))
+        }
+    }
+
+    // MARK: - Share + ready button
+
+    private var sharePanel: some View {
+        VStack(spacing: 12) {
             HStack(spacing: 12) {
                 ShareLink(item: inviteShareLinkURL()) {
                     Label("Share link", systemImage: "square.and.arrow.up")
@@ -308,7 +575,7 @@ struct HostWaitingRoomView: View {
                 .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
 
                 Button("Copy code") {
-                    UIPasteboard.general.string = inviteCode.uppercased()
+                    UIPasteboard.general.string = normalizedCode
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
@@ -321,15 +588,33 @@ struct HostWaitingRoomView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(18)
+        .padding(14)
         .frame(maxWidth: .infinity)
         .background(panelFill)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .ginGoldBorder(cornerRadius: 14)
     }
 
+    private var readyButton: some View {
+        Group {
+            if iAmReady {
+                Button(readyBusy ? "Working…" : "Cancel ready") {
+                    Task { await toggleReady(target: false) }
+                }
+                .buttonStyle(GinGhostButtonStyle())
+                .disabled(readyBusy || !canToggleReady || app.accessToken == nil)
+            } else {
+                Button(readyBusy ? "Readying…" : "Ready up") {
+                    Task { await toggleReady(target: true) }
+                }
+                .buttonStyle(GinPrimaryButtonStyle())
+                .disabled(readyBusy || !canToggleReady || app.accessToken == nil)
+            }
+        }
+    }
+
     private func inviteShareLinkURL() -> URL {
-        AppConfig.inviteShareURL(forInviteCode: inviteCode)
+        AppConfig.inviteShareURL(forInviteCode: normalizedCode)
     }
 
     private func inviteShareLinkHint() -> String {
@@ -339,38 +624,95 @@ struct HostWaitingRoomView: View {
         return "Hosted invite links open the app when Universal Links are configured."
     }
 
-    private func startGuestPolling() {
-        let code = inviteCode.uppercased()
+    // MARK: - Polling + ready action
+
+    private func startPolling() {
         pollTask?.cancel()
         pollTask = Task { @MainActor in
-            while !Task.isCancelled, !guestJoined {
+            var consecutiveFailures = 0
+            while !Task.isCancelled, app.activeGameId == nil {
                 guard let token = app.accessToken else {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     continue
                 }
                 do {
-                    let s = try await app.api.lobbyStatus(code: code, token: token)
-                    if s.guestJoined {
-                        guestJoined = true
+                    let s = try await app.api.lobbyStatus(code: normalizedCode, token: token)
+                    status = s
+                    consecutiveFailures = 0
+                    pollErrorHint = nil
+                    // Server is authoritative for the ready flag — once it
+                    // confirms our seat, drop the optimistic local flag so
+                    // the two never disagree if the server-side toggle was
+                    // rejected (e.g. lobby was closed under us).
+                    if let me = s.players.first(where: { $0.isSelf }) {
+                        localReady = me.ready
+                    }
+                    if let gid = s.gameId, s.lobby.status == "in_game" || s.lobby.status == "closed" {
+                        await transitionToGame(gameId: gid, token: token)
                         return
                     }
-                } catch {}
+                } catch {
+                    consecutiveFailures += 1
+                    // First couple of hiccups are usually a transient blip
+                    // (auth refresh, network jitter); only nag the user once
+                    // it's clear the lobby state isn't going to refresh.
+                    if consecutiveFailures >= 3 {
+                        pollErrorHint = "Can't refresh the lobby — \(UserFeedback.from(error))"
+                    }
+                }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
     }
 
-    private func startVsHuman() async {
-        guard let token = app.accessToken else { return }
-        startBusy = true
-        feedback = ""
-        defer { startBusy = false }
+    /// One-shot fetch of the host's display name for guests so seat 0 doesn't
+    /// look empty before the polling loop catches up (or in case the deployed
+    /// backend hasn't shipped the new `players` array yet — `/preview` has
+    /// always returned `host_display_name`). Idempotent: only runs once per
+    /// view appearance and silently no-ops on failure.
+    private func loadHostPreviewIfNeeded() async {
+        guard previewHostName == nil else { return }
         do {
-            let res = try await app.api.startGame(code: inviteCode.uppercased(), token: token, testBot: false)
-            app.activeGameId = res.gameId
-            app.lastPerspective = res.perspective
-            app.lastBetting = nil
+            let preview = try await app.api.lobbyInvitePreview(inviteCode: normalizedCode)
+            if !preview.host_display_name.isEmpty {
+                previewHostName = preview.host_display_name
+            }
+        } catch {}
+    }
+
+    private func transitionToGame(gameId: String, token: String) async {
+        do {
+            let st = try await app.api.gameState(gameId: gameId, token: token)
+            app.lastPerspective = st.perspective
+            app.lastBetting = st.betting
+            app.activeGameId = gameId
         } catch {
+            // If the state call hiccups (auth refresh mid-poll), still flip the
+            // gameId — GameView will retry the state fetch on its own.
+            app.activeGameId = gameId
+        }
+    }
+
+    private func toggleReady(target: Bool) async {
+        guard let token = app.accessToken else { return }
+        readyBusy = true
+        feedback = ""
+        defer { readyBusy = false }
+        // Flip the optimistic flag immediately so the local seat card shows
+        // "Ready" without waiting for the next poll tick.
+        localReady = target
+        do {
+            let s = try await app.api.setLobbyReady(code: normalizedCode, token: token, ready: target)
+            status = s
+            if let me = s.players.first(where: { $0.isSelf }) {
+                localReady = me.ready
+            }
+            if let gid = s.gameId, s.lobby.status == "in_game" || s.lobby.status == "closed" {
+                await transitionToGame(gameId: gid, token: token)
+            }
+        } catch {
+            // Roll the optimistic flag back so the UI matches the server.
+            localReady = !target
             feedback = UserFeedback.from(error)
             feedbackIsError = true
         }

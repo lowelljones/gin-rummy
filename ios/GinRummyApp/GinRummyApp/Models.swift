@@ -76,16 +76,46 @@ struct LobbyCreateResponse: Codable {
     }
 }
 
+struct LobbyPlayerDTO: Codable, Equatable, Identifiable {
+    let seat: Int
+    let userId: String
+    let displayName: String
+    let ready: Bool
+    let isSelf: Bool
+
+    var id: String { userId }
+
+    enum CodingKeys: String, CodingKey {
+        case seat
+        case userId = "user_id"
+        case displayName = "display_name"
+        case ready
+        case isSelf = "is_self"
+    }
+}
+
 struct LobbyStatusResponse: Codable {
     let lobby: LobbyDTO
     let gameId: String?
-    /// True when seat 1 has been claimed (guest joined).
+    /// True when seat 1 has been claimed (guest joined). Legacy field kept for
+    /// older clients; the new waiting room reads `players` directly instead.
     let guestJoined: Bool
+    /// Which seat the requesting user occupies (0 = host, 1 = guest), or nil
+    /// if they're not in `lobby_players` (e.g. the host before any insert race).
+    let youSeat: Int?
+    /// Every member of the lobby — used to render player cards with display name
+    /// and per-seat ready badge in the unified waiting room.
+    let players: [LobbyPlayerDTO]
+    /// Convenience: server-computed both-seats-ready flag.
+    let bothReady: Bool
 
     enum CodingKeys: String, CodingKey {
         case lobby
         case gameId
         case guestJoined = "guest_joined"
+        case youSeat = "you_seat"
+        case players
+        case bothReady = "both_ready"
     }
 
     init(from decoder: Decoder) throws {
@@ -93,6 +123,9 @@ struct LobbyStatusResponse: Codable {
         lobby = try container.decode(LobbyDTO.self, forKey: .lobby)
         gameId = try container.decodeIfPresent(String.self, forKey: .gameId)
         guestJoined = try container.decodeIfPresent(Bool.self, forKey: .guestJoined) ?? false
+        youSeat = try container.decodeIfPresent(Int.self, forKey: .youSeat)
+        players = try container.decodeIfPresent([LobbyPlayerDTO].self, forKey: .players) ?? []
+        bothReady = try container.decodeIfPresent(Bool.self, forKey: .bothReady) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -100,6 +133,9 @@ struct LobbyStatusResponse: Codable {
         try container.encode(lobby, forKey: .lobby)
         try container.encodeIfPresent(gameId, forKey: .gameId)
         try container.encode(guestJoined, forKey: .guestJoined)
+        try container.encodeIfPresent(youSeat, forKey: .youSeat)
+        try container.encode(players, forKey: .players)
+        try container.encode(bothReady, forKey: .bothReady)
     }
 
     struct LobbyDTO: Codable {
@@ -115,7 +151,7 @@ struct GameStartResponse: Codable {
     let testBot: Bool?
 }
 
-struct BettingDTO: Codable {
+struct BettingDTO: Codable, Equatable {
     let raw: Int?
     let bucket: Int?
 }

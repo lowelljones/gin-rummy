@@ -129,9 +129,18 @@ final class APIClient {
         let _: JoinResponse = try await request(path: "/lobbies/\(code)/join", method: "POST", token: token, body: body)
     }
 
-    /// Polled by the joiner while sitting on the lobby screen; returns `gameId` once the host has started.
+    /// Polled by both players while sitting in the waiting room; returns the latest player roster,
+    /// per-seat ready flags, and a non-null `gameId` once both players have readied up.
     func lobbyStatus(code: String, token: String) async throws -> LobbyStatusResponse {
         try await request(path: "/lobbies/\(code)", method: "GET", token: token)
+    }
+
+    /// Flip the caller's ready flag in the lobby waiting room. When both seats are
+    /// ready the server auto-creates the game; the returned payload will then carry
+    /// a non-null `gameId`, so a single round-trip can drop you straight onto the table.
+    func setLobbyReady(code: String, token: String, ready: Bool) async throws -> LobbyStatusResponse {
+        let body = try JSONSerialization.data(withJSONObject: ["ready": ready])
+        return try await request(path: "/lobbies/\(code)/ready", method: "POST", token: token, body: body)
     }
 
     func startGame(code: String, token: String, testBot: Bool = false) async throws -> GameStartResponse {

@@ -155,6 +155,9 @@ struct GameView: View {
                     Button {
                         showChatSheet = true
                         chatComposeError = nil
+                        if let gid = app.activeGameId {
+                            scheduleChatBaselineLoadOnce(gameId: gid)
+                        }
                     } label: {
                         Image(systemName: "bubble.left.and.bubble.right.fill")
                             .foregroundStyle(GinRummyPalette.gold)
@@ -224,10 +227,29 @@ struct GameView: View {
     }
 
     private func scheduleCardFlight(route: CardFlightAnimationOverlay.Route, card: String) {
+        scheduleCardFlightSequence([(route, card)])
+    }
+
+    /// Plays one or more card flights in order with a small gap between them, so a single
+    /// "collapsed" snapshot can still surface multi-step actions (e.g. your discard → opp
+    /// draw → opp discard when the bot turn round-trips inside one /move response).
+    private func scheduleCardFlightSequence(
+        _ steps: [(route: CardFlightAnimationOverlay.Route, card: String)]
+    ) {
         cardFlightClearTask?.cancel()
-        cardFlight = CardFlightModel(route: route, card: card)
+        guard let first = steps.first else {
+            cardFlight = nil
+            return
+        }
+        cardFlight = CardFlightModel(route: first.route, card: first.card)
         cardFlightClearTask = Task { @MainActor in
+            for i in 1 ..< steps.count {
+                try? await Task.sleep(nanoseconds: 680_000_000)
+                if Task.isCancelled { return }
+                cardFlight = CardFlightModel(route: steps[i].route, card: steps[i].card)
+            }
             try? await Task.sleep(nanoseconds: 680_000_000)
+            if Task.isCancelled { return }
             cardFlight = nil
         }
     }
@@ -275,6 +297,7 @@ struct GameView: View {
             return
         }
 
+        // Opponent's turn ended with the discard the client saw mid-draw (opp had 11 last poll, now 10).
         if b.currentTurn == opp, a.currentTurn == my,
            b.hands[opp].count == 11, a.hands[opp].count == 10,
            let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
@@ -286,14 +309,49 @@ struct GameView: View {
             return
         }
 
+        // Collapsed opponent turn (poll missed the 11-card mid-state): show pickup, then discard.
+        if b.currentTurn == opp, a.currentTurn == my,
+           b.hands[opp].count == 10, a.hands[opp].count == 10,
+           let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
+        {
+            let oppDrewFromStock = a.stockCount < b.stockCount
+            var steps: [(route: CardFlightAnimationOverlay.Route, card: String)] = []
+            if oppDrewFromStock {
+                steps.append((.drawFromStock(toOpponent: true), "AS"))
+            } else {
+                let pickedUp = b.discard.last ?? ""
+                let pickedUpNorm = CardIdValidation.normalize(pickedUp)
+                steps.append((.drawFromDiscard(toOpponent: true), pickedUpNorm))
+            }
+            steps.append((.discardFromHand(isOpponent: true), CardIdValidation.normalize(newTop)))
+            scheduleCardFlightSequence(steps)
+            return
+        }
+
+        // Collapsed bot-game case: your discard + opp draw + opp discard all rolled into one
+        // /move response. Play the full sequence so the opponent's pickup is visible alongside
+        // your own discard, mirroring the feedback you get on your own turn.
         if b.currentTurn == my, a.currentTurn == my,
            b.hands[my].count == 11, a.hands[my].count == 10,
            let discarded = a.discard.last, !discarded.isEmpty, discarded != b.discard.last
         {
-            scheduleCardFlight(
-                route: .discardFromHand(isOpponent: true),
-                card: CardIdValidation.normalize(discarded)
-            )
+            let yourDiscardRaw = b.hands[my].first { !a.hands[my].contains($0) } ?? ""
+            let yourDiscardNorm = CardIdValidation.normalize(yourDiscardRaw)
+            let oppDrewFromStock = a.stockCount < b.stockCount
+
+            var steps: [(route: CardFlightAnimationOverlay.Route, card: String)] = []
+            if !yourDiscardNorm.isEmpty {
+                steps.append((.discardFromHand(isOpponent: false), yourDiscardNorm))
+            }
+            if oppDrewFromStock {
+                steps.append((.drawFromStock(toOpponent: true), "AS"))
+            } else {
+                // Opp drew from discard: the only face-up card they could have taken is the one
+                // you just placed there (your discard is the new top before opp acts).
+                steps.append((.drawFromDiscard(toOpponent: true), yourDiscardNorm))
+            }
+            steps.append((.discardFromHand(isOpponent: true), CardIdValidation.normalize(discarded)))
+            scheduleCardFlightSequence(steps)
         }
     }
 
@@ -688,7 +746,6 @@ struct GameView: View {
                                 )
                             }
                             .padding(8)
-                            .animation(.easeInOut(duration: 0.28), value: surface)
                         }
                     }
                 }
@@ -717,7 +774,7 @@ struct GameView: View {
             chatBaselineLoaded = false
             chatToasts = []
             chatBaselineTask?.cancel()
-            chatBaselineTask = Task { await loadChatBaseline(gameId: gameId) }
+            chatBaselineTask = nil
             pollTask?.cancel()
             pollTask = Task { await pollLoop(gameId: gameId) }
         }
@@ -1142,6 +1199,12 @@ struct GameView: View {
         }
     }
 
+    private func scheduleChatBaselineLoadOnce(gameId: String) {
+        guard !chatBaselineLoaded else { return }
+        guard chatBaselineTask == nil else { return }
+        chatBaselineTask = Task { await loadChatBaseline(gameId: gameId) }
+    }
+
     private func loadChatBaseline(gameId: String) async {
         guard let token = await MainActor.run(body: { app.accessToken }) else { return }
         do {
@@ -1206,25 +1269,34 @@ struct GameView: View {
             do {
                 let s = try await app.api.gameState(gameId: gameId, token: token)
                 await MainActor.run {
+                    scheduleChatBaselineLoadOnce(gameId: gameId)
+
                     let before = app.lastPerspective
-                    app.lastPerspective = s.perspective
-                    app.lastBetting = s.betting
-                    let a = s.perspective
-                    handleAfterPerspectiveUpdate(before: before, after: a)
-                    if let b = before {
-                        let o = 1 - a.seat
-                        let bOpp = b.hands[o], aOpp = a.hands[o]
-                        if aOpp.count == bOpp.count + 1,
-                           b.phase == "upcardOffer",
-                           a.discard.count < b.discard.count
-                        {
-                            downCardStatusMessage = "Opponent Drew Down Card"
-                            messageTask?.cancel()
-                            messageTask = Task {
-                                try? await Task.sleep(nanoseconds: 5_500_000_000)
-                                await MainActor.run {
-                                    if downCardStatusMessage == "Opponent Drew Down Card" {
-                                        downCardStatusMessage = nil
+                    let snapshotChanged =
+                        before == nil
+                        || before != s.perspective
+                        || app.lastBetting != s.betting
+
+                    if snapshotChanged {
+                        app.lastPerspective = s.perspective
+                        app.lastBetting = s.betting
+                        let a = s.perspective
+                        handleAfterPerspectiveUpdate(before: before, after: a)
+                        if let b = before {
+                            let o = 1 - a.seat
+                            let bOpp = b.hands[o], aOpp = a.hands[o]
+                            if aOpp.count == bOpp.count + 1,
+                               b.phase == "upcardOffer",
+                               a.discard.count < b.discard.count
+                            {
+                                downCardStatusMessage = "Opponent Drew Down Card"
+                                messageTask?.cancel()
+                                messageTask = Task {
+                                    try? await Task.sleep(nanoseconds: 5_500_000_000)
+                                    await MainActor.run {
+                                        if downCardStatusMessage == "Opponent Drew Down Card" {
+                                            downCardStatusMessage = nil
+                                        }
                                     }
                                 }
                             }

@@ -191,6 +191,11 @@ private enum CardFanLayout {
 /// Hand along the bottom of the row: same baseline, slight rotation, arc opens toward the table center.
 /// Drag a card to rearrange the hand (no long-press). Small movements still allow tap to select.
 struct FannedHandRow: View {
+    private enum HandReorderFeedback {
+        static let lift = UIImpactFeedbackGenerator(style: .medium)
+        static let slot = UIImpactFeedbackGenerator(style: .light)
+    }
+
     let displayOrder: [String]
     @Binding var selected: String?
     var canReorder: Bool = false
@@ -284,12 +289,13 @@ struct FannedHandRow: View {
         guard let from = displayOrder.firstIndex(of: cardId) else { return }
         dragTranslation = .zero
         lastInsertionIndex = from
+        HandReorderFeedback.lift.prepare()
         withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
             draggingId = cardId
             dragStartIndex = from
             liveOrder = displayOrder
         }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        HandReorderFeedback.lift.impactOccurred()
     }
 
     private func updateDrag(translation: CGSize, step: CGFloat) {
@@ -301,13 +307,14 @@ struct FannedHandRow: View {
         let proposed = max(0, min(n - 1, Int(raw.rounded())))
         guard proposed != lastInsertionIndex else { return }
         lastInsertionIndex = proposed
+        HandReorderFeedback.slot.prepare()
         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.82)) {
             var arr = displayOrder
             let card = arr.remove(at: from)
             arr.insert(card, at: proposed)
             liveOrder = arr
         }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        HandReorderFeedback.slot.impactOccurred()
     }
 
     private func commitDrag() {
@@ -823,7 +830,8 @@ struct CardFlightAnimationOverlay: View {
 
     private var faceDown: Bool {
         switch route {
-        case .drawFromStock(let opp), .drawFromDiscard(let opp): return opp
+        case .drawFromStock(let opp): return opp
+        case .drawFromDiscard: return false
         case .discardFromHand: return false
         }
     }
