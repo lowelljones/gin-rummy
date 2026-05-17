@@ -358,13 +358,47 @@ type LobbyStatusPayload = {
   you_seat: number | null;
   players: LobbyPlayerPublic[];
   both_ready: boolean;
+  /**
+   * Populated when `tryStartHumanGameIfReady` was invoked (from this poll's
+   * self-heal path or from a /ready toggle) and the start failed. Lets the
+   * iOS client surface a real error message instead of sitting on
+   * "Both players ready — starting…" indefinitely when the lobby is stuck.
+   */
+  start_error?: string;
 };
 
 async function buildLobbyStatusPayload(
   lobby: { id: string; invite_code: string; status: string },
-  selfId: string
+  selfId: string,
+  opts?: { selfHeal?: boolean }
 ): Promise<LobbyStatusPayload> {
-  const players = await fetchLobbyPlayersWithNames(lobby.id, selfId);
+  let currentLobby = lobby;
+  let startError: string | undefined;
+
+  // Self-heal: if both seats are ready but the lobby is still "open" (because
+  // a previous /ready handler's tryStartHumanGameIfReady failed mid-way),
+  // attempt it again on this poll. Without this, a single transient game-insert
+  // failure leaves both clients staring at "Both players ready — starting…"
+  // forever; with it, the next 2s poll cycle recovers on its own.
+  if (opts?.selfHeal && currentLobby.status === "open") {
+    const probe = await fetchLobbyPlayersWithNames(currentLobby.id, selfId);
+    const s0 = probe.find((p) => p.seat === 0);
+    const s1 = probe.find((p) => p.seat === 1);
+    if (s0?.ready && s1?.ready) {
+      const start = await tryStartHumanGameIfReady(currentLobby.id);
+      if (start.error) startError = start.error;
+      if (start.gameId || start.error) {
+        const { data: refreshed } = await admin
+          .from("lobbies")
+          .select("id, invite_code, status")
+          .eq("id", currentLobby.id)
+          .single();
+        if (refreshed) currentLobby = refreshed as typeof currentLobby;
+      }
+    }
+  }
+
+  const players = await fetchLobbyPlayersWithNames(currentLobby.id, selfId);
   const guestJoined = players.some((p) => p.seat === 1);
   const you = players.find((p) => p.is_self);
   const seat0 = players.find((p) => p.seat === 0);
@@ -372,38 +406,58 @@ async function buildLobbyStatusPayload(
   const bothReady = Boolean(seat0?.ready && seat1?.ready);
 
   let gameId: string | null = null;
-  if (lobby.status === "in_game" || lobby.status === "closed") {
-    gameId = await findLatestGameId(lobby.id);
+  if (currentLobby.status === "in_game" || currentLobby.status === "closed") {
+    gameId = await findLatestGameId(currentLobby.id);
   }
 
-  return {
-    lobby,
+  const payload: LobbyStatusPayload = {
+    lobby: currentLobby,
     gameId,
     guest_joined: guestJoined,
     you_seat: you ? you.seat : null,
     players,
     both_ready: bothReady,
   };
+  if (startError) payload.start_error = startError;
+  return payload;
 }
+
+type StartAttempt = {
+  /** Set when this call (or a sibling that won the atomic claim) created the game row. */
+  gameId: string | null;
+  /** Set when the start *should* have happened but the DB rejected the game insert
+   * (game-table constraint, network blip, missing column, etc.). Lets the caller
+   * surface a real diagnostic to the iOS client instead of silently returning null. */
+  error?: string;
+};
 
 /**
  * Try to atomically transition an "open" lobby to "in_game" and create the game row.
  * Returns the resulting gameId (newly created or one another writer already created),
- * or null when the lobby isn't ready to start (e.g. only one player, not both ready,
- * or the lobby has been closed). Used by POST /lobbies/:code/ready when both seats
- * have flipped ready=true, so neither client needs an explicit "Start" press.
+ * or null when the lobby isn't ready to start (only one player, not both ready, or
+ * the lobby has been closed). When the start was attempted but failed (e.g. the games
+ * insert was rejected), the returned `error` field carries the original DB message so
+ * the caller can both log it and bubble it up to the client via `start_error`.
+ *
+ * Called from POST /lobbies/:code/ready (the normal path) and GET /lobbies/:code
+ * (self-heal on poll, so a transient failure on the ready toggle doesn't leave the
+ * lobby permanently stuck with both seats ready=true and no game row).
  */
-async function tryStartHumanGameIfReady(lobbyId: string): Promise<string | null> {
-  const { data: players } = await admin
+async function tryStartHumanGameIfReady(lobbyId: string): Promise<StartAttempt> {
+  const { data: playersData, error: playersErr } = await admin
     .from("lobby_players")
     .select("user_id, seat, ready")
     .eq("lobby_id", lobbyId)
     .order("seat", { ascending: true });
-  const seats = (players ?? []) as LobbyPlayerRow[];
+  if (playersErr) {
+    app.log.error({ err: playersErr.message, lobbyId }, "ready: lobby_players read failed");
+    return { gameId: null, error: `lobby_players read failed: ${playersErr.message}` };
+  }
+  const seats = (playersData ?? []) as LobbyPlayerRow[];
   const seat0 = seats.find((p) => Number(p.seat) === 0);
   const seat1 = seats.find((p) => Number(p.seat) === 1);
-  if (!seat0 || !seat1) return null;
-  if (!seat0.ready || !seat1.ready) return null;
+  if (!seat0 || !seat1) return { gameId: null };
+  if (!seat0.ready || !seat1.ready) return { gameId: null };
 
   // Atomic "claim the start" — only one concurrent caller updates the row.
   const { data: claimed, error: claimErr } = await admin
@@ -415,15 +469,20 @@ async function tryStartHumanGameIfReady(lobbyId: string): Promise<string | null>
     .maybeSingle();
   if (claimErr) {
     app.log.error({ err: claimErr.message, lobbyId }, "ready: lobby claim failed");
-    return findLatestGameId(lobbyId);
+    return { gameId: await findLatestGameId(lobbyId), error: `lobby claim failed: ${claimErr.message}` };
   }
   if (!claimed) {
     // Someone else already transitioned the lobby — return whatever game they created.
-    return findLatestGameId(lobbyId);
+    const existing = await findLatestGameId(lobbyId);
+    return { gameId: existing };
   }
 
   const truth = createNewMatch(`lobby-${lobbyId}`, rng());
   const handId = crypto.randomUUID();
+  app.log.info(
+    { lobbyId, seat0: seat0.user_id, seat1: seat1.user_id, handId },
+    "ready: inserting human game"
+  );
   const { data: game, error: gErr } = await admin
     .from("games")
     .insert({
@@ -441,20 +500,27 @@ async function tryStartHumanGameIfReady(lobbyId: string): Promise<string | null>
     .single();
 
   if (gErr || !game) {
-    app.log.error({ err: gErr?.message ?? "no row", lobbyId }, "ready: game insert failed");
-    // Roll the lobby back so a retry can re-attempt.
+    const msg = gErr?.message ?? "no row";
+    app.log.error({ err: msg, lobbyId, seat0: seat0.user_id, seat1: seat1.user_id }, "ready: game insert failed");
+    // Roll the lobby back so a retry (next /ready or the GET self-heal) can re-attempt.
     await admin.from("lobbies").update({ status: "open" }).eq("id", lobbyId).eq("status", "in_game");
-    return null;
+    return { gameId: null, error: `game insert failed: ${msg}` };
   }
 
-  await admin.from("hands").insert({
+  const { error: handErr } = await admin.from("hands").insert({
     id: handId,
     game_id: game.id,
     index: truth.handIndex,
     dealer_seat: truth.dealer,
   });
+  if (handErr) {
+    // Game exists but its first hand row didn't — log it so we can investigate,
+    // but don't fail the start: ensureHand on the next /state call will retry.
+    app.log.error({ err: handErr.message, gameId: game.id }, "ready: hand insert failed");
+  }
 
-  return game.id as string;
+  app.log.info({ lobbyId, gameId: game.id }, "ready: human game started");
+  return { gameId: game.id as string };
 }
 
 /**
@@ -485,7 +551,8 @@ app.get("/lobbies/:code", async (req, reply) => {
 
   return buildLobbyStatusPayload(
     { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
-    user.id
+    user.id,
+    { selfHeal: true }
   );
 });
 
@@ -539,8 +606,10 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
     .eq("user_id", user.id);
   if (rErr) return reply.code(500).send({ error: rErr.message });
 
+  let startError: string | undefined;
   if (ready) {
-    await tryStartHumanGameIfReady(lobby.id);
+    const attempt = await tryStartHumanGameIfReady(lobby.id);
+    if (attempt.error) startError = attempt.error;
   }
 
   // Re-read lobby (its status may have flipped to in_game) so the payload
@@ -551,10 +620,12 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
     .eq("id", lobby.id)
     .single();
 
-  return buildLobbyStatusPayload(
+  const payload = await buildLobbyStatusPayload(
     lobbyAfter ?? { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
     user.id
   );
+  if (startError && !payload.start_error) payload.start_error = startError;
+  return payload;
 });
 
 app.post("/lobbies/:code/join", async (req, reply) => {

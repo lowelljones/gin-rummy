@@ -28,6 +28,19 @@ struct LobbyView: View {
         .onChange(of: app.lobbyInviteJoinHandoffNonce) {
             applyLobbyInviteJoinHandoffIfNeeded()
         }
+        .onChange(of: app.activeGameId) { _, newValue in
+            // When the waiting room flips `activeGameId`, RootView's outer
+            // view swaps from LobbyView to GameView. With our nested
+            // NavigationStack (RootView's NS containing LobbyView's NS with
+            // the waiting room pushed on top), SwiftUI sometimes keeps the
+            // pushed waiting room on screen instead of unmounting cleanly,
+            // leaving the user staring at "Game starting…" on the lobby
+            // screen forever. Popping the inner path first guarantees the
+            // waiting room is gone before RootView swaps its root.
+            if newValue != nil, !path.isEmpty {
+                path = NavigationPath()
+            }
+        }
     }
 
     private var homeScreen: some View {

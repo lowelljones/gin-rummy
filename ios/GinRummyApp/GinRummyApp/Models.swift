@@ -108,6 +108,11 @@ struct LobbyStatusResponse: Codable {
     let players: [LobbyPlayerDTO]
     /// Convenience: server-computed both-seats-ready flag.
     let bothReady: Bool
+    /// Populated when the server attempted to start the game (both seats ready)
+    /// but the game-row insert was rejected. Lets the iOS waiting room surface
+    /// a real diagnostic instead of sitting on "Both players ready — starting…"
+    /// indefinitely while the GET self-heal retries.
+    let startError: String?
 
     enum CodingKeys: String, CodingKey {
         case lobby
@@ -116,6 +121,7 @@ struct LobbyStatusResponse: Codable {
         case youSeat = "you_seat"
         case players
         case bothReady = "both_ready"
+        case startError = "start_error"
     }
 
     init(from decoder: Decoder) throws {
@@ -126,6 +132,7 @@ struct LobbyStatusResponse: Codable {
         youSeat = try container.decodeIfPresent(Int.self, forKey: .youSeat)
         players = try container.decodeIfPresent([LobbyPlayerDTO].self, forKey: .players) ?? []
         bothReady = try container.decodeIfPresent(Bool.self, forKey: .bothReady) ?? false
+        startError = try container.decodeIfPresent(String.self, forKey: .startError)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -136,6 +143,7 @@ struct LobbyStatusResponse: Codable {
         try container.encodeIfPresent(youSeat, forKey: .youSeat)
         try container.encode(players, forKey: .players)
         try container.encode(bothReady, forKey: .bothReady)
+        try container.encodeIfPresent(startError, forKey: .startError)
     }
 
     struct LobbyDTO: Codable {

@@ -279,6 +279,19 @@ struct LobbyWaitingRoomView: View {
                     FeedbackLine(text: hint, isError: true, privateClubStyle: true)
                 }
 
+                if let startError = status?.startError, !startError.isEmpty {
+                    // Surfaced when the server tried to flip the lobby to in_game
+                    // but the games-row insert was rejected (DB constraint, missing
+                    // column, etc.). Without this the player would just stare at
+                    // "Both players ready — starting…" forever while the GET poll
+                    // self-heal retries silently.
+                    FeedbackLine(
+                        text: "Couldn't start the game: \(startError)",
+                        isError: true,
+                        privateClubStyle: true
+                    )
+                }
+
                 if !feedback.isEmpty {
                     FeedbackLine(text: feedback, isError: feedbackIsError, privateClubStyle: true)
                 }
