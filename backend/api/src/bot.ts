@@ -32,6 +32,9 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
      * past the End-of-hand screen and the hand-2+ down-card phase. */
     return null;
   }
+  if (state.redeal?.status === "pending" && state.redeal.fromSeat !== TEST_BOT_SEAT) {
+    return { type: "respondRedeal", seat: TEST_BOT_SEAT, accept: true };
+  }
   if (state.phase === "cutForDeal" && state.cut) {
     if (state.cut.picks[TEST_BOT_SEAT] !== null) return null;
     if (cutActivePicker(state.cut) !== TEST_BOT_SEAT) return null;
@@ -71,6 +74,7 @@ export function hasTestBotWork(state: ServerTruth): boolean {
   /* Never auto-ack handOver — the human must press Continue so they see the
    * end-of-hand UI and the upcardOffer ("down card") UI on the next deal. */
   if (state.phase === "handOver") return false;
+  if (state.redeal?.status === "pending" && state.redeal.fromSeat !== TEST_BOT_SEAT) return true;
   if (state.phase === "cutForDeal" && state.cut) {
     if (state.cut.picks[TEST_BOT_SEAT] !== null) return false;
     return cutActivePicker(state.cut) === TEST_BOT_SEAT;

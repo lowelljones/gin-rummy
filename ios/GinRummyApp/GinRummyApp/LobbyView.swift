@@ -116,7 +116,11 @@ struct LobbyView: View {
             let started = try await app.api.startGame(code: code, token: token, testBot: true)
             await MainActor.run {
                 app.activeGameId = started.gameId
-                app.lastPerspective = started.perspective
+                app.applyGameTableState(
+                    perspective: started.perspective,
+                    betting: nil,
+                    opponentDisplayName: started.opponentDisplayName
+                )
             }
         } catch {
             toast = UserFeedback.from(error)

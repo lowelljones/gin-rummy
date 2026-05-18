@@ -738,10 +738,15 @@ app.post("/lobbies/:code/start", async (req, reply) => {
 
   const finalTruth = (gameAfter?.server_truth as ServerTruth) ?? (game.server_truth as ServerTruth);
   const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id)!;
+  const oppName = await opponentDisplayNameForGame(
+    (game as { seat_for_user: Record<string, number> }).seat_for_user,
+    user.id,
+  );
   return {
     gameId: game.id,
     perspective: buildPerspective(finalTruth, seat),
     testBot: true,
+    opponentDisplayName: oppName,
   };
 });
 
@@ -764,10 +769,15 @@ app.get("/games/:id/state", async (req, reply) => {
   if (seat === null) return reply.code(403).send({ error: "Not a participant" });
 
   const truth = game.server_truth as ServerTruth;
+  const oppName = await opponentDisplayNameForGame(
+    (game as { seat_for_user: Record<string, number> }).seat_for_user,
+    user.id,
+  );
   return {
     perspective: buildPerspective(truth, seat),
     moveSeq: game.move_seq,
     status: game.status,
+    opponentDisplayName: oppName,
     betting:
       truth.phase === "matchOver"
         ? { raw: truth.bettingRaw, bucket: truth.bettingBucket }
@@ -793,6 +803,23 @@ async function displayNamesForUserIds(userIds: string[]): Promise<Record<string,
     map[id] = raw && raw.length > 0 ? raw : "Player";
   }
   return map;
+}
+
+function opponentUserIdFromSeatMap(seatMap: Record<string, number>, selfId: string): string | null {
+  const selfSeat = seatMap[selfId];
+  if (selfSeat !== 0 && selfSeat !== 1) return null;
+  const wantSeat = 1 - selfSeat;
+  for (const [uid, s] of Object.entries(seatMap)) {
+    if (s === wantSeat) return uid;
+  }
+  return null;
+}
+
+async function opponentDisplayNameForGame(seatMap: Record<string, number>, selfId: string): Promise<string> {
+  const oid = opponentUserIdFromSeatMap(seatMap, selfId);
+  if (!oid) return "Opponent";
+  const names = await displayNamesForUserIds([oid]);
+  return names[oid] ?? "Opponent";
 }
 
 function formatChatRows(rows: ChatRow[], selfId: string, names: Record<string, string>) {
@@ -979,9 +1006,15 @@ app.post("/games/:id/move", async (req, reply) => {
   const finalTruth = (after?.server_truth as ServerTruth) ?? newTruth;
   const finalSeq = after ? Number(after.move_seq) : nextSeq;
 
+  const oppName = await opponentDisplayNameForGame(
+    (game as { seat_for_user: Record<string, number> }).seat_for_user,
+    user.id,
+  );
+
   return {
     perspective: buildPerspective(finalTruth, seat),
     moveSeq: finalSeq,
+    opponentDisplayName: oppName,
     betting: finalTruth.phase === "matchOver" ? { raw: finalTruth.bettingRaw, bucket: finalTruth.bettingBucket } : null,
   };
 });
@@ -999,6 +1032,14 @@ function parseClientIntent(body: { intent?: unknown }, seat: 0 | 1): Intent {
     if (!Number.isFinite(index)) throw new Error("cutPick: invalid index");
     return { type: "cutPick", seat, index };
   }
+  if (t === "proposeRedeal") {
+    return { type: "proposeRedeal", seat };
+  }
+  if (t === "respondRedeal") {
+    const r = raw as { accept?: unknown };
+    if (typeof r.accept !== "boolean") throw new Error("respondRedeal requires accept (boolean)");
+    return { type: "respondRedeal", seat, accept: r.accept };
+  }
   return normalizeIntentSeat(raw as Intent, seat);
 }
 
@@ -1013,6 +1054,9 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
     case "declareBigGin":
     case "layoffDone":
     case "layoffAttach":
+      return { ...intent, seat };
+    case "proposeRedeal":
+    case "respondRedeal":
       return { ...intent, seat };
     case "ackHandOver":
       return intent;

@@ -18,6 +18,8 @@ struct GameView: View {
     @State private var postCutTask: Task<Void, Never>?
     @State private var lastYouPickup: PickupSource? = nil
     @State private var lastOpponentPickup: PickupSource? = nil
+    /// Stock size right after our discard completes, before the opponent picks up — used when a poll skips their 10→11 draw step.
+    @State private var stockCountAfterOurDiscardEndsTurn: Int? = nil
     @State private var youAcceptedDownCardPendingDiscard = false
     @State private var opponentAcceptedDownCardPendingDiscard = false
 
@@ -26,16 +28,30 @@ struct GameView: View {
     @State private var chatWatermarkIso: String?
     @State private var chatBaselineLoaded = false
     @State private var chatToasts: [ChatToastItem] = []
+    @State private var chatUnreadCount = 0
     @State private var chatComposeError: String?
     @State private var chatBaselineTask: Task<Void, Never>?
 
     private struct ChatToastItem: Identifiable, Equatable {
         let id: String
-        let title: String
-        let subtitle: String
+        /// Single-line banner copy: "Name: message…"
+        let text: String
     }
 
     private static let chatEpochIso = "1970-01-01T00:00:00.000Z"
+
+    private var chatUnreadBadgeLabel: String {
+        if chatUnreadCount > 99 { return "99+" }
+        return "\(chatUnreadCount)"
+    }
+
+    private var chatToolbarAccessibilityLabel: String {
+        switch chatUnreadCount {
+        case 0: return "Open chat"
+        case 1: return "Open chat, 1 unread message"
+        default: return "Open chat, \(chatUnreadCount) unread messages"
+        }
+    }
 
     private enum PickupSource: Equatable {
         case deck
@@ -154,15 +170,28 @@ struct GameView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showChatSheet = true
+                        chatUnreadCount = 0
                         chatComposeError = nil
                         if let gid = app.activeGameId {
                             scheduleChatBaselineLoadOnce(gameId: gid)
                         }
                     } label: {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .foregroundStyle(GinRummyPalette.gold)
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                                .foregroundStyle(GinRummyPalette.gold)
+                            if chatUnreadCount > 0 {
+                                Text(chatUnreadBadgeLabel)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, chatUnreadCount > 9 ? 5 : 0)
+                                    .frame(minWidth: 17, minHeight: 17)
+                                    .background(Color.red, in: Capsule())
+                                    .offset(x: 9, y: -7)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                     }
-                    .accessibilityLabel("Open chat")
+                    .accessibilityLabel(chatToolbarAccessibilityLabel)
                 }
             }
         }
@@ -753,6 +782,18 @@ struct GameView: View {
         }
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
         .animation(.easeInOut(duration: 0.28), value: surface)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: p.redeal?.status)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: p.redeal?.fromSeat)
+        .overlay(alignment: .top) {
+            redealProposalBanner(
+                gameId: gameId,
+                p: p,
+                feedbackText: $feedbackText,
+                feedbackIsError: $feedbackIsError
+            )
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+        }
         .overlay(alignment: .topTrailing) {
             chatToastStack()
                 .padding(.top, 6)
@@ -773,6 +814,7 @@ struct GameView: View {
             chatWatermarkIso = nil
             chatBaselineLoaded = false
             chatToasts = []
+            chatUnreadCount = 0
             chatBaselineTask?.cancel()
             chatBaselineTask = nil
             pollTask?.cancel()
@@ -895,6 +937,46 @@ struct GameView: View {
         func who(_ seat: Int) -> String { seat == my ? "You" : "Opponent" }
         func actionBackTo(_ seat: Int) -> String { seat == my ? "You" : "Opponent" }
 
+        func opponentDiscardedPickupLine(for discarded: String) -> String {
+            defer {
+                lastOpponentPickup = nil
+                stockCountAfterOurDiscardEndsTurn = nil
+            }
+
+            switch lastOpponentPickup {
+            case .deck:
+                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the deck"
+            case let .discard(c):
+                let what = c.isEmpty ? "from the discard pile" : "\(cardName(c)) from the discard pile"
+                return "This hand · Opponent discarded \(cardName(discarded)) after drawing \(what)"
+            case .downCard:
+                return "This hand · Opponent discarded \(cardName(discarded)) after taking the down card"
+            case .none:
+                break
+            }
+
+            // Poll often skips the opponent’s 10→11 draw transition; comparing only (before,after) stock
+            // mid-turn falsely looks like “no deck draw”. Baseline was captured when they became active.
+            if let baseline = stockCountAfterOurDiscardEndsTurn {
+                if b.stockCount < baseline {
+                    return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the deck"
+                }
+                // Stock never dipped vs our post-discard snapshot ⇒ they lifted the face-up discard. We skipped
+                // their 10→11 poll, so naming the lifted card isn't reliable (discard top mid-turn differs).
+                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the discard pile"
+            }
+
+            // Legacy heuristic (baseline missing): stock drop across the snapshots we happened to observe.
+            if b.stockCount > a.stockCount {
+                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the deck"
+            }
+            let drawn = b.discard.last ?? ""
+            if drawn.isEmpty {
+                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the discard pile"
+            }
+            return "This hand · Opponent discarded \(cardName(discarded)) after drawing \(cardName(drawn)) from the discard pile"
+        }
+
         // --- Down card phase ---
         if b.phase != "upcardOffer", a.phase == "upcardOffer" {
             return a.currentTurn == my
@@ -981,6 +1063,11 @@ struct GameView: View {
            b.hands[my].count == 11, a.hands[my].count == 10,
            let discarded = a.discard.last, !discarded.isEmpty, discarded != b.discard.last
         {
+            // Beginning a fresh opponent turn: stale pickup state would mis-attribute this turn.
+            lastOpponentPickup = nil
+            // Stockpile size after our discard resolves; opponent deck draw lowers this vs this baseline mid-turn.
+            stockCountAfterOurDiscardEndsTurn = a.stockCount
+
             if youAcceptedDownCardPendingDiscard {
                 youAcceptedDownCardPendingDiscard = false
                 lastYouPickup = nil
@@ -1013,12 +1100,21 @@ struct GameView: View {
            b.hands[my].count == 11, a.hands[my].count == 10,
            let discarded = a.discard.last, !discarded.isEmpty
         {
+            // Prefer accurate pickup info when we actually saw opponent 10→11; do not use stock baseline alone here
+            // (baseline can linger across unrelated transitions when both snapshots still look like "your" turn).
+            if lastOpponentPickup != nil {
+                return opponentDiscardedPickupLine(for: discarded)
+            }
             let dc = a.discard.count - b.discard.count
             // After your discard only: +1. Opponent draws from stock then discards: +2 vs snapshot before you discarded.
             // Opponent takes discard then discards: net +1 vs that snapshot.
             if b.stockCount > a.stockCount || dc >= 2 {
+                lastOpponentPickup = nil
+                stockCountAfterOurDiscardEndsTurn = nil
                 return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the deck"
             }
+            lastOpponentPickup = nil
+            stockCountAfterOurDiscardEndsTurn = nil
             return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the discard pile"
         }
 
@@ -1026,14 +1122,7 @@ struct GameView: View {
            b.currentTurn != my, a.currentTurn == my,
            let discarded = a.discard.last, !discarded.isEmpty
         {
-            if b.stockCount > a.stockCount {
-                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the deck"
-            }
-            let drawn = b.discard.last ?? ""
-            if drawn.isEmpty {
-                return "This hand · Opponent discarded \(cardName(discarded)) after drawing from the discard pile"
-            }
-            return "This hand · Opponent discarded \(cardName(discarded)) after drawing \(cardName(drawn)) from the discard pile"
+            return opponentDiscardedPickupLine(for: discarded)
         }
 
         return nil
@@ -1186,17 +1275,22 @@ struct GameView: View {
     private func chatToastStack() -> some View {
         VStack(alignment: .trailing, spacing: 8) {
             ForEach(chatToasts) { toast in
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(toast.title)
-                        .font(.caption.bold())
-                    Text(toast.subtitle)
-                        .font(.caption2)
-                        .multilineTextAlignment(.trailing)
-                }
-                .padding(10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                Text(toast.text)
+                    .font(.subheadline.weight(.medium))
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(3)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .opacity
+                    ))
             }
         }
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: chatToasts.map(\.id))
     }
 
     private func scheduleChatBaselineLoadOnce(gameId: String) {
@@ -1236,6 +1330,7 @@ struct GameView: View {
                     known.insert(m.id)
                     chatMessages.append(m)
                     if !m.fromSelf && !sheetOpen {
+                        chatUnreadCount += 1
                         enqueueChatToast(for: m)
                     }
                 }
@@ -1246,14 +1341,21 @@ struct GameView: View {
     }
 
     private func enqueueChatToast(for message: GameChatMessageDTO) {
-        let subtitle =
+        let snippet =
             message.body.count > 100 ? String(message.body.prefix(100)) + "…" : message.body
-        let item = ChatToastItem(id: message.id, title: message.displayName, subtitle: subtitle)
-        chatToasts.append(item)
+        let item = ChatToastItem(
+            id: message.id,
+            text: "\(message.displayName): \(snippet)"
+        )
+        withAnimation {
+            chatToasts.append(item)
+        }
         Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
             await MainActor.run {
-                chatToasts.removeAll { $0.id == message.id }
+                withAnimation {
+                    chatToasts.removeAll { $0.id == message.id }
+                }
             }
         }
     }
@@ -1278,8 +1380,11 @@ struct GameView: View {
                         || app.lastBetting != s.betting
 
                     if snapshotChanged {
-                        app.lastPerspective = s.perspective
-                        app.lastBetting = s.betting
+                        app.applyGameTableState(
+                            perspective: s.perspective,
+                            betting: s.betting,
+                            opponentDisplayName: s.opponentDisplayName
+                        )
                         let a = s.perspective
                         handleAfterPerspectiveUpdate(before: before, after: a)
                         if let b = before {
@@ -1342,75 +1447,216 @@ struct GameView: View {
         feedbackIsError: Binding<Bool>,
         selectedHandCard: Binding<String?>
     ) -> some View {
-        Group {
-            switch surface {
-            case .postCutReveal:
-                EmptyView()
-            case .matchOver:
-                Button("Return to lobby") {
-                    pollTask?.cancel()
-                    postCutTask?.cancel()
-                    cardFlightClearTask?.cancel()
-                    messageTask?.cancel()
-                    app.activeGameId = nil
-                    app.lastPerspective = nil
-                    app.lastBetting = nil
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.burgundy)
-                .controlSize(.large)
-            case .cutForDeal:
-                // Cut actions live in CutForDealView (center table).
-                EmptyView()
-            case .downCard:
-                upcardButtons(
-                    gameId: gameId,
-                    p: p,
-                    token: app.accessToken,
-                    feedbackText: feedbackText,
-                    feedbackIsError: feedbackIsError
-                )
-            case .play:
-                if p.currentTurn == p.seat {
-                    playButtons(
-                        gameId: gameId,
-                        p: p,
-                        token: app.accessToken,
-                        feedbackText: feedbackText,
-                        feedbackIsError: feedbackIsError,
-                        selectedHandCard: selectedHandCard
-                    )
-                } else {
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                switch surface {
+                case .postCutReveal:
                     EmptyView()
-                }
-            case .knockLayoff:
-                if p.knock?.layoffTurn == p.seat {
-                    knockButtons(
+                case .matchOver:
+                    Button("Return to lobby") {
+                        pollTask?.cancel()
+                        postCutTask?.cancel()
+                        cardFlightClearTask?.cancel()
+                        messageTask?.cancel()
+                        app.activeGameId = nil
+                        app.lastPerspective = nil
+                        app.lastBetting = nil
+                        app.opponentDisplayName = "Opponent"
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(GinRummyPalette.burgundy)
+                    .controlSize(.large)
+                case .cutForDeal:
+                    // Cut actions live in CutForDealView (center table).
+                    EmptyView()
+                case .downCard:
+                    upcardButtons(
                         gameId: gameId,
                         p: p,
                         token: app.accessToken,
                         feedbackText: feedbackText,
                         feedbackIsError: feedbackIsError
                     )
-                } else {
-                    EmptyView()
-                }
-            case .handOver:
-                Button("Continue") {
-                    Task {
-                        await send(
+                case .play:
+                    if p.currentTurn == p.seat {
+                        playButtons(
                             gameId: gameId,
+                            p: p,
                             token: app.accessToken,
-                            intent: ["type": "ackHandOver"],
-                            success: "Hand acknowledged.",
+                            feedbackText: feedbackText,
+                            feedbackIsError: feedbackIsError,
+                            selectedHandCard: selectedHandCard
+                        )
+                    } else {
+                        EmptyView()
+                    }
+                case .knockLayoff:
+                    if p.knock?.layoffTurn == p.seat {
+                        knockButtons(
+                            gameId: gameId,
+                            p: p,
+                            token: app.accessToken,
                             feedbackText: feedbackText,
                             feedbackIsError: feedbackIsError
                         )
+                    } else {
+                        EmptyView()
                     }
+                case .handOver:
+                    Button("Continue") {
+                        Task {
+                            await send(
+                                gameId: gameId,
+                                token: app.accessToken,
+                                intent: ["type": "ackHandOver"],
+                                success: "Hand acknowledged.",
+                                feedbackText: feedbackText,
+                                feedbackIsError: feedbackIsError
+                            )
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(GinRummyPalette.navy)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.navy)
             }
+            if proposeRedealSurface(surface) {
+                proposeRedealFooter(
+                    gameId: gameId,
+                    p: p,
+                    feedbackText: feedbackText,
+                    feedbackIsError: feedbackIsError
+                )
+            }
+        }
+    }
+
+    private func proposeRedealSurface(_ surface: GamePlaySurface) -> Bool {
+        switch surface {
+        case .downCard, .play, .knockLayoff: true
+        default: false
+        }
+    }
+
+    @ViewBuilder
+    private func proposeRedealFooter(
+        gameId: String,
+        p: PlayerPerspective,
+        feedbackText: Binding<String>,
+        feedbackIsError: Binding<Bool>
+    ) -> some View {
+        let pending = p.redeal?.status == "pending"
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().opacity(0.35)
+            Button("Propose redeal") {
+                Task {
+                    await send(
+                        gameId: gameId,
+                        token: app.accessToken,
+                        intent: ["type": "proposeRedeal"],
+                        success: "Redeal proposed — waiting on opponent.",
+                        feedbackText: feedbackText,
+                        feedbackIsError: feedbackIsError
+                    )
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(GinRummyPalette.gold)
+            .disabled(pending)
+            if pending, p.redeal?.fromSeat == p.seat {
+                Text("Waiting on \(app.opponentDisplayName)…")
+                    .font(.caption)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func redealProposalBanner(
+        gameId: String,
+        p: PlayerPerspective,
+        feedbackText: Binding<String>,
+        feedbackIsError: Binding<Bool>
+    ) -> some View {
+        if let r = p.redeal {
+            let opp = app.opponentDisplayName
+            VStack(alignment: .leading, spacing: 10) {
+                if r.status == "pending", r.fromSeat == p.seat {
+                    Label("Redeal proposed", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(GinRummyPalette.cream)
+                    Text("Waiting for \(opp) to confirm…")
+                        .font(.caption)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                } else if r.status == "pending" {
+                    Text("\(opp) proposed a redeal")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(GinRummyPalette.cream)
+                    HStack(spacing: 14) {
+                        Button {
+                            Task {
+                                await send(
+                                    gameId: gameId,
+                                    token: app.accessToken,
+                                    intent: ["type": "respondRedeal", "accept": true],
+                                    success: "Redeal accepted.",
+                                    feedbackText: feedbackText,
+                                    feedbackIsError: feedbackIsError
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.green.opacity(0.95))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Accept redeal")
+
+                        Button {
+                            Task {
+                                await send(
+                                    gameId: gameId,
+                                    token: app.accessToken,
+                                    intent: ["type": "respondRedeal", "accept": false],
+                                    success: "Redeal declined.",
+                                    feedbackText: feedbackText,
+                                    feedbackIsError: feedbackIsError
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.red.opacity(0.92))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Decline redeal")
+
+                        Spacer(minLength: 0)
+                    }
+                } else if r.status == "declined", r.fromSeat == p.seat {
+                    Label("\(opp) declined the redeal", systemImage: "xmark.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.cream)
+                    Text("Keep playing — or propose again after your next move.")
+                        .font(.caption2)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                } else if r.status == "declined" {
+                    Label("You declined the redeal", systemImage: "hand.thumbsdown.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.cream)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(GinRummyPalette.navy.opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(GinRummyPalette.gold.opacity(0.35), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -1532,8 +1778,11 @@ struct GameView: View {
             let r = try await app.api.submitMove(gameId: gameId, token: token, intent: intent)
             await MainActor.run {
                 let before = app.lastPerspective
-                app.lastPerspective = r.perspective
-                app.lastBetting = r.betting
+                app.applyGameTableState(
+                    perspective: r.perspective,
+                    betting: r.betting,
+                    opponentDisplayName: r.opponentDisplayName
+                )
                 let after = r.perspective
                 handleAfterPerspectiveUpdate(before: before, after: after)
                 feedbackText.wrappedValue = success
@@ -1613,8 +1862,11 @@ private struct CutForDealView: View {
                     intent: ["type": "cutPick", "index": i]
                 )
                 await MainActor.run {
-                    app.lastPerspective = r.perspective
-                    app.lastBetting = r.betting
+                    app.applyGameTableState(
+                        perspective: r.perspective,
+                        betting: r.betting,
+                        opponentDisplayName: r.opponentDisplayName
+                    )
                     if let b = beforePick {
                         onAfterCutPick?(b, r.perspective)
                     }
@@ -1693,7 +1945,7 @@ private struct DiscardHelper: View {
         if canGin { return "Gin available — declare for the bonus." }
         if canPlain, !canKnock {
             if MeldSolver.upcardKnockValue(knockCheckCard) == nil {
-                return "Knock disabled — Ace upcard."
+                return "Knock disabled — first upcard is an Ace (no knock this hand, even with 1 deadwood)."
             }
             if let kv = MeldSolver.upcardKnockValue(knockCheckCard) {
                 return "Knock needs deadwood exactly \(kv) after this discard (first upcard)."
@@ -1740,8 +1992,11 @@ private struct DiscardHelper: View {
             let r = try await app.api.submitMove(gameId: gameId, token: token, intent: intent)
             await MainActor.run {
                 let before = app.lastPerspective
-                app.lastPerspective = r.perspective
-                app.lastBetting = r.betting
+                app.applyGameTableState(
+                    perspective: r.perspective,
+                    betting: r.betting,
+                    opponentDisplayName: r.opponentDisplayName
+                )
                 onAfterSuccessfulMove?(before, r.perspective)
                 if plain, !knock, !gin {
                     onAfterSuccessfulDiscard?(c, before, r.perspective)

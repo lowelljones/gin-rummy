@@ -72,7 +72,55 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     bettingRaw: null,
     bettingBucket: null,
     seenBy: {},
+    redeal: null,
   };
+}
+
+/** Same hand number and dealer; fresh shuffle and back to down-card (upcard) phase. */
+function voidAndRedeal(state: ServerTruth, rng: () => number): void {
+  state.seenBy = {};
+  state.knock = null;
+  state.upcardOffer = null;
+  state.knockCheckCard = null;
+  state.stock = [];
+  state.discard = [];
+  state.hands = [[], []];
+  state.lastHandWinner = null;
+  state.lastHandPoints = null;
+  beginHand(state, rng);
+}
+
+function applyProposeRedeal(state: ServerTruth, seat: Seat): ApplyOutcome {
+  const okPhases = new Set<ServerTruth["phase"]>(["upcardOffer", "play", "knockLayoff"]);
+  if (!okPhases.has(state.phase)) {
+    return { ok: false, error: "Redeal can only be proposed during the down card, play, or layoff phase" };
+  }
+  const cur = state.redeal;
+  if (cur?.status === "pending") {
+    if (cur.fromSeat === seat) {
+      return { ok: false, error: "Redeal already proposed — waiting on your opponent" };
+    }
+    return { ok: false, error: "Your opponent already proposed a redeal — respond to that first" };
+  }
+  state.redeal = { fromSeat: seat, status: "pending" };
+  return { ok: true, state };
+}
+
+function applyRespondRedeal(state: ServerTruth, seat: Seat, accept: boolean, rng: () => number): ApplyOutcome {
+  const cur = state.redeal;
+  if (!cur || cur.status !== "pending") {
+    return { ok: false, error: "No pending redeal proposal" };
+  }
+  if (cur.fromSeat === seat) {
+    return { ok: false, error: "You cannot respond to your own redeal proposal" };
+  }
+  if (accept) {
+    state.redeal = null;
+    voidAndRedeal(state, rng);
+    return { ok: true, state };
+  }
+  state.redeal = { fromSeat: cur.fromSeat, status: "declined" };
+  return { ok: true, state };
 }
 
 function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
@@ -174,6 +222,30 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
 
   if (s.phase === "matchOver") {
     return { ok: false, error: "Match is over" };
+  }
+
+  /* Declined proposals clear as soon as either player makes an ordinary move. */
+  if (s.redeal?.status === "declined") {
+    if (intent.type !== "proposeRedeal" && intent.type !== "respondRedeal") {
+      s.redeal = null;
+    }
+  }
+
+  if (s.redeal?.status === "pending") {
+    if (intent.type === "respondRedeal") {
+      return applyRespondRedeal(s, intent.seat, intent.accept, rng);
+    }
+    if (intent.type === "proposeRedeal") {
+      return { ok: false, error: "A redeal is already pending — wait for your opponent’s response" };
+    }
+    return { ok: false, error: "Respond to the redeal proposal first (accept or decline)" };
+  }
+
+  if (intent.type === "proposeRedeal") {
+    return applyProposeRedeal(s, intent.seat);
+  }
+  if (intent.type === "respondRedeal") {
+    return { ok: false, error: "No pending redeal proposal" };
   }
 
   if (s.phase === "handOver") {
@@ -392,9 +464,16 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
     /**
      * Equality knock: after discarding, the knocker's best deadwood total must equal the
      * first upcard's deadwood value (same as knock points: A=1, 2–9 face, T/J/Q/K=10).
-     * Ace as first upcard ⇒ no knock this hand (`upcardKnockValue` is null).
+     * Ace as first upcard ⇒ no knock this hand for either player (`upcardKnockValue` is null),
+     * including when unmelded would be 1.
      */
-    if (knockVal === null) return { ok: false, error: "Cannot knock when knock card is an Ace" };
+    if (knockVal === null) {
+      return {
+        ok: false,
+        error:
+          "Knocking is not allowed when the first upcard is an Ace (no knock for this hand, even with 1 deadwood).",
+      };
+    }
     if (layout) {
       if (!validateKnockerLayout(hand10, layout.melds, layout.deadwood)) {
         return { ok: false, error: "Invalid knocker layout" };

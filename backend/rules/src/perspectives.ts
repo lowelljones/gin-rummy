@@ -23,6 +23,8 @@ export interface PlayerPerspective {
   lastCut: { p0: CardId; p1: CardId; nonDealer: Seat } | null;
   /** High-card cut: face-down spread; each pick is visible to both players after it is made. */
   cut: CutPerspective | null;
+  /** Mid-hand mutual redeal proposal (optional on legacy rows). */
+  redeal: null | { fromSeat: Seat; status: "pending" | "declined" };
   /** Cards opponent is known to hold (from draws you did not see — usually empty). */
   inferred: Record<string, unknown>;
 }
@@ -102,6 +104,7 @@ export function buildPerspective(state: ServerTruth, viewer: Seat): PlayerPerspe
     knockCheckCard: state.knockCheckCard,
     lastCut: state.lastCutResult ?? null,
     cut: state.cut ? buildCutPerspective(state.cut, viewer) : null,
+    redeal: state.redeal ?? null,
     inferred: {},
   };
 }

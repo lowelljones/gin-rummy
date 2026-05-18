@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
 
     @Published var activeGameId: String?
     @Published var lastPerspective: PlayerPerspective?
+    /// Display name for the other seat at the table (from API; defaults to "Opponent").
+    @Published var opponentDisplayName: String = "Opponent"
     /// Final-match settlement. Server populates `{ raw, bucket }` only when phase == matchOver;
     /// reset to nil between hands and on signOut.
     @Published var lastBetting: BettingDTO?
@@ -115,6 +117,7 @@ final class AppModel: ObservableObject {
         expiresAt = nil
         activeGameId = nil
         lastPerspective = nil
+        opponentDisplayName = "Opponent"
         lastBetting = nil
         KeychainStore.clear()
         reconcileInviteAcceptPresentation()
@@ -165,6 +168,16 @@ final class AppModel: ObservableObject {
             return
         }
         KeychainStore.saveSession(StoredSession(accessToken: access, refreshToken: refresh, expiresAt: exp))
+    }
+
+    /// Updates table snapshots from `/state`, `/move`, or bot start payloads.
+    func applyGameTableState(perspective: PlayerPerspective, betting: BettingDTO?, opponentDisplayName: String? = nil) {
+        lastPerspective = perspective
+        lastBetting = betting
+        if let raw = opponentDisplayName {
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.opponentDisplayName = t.isEmpty ? "Opponent" : t
+        }
     }
 
     private func startBackgroundRefreshLoop() {

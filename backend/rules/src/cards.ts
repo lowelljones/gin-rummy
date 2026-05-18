@@ -84,6 +84,11 @@ export function shuffleDeck(deck: CardId[], rng: () => number): CardId[] {
   return copy;
 }
 
+/**
+ * Knock target for the hand (first upcard only). Not the same as `deadwoodValue`:
+ * when that card is an ace, this returns `null` so **no one may knock** for the
+ * whole hand — not even with unmelded total 1 (house rule; do not treat ace as 1).
+ */
 export function upcardKnockValue(card: CardId | null): number | null {
   if (!card) return null;
   if (parseRank(card) === "A") return null;

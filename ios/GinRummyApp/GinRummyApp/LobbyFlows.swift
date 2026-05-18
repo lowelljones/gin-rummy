@@ -49,7 +49,7 @@ struct InstructionsView: View {
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
-                    "Declare gin when discarding lets you arrange all melds plus zero deadwood. Knock when, after that discard, your unmelded points exactly equal the first up-card’s value. An ace as the first up-card turns off knocking for that hand."
+                    "Declare gin when discarding lets you arrange all melds plus zero deadwood. Knock when, after that discard, your unmelded points exactly equal the first up-card’s value. If that card is any ace, no one may knock for that hand — house rule, even if you have 1 deadwood."
                 )
 
                 Text("Match")
@@ -696,8 +696,11 @@ struct LobbyWaitingRoomView: View {
     private func transitionToGame(gameId: String, token: String) async {
         do {
             let st = try await app.api.gameState(gameId: gameId, token: token)
-            app.lastPerspective = st.perspective
-            app.lastBetting = st.betting
+            app.applyGameTableState(
+                perspective: st.perspective,
+                betting: st.betting,
+                opponentDisplayName: st.opponentDisplayName
+            )
             app.activeGameId = gameId
         } catch {
             // If the state call hiccups (auth refresh mid-poll), still flip the

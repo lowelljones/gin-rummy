@@ -140,7 +140,50 @@ describe("knock without explicit layout", () => {
     );
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.error).toMatch(/Ace/);
+    expect(out.error).toMatch(/first upcard is an Ace/);
+  });
+
+  it("forbids knock on Ace first upcard even when unmelded would be exactly 1", () => {
+    const hand0: CardId[] = ["2S", "3S", "4S", "5H", "6H", "7H", "8D", "8C", "8S", "AH", "2C"];
+    const hand1: CardId[] = ["9S", "TS", "JS", "QS", "KS", "3D", "4D", "5D", "6D", "7D"];
+    const seenBy: Record<string, [boolean, boolean]> = {};
+    for (const c of hand0) seenBy[c] = [true, false];
+    for (const c of hand1) seenBy[c] = [false, true];
+    seenBy["AS"] = [true, true];
+
+    const s: ServerTruth = {
+      version: 1,
+      phase: "play",
+      handIndex: 0,
+      dealer: 1,
+      nonDealer: 0,
+      scores: [0, 0],
+      handsWon: [0, 0],
+      raceTarget: 125,
+      stock: ["9C", "TD"],
+      discard: ["AS"],
+      hands: [hand0, hand1],
+      currentTurn: 0,
+      cut: null,
+      lastCutResult: null,
+      upcardOffer: null,
+      knockCheckCard: "AS",
+      knock: null,
+      lastHandWinner: null,
+      lastHandPoints: null,
+      bettingRaw: null,
+      bettingBucket: null,
+      seenBy,
+    };
+
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "2C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/first upcard is an Ace/);
   });
 });
 
@@ -201,5 +244,53 @@ describe("ackHandOver advances to the next deal until match end", () => {
     expect(ack.state.hands[0]).toHaveLength(10);
     expect(ack.state.hands[1]).toHaveLength(10);
     expect(ack.state.discard).toHaveLength(1);
+  });
+});
+
+describe("mutual redeal", () => {
+  it("accepting voids the hand and returns to down-card phase at the same hand index", () => {
+    const s = buildKnockReadyState("5S");
+    const prop = applyIntent(s, { type: "proposeRedeal", seat: 0 }, () => 0.5);
+    expect(prop.ok).toBe(true);
+    if (!prop.ok) return;
+    expect(prop.state.redeal).toEqual({ fromSeat: 0, status: "pending" });
+
+    const acc = applyIntent(prop.state, { type: "respondRedeal", seat: 1, accept: true }, () => 0.99);
+    expect(acc.ok).toBe(true);
+    if (!acc.ok) return;
+    expect(acc.state.redeal).toBeNull();
+    expect(acc.state.phase).toBe("upcardOffer");
+    expect(acc.state.handIndex).toBe(0);
+    expect(acc.state.dealer).toBe(1);
+    expect(acc.state.nonDealer).toBe(0);
+    expect(acc.state.hands[0]).toHaveLength(10);
+    expect(acc.state.hands[1]).toHaveLength(10);
+    expect(acc.state.discard).toHaveLength(1);
+    expect(acc.state.knock).toBeNull();
+  });
+
+  it("blocks normal play until the opponent responds", () => {
+    const s = buildKnockReadyState("5S");
+    const prop = applyIntent(s, { type: "proposeRedeal", seat: 0 }, () => 0.5);
+    expect(prop.ok).toBe(true);
+    if (!prop.ok) return;
+    const bad = applyIntent(prop.state, { type: "discard", seat: 0, card: "6C", knock: false, gin: false }, () => 0.5);
+    expect(bad.ok).toBe(false);
+  });
+
+  it("decline leaves a declined marker until ordinary play resumes", () => {
+    const s = buildKnockReadyState("5S");
+    const prop = applyIntent(s, { type: "proposeRedeal", seat: 0 }, () => 0.5);
+    expect(prop.ok).toBe(true);
+    if (!prop.ok) return;
+    const dec = applyIntent(prop.state, { type: "respondRedeal", seat: 1, accept: false }, () => 0.5);
+    expect(dec.ok).toBe(true);
+    if (!dec.ok) return;
+    expect(dec.state.redeal).toEqual({ fromSeat: 0, status: "declined" });
+
+    const again = applyIntent(dec.state, { type: "discard", seat: 0, card: "6C", knock: false, gin: false }, () => 0.5);
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.state.redeal).toBeNull();
   });
 });

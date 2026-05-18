@@ -62,7 +62,8 @@ export interface ServerTruth {
 
   /**
    * First upcard placed to the table when the hand was dealt (same as `discard[0]` at that moment).
-   * Fixed for the entire hand — not the current discard pile top. Used for equality knock.
+   * Fixed for the entire hand — not the current discard pile top. Determines equality knock;
+   * if this card is any ace, neither player may knock for the hand.
    */
   knockCheckCard: CardId | null;
 
@@ -78,6 +79,12 @@ export interface ServerTruth {
 
   /** Visibility: cardId -> which seats have seen this specific card face. */
   seenBy: Record<string, [boolean, boolean]>;
+
+  /**
+   * Optional mid-hand redeal request (same hand index / scores if redealt).
+   * Omitted in legacy persisted rows — treated as null.
+   */
+  redeal?: null | { fromSeat: Seat; status: "pending" | "declined" };
 }
 
 export interface KnockerLayout {
@@ -97,7 +104,9 @@ export type Intent =
   | { type: "declareBigGin"; seat: Seat }
   | { type: "layoffDone"; seat: Seat }
   | { type: "layoffAttach"; seat: Seat; card: CardId; meldIndex: number }
-  | { type: "ackHandOver" };
+  | { type: "ackHandOver" }
+  | { type: "proposeRedeal"; seat: Seat }
+  | { type: "respondRedeal"; seat: Seat; accept: boolean };
 
 export interface ApplyResult {
   ok: true;

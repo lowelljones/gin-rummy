@@ -1,5 +1,10 @@
 import Foundation
 
+struct RedealStateDTO: Codable, Equatable {
+    let fromSeat: Int
+    let status: String
+}
+
 struct PlayerPerspective: Codable, Equatable {
     let seat: Int
     let hands: [[String]]
@@ -19,6 +24,8 @@ struct PlayerPerspective: Codable, Equatable {
     /// After first hand cut, both cut cards; cleared next hand. Used for a short "who won" banner.
     let lastCut: LastCutResult?
     let cut: CutState?
+    /// Mutual mid-hand redeal proposal (optional — older servers omit).
+    let redeal: RedealStateDTO?
 
     struct LastCutResult: Codable, Equatable {
         let p0: String
@@ -157,6 +164,7 @@ struct GameStartResponse: Codable {
     let gameId: String
     let perspective: PlayerPerspective
     let testBot: Bool?
+    let opponentDisplayName: String?
 }
 
 struct BettingDTO: Codable, Equatable {
@@ -169,12 +177,14 @@ struct GameStateResponse: Codable {
     let moveSeq: Int
     let status: String
     let betting: BettingDTO?
+    let opponentDisplayName: String?
 }
 
 struct MoveResponse: Codable {
     let perspective: PlayerPerspective
     let moveSeq: Int
     let betting: BettingDTO?
+    let opponentDisplayName: String?
 }
 
 struct GameChatMessageDTO: Codable, Equatable, Identifiable {
@@ -260,8 +270,9 @@ enum MeldSolver {
         return rankIndex[r] ?? 0
     }
 
-    /// Returns the knock-card value (2…10) or nil for an Ace upcard, matching
-    /// `upcardKnockValue` in `backend/rules/src/cards.ts`.
+    /// Returns the knock-card value (2…10) or nil when the first upcard is any Ace—then
+    /// no player may knock for the whole hand (house rule; not treated as deadwood 1).
+    /// Mirrors `upcardKnockValue` in `backend/rules/src/cards.ts`.
     static func upcardKnockValue(_ card: String?) -> Int? {
         guard let card, !card.isEmpty else { return nil }
         if parseRank(card) == "A" { return nil }

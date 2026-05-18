@@ -432,7 +432,7 @@ struct TableStateStrip: View {
                             Text("Equality knock: deadwood \(v)")
                                 .font(.caption2)
                         } else {
-                            Text("That card is an ace: no equality knock this hand")
+                            Text("Ace first upcard: no knock this hand (house rule — not even with 1 deadwood).")
                                 .font(.caption2)
                         }
                         Text("This card never changes for the hand— even if you take it into your hand, it is still the knock value.")
