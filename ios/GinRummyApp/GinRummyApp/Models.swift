@@ -380,8 +380,8 @@ enum MeldSolver {
     /// we run `bestDeadwood` on the remaining 10 cards and bucket the discard:
     /// - `plain`    — the remaining 10 have deadwood > 0, plain Discard is legal.
     /// - `ginable`  — the remaining 10 have deadwood == 0, Gin is legal.
-    /// - `knockable`— the remaining 10 have deadwood ≤ knockValue (and the knock card
-    ///   isn't an Ace), Knock is legal.
+    /// - `knockable`— the remaining 10 have deadwood exactly equal to knockValue (first
+    ///   upcard; not an Ace), Knock is legal. Gin (deadwood 0) is separate.
     /// ~11 calls to `bestDeadwood(10 cards)` per hand snapshot; well under 100ms in practice.
     struct DiscardEligibility {
         var plain: Set<String> = []
@@ -398,7 +398,7 @@ enum MeldSolver {
             let best = bestDeadwood(hand10).sum
             if best > 0 { e.plain.insert(c) }
             if best == 0 { e.ginable.insert(c) }
-            if let kv = knockVal, best <= kv { e.knockable.insert(c) }
+            if let kv = knockVal, best > 0, best == kv { e.knockable.insert(c) }
         }
         return e
     }

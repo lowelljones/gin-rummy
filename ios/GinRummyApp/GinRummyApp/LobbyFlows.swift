@@ -28,7 +28,7 @@ struct InstructionsView: View {
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
-                    "Form melds (sets or runs). Reduce deadwood toward zero. Win the hand going gin (no deadwood) or by knocking."
+                    "Form melds (sets or runs). Reduce deadwood toward zero. Win the hand going gin (25 plus opponent’s unmelded count), EO / big gin (50 plus opponent’s unmelded), or by knocking after your unmelded total exactly matches the first up-card (face cards 10, ace 1)."
                 )
 
                 Text("Deal & turn")
@@ -49,14 +49,14 @@ struct InstructionsView: View {
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
-                    "Declare gin when discarding lets you arrange all melds plus zero deadwood. Knock when your deadwood is at or below the value of the first up-card (Ace turns off knocking for that hand)."
+                    "Declare gin when discarding lets you arrange all melds plus zero deadwood. Knock when, after that discard, your unmelded points exactly equal the first up-card’s value. An ace as the first up-card turns off knocking for that hand."
                 )
 
                 Text("Match")
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
-                    "Hands award points toward a race score. Reach the race target before your opponent wins the match."
+                    "Hands score toward a race: first player to reach 125 or more wins the match. After a hand, the prior hand’s winner deals."
                 )
             }
             .foregroundStyle(GinRummyPalette.cream)

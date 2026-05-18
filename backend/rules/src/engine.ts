@@ -38,6 +38,14 @@ function otherSeat(s: Seat): Seat {
   return (1 - s) as Seat;
 }
 
+/** First to the race target normally wins; if both are at/above target, higher total wins. */
+function matchWinnerSeat(scores: [number, number], target: number): Seat | null {
+  if (scores[0] < target && scores[1] < target) return null;
+  if (scores[0] > scores[1]) return 0;
+  if (scores[1] > scores[0]) return 1;
+  return 0;
+}
+
 export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
   const deck = shuffleDeck(buildDeck(), rng);
   const firstSeat = (rng() < 0.5 ? 0 : 1) as Seat;
@@ -130,8 +138,7 @@ function awardHand(state: ServerTruth, winner: Seat, points: number) {
   state.lastHandPoints = points;
   state.phase = "handOver";
 
-  const w =
-    state.scores[0] >= state.raceTarget ? 0 : state.scores[1] >= state.raceTarget ? 1 : null;
+  const w = matchWinnerSeat(state.scores, state.raceTarget);
   if (w !== null) {
     const loser = otherSeat(w);
     const { raw, bucket } = computeBettingSettlement({
@@ -150,7 +157,7 @@ function maybeStartNextHand(state: ServerTruth, rng: () => number) {
   if (state.phase !== "handOver") return;
   const winner = state.lastHandWinner;
   if (winner === null) return;
-  if (state.scores[0] >= state.raceTarget || state.scores[1] >= state.raceTarget) return;
+  if (matchWinnerSeat(state.scores, state.raceTarget) !== null) return;
 
   state.handIndex += 1;
   state.dealer = winner;
@@ -383,9 +390,9 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
     if (sum !== 0) return { ok: false, error: "Gin not legal" };
   } else if (knock) {
     /**
-     * Knock is legal when the knocker's deadwood is at or below the knock-card value
-     * (the first upcard's deadwood points). Aces zero out the knock value so the
-     * non-dealer cannot knock when an Ace was first up — `upcardKnockValue` returns null.
+     * Equality knock: after discarding, the knocker's best deadwood total must equal the
+     * first upcard's deadwood value (same as knock points: A=1, 2–9 face, T/J/Q/K=10).
+     * Ace as first upcard ⇒ no knock this hand (`upcardKnockValue` is null).
      */
     if (knockVal === null) return { ok: false, error: "Cannot knock when knock card is an Ace" };
     if (layout) {
@@ -393,20 +400,22 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
         return { ok: false, error: "Invalid knocker layout" };
       }
       const supplied = deadwoodTotal(layout.deadwood);
-      if (supplied > knockVal) {
+      if (supplied === 0) return { ok: false, error: "Must declare gin with deadwood 0" };
+      if (supplied !== knockVal) {
         return {
           ok: false,
-          error: `Knock requires deadwood ≤ ${knockVal}; supplied layout has ${supplied}.`,
+          error: `Knock requires deadwood exactly ${knockVal} (first upcard); supplied layout has ${supplied}.`,
         };
       }
       resolvedKnockMelds = layout.melds;
       resolvedKnockDeadwood = layout.deadwood;
     } else {
       const best = bestDeadwood(hand10);
-      if (best.sum > knockVal) {
+      if (best.sum === 0) return { ok: false, error: "Must declare gin with deadwood 0" };
+      if (best.sum !== knockVal) {
         return {
           ok: false,
-          error: `Knock requires deadwood ≤ ${knockVal}; best layout from this discard is ${best.sum}.`,
+          error: `Knock requires deadwood exactly ${knockVal} (first upcard); best layout from this discard is ${best.sum}.`,
         };
       }
       resolvedKnockMelds = best.partition.melds;

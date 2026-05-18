@@ -1696,7 +1696,7 @@ private struct DiscardHelper: View {
                 return "Knock disabled — Ace upcard."
             }
             if let kv = MeldSolver.upcardKnockValue(knockCheckCard) {
-                return "Knock needs deadwood ≤ \(kv) after this discard."
+                return "Knock needs deadwood exactly \(kv) after this discard (first upcard)."
             }
         }
         if !canPlain, !canGin, !canKnock {

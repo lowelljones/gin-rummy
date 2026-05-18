@@ -94,7 +94,7 @@ describe("knock without explicit layout", () => {
     expect(out.state.discard.at(-1)).toBe("6C");
   });
 
-  it("rejects knock when the best layout exceeds the knock-card value", () => {
+  it("rejects knock when deadwood is above the knock-card value", () => {
     const s = buildKnockReadyState("3S"); /* knockVal=3, our best deadwood is 5 */
     const out = applyIntent(
       s,
@@ -103,21 +103,32 @@ describe("knock without explicit layout", () => {
     );
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.error).toMatch(/Knock requires deadwood ≤ 3/);
+    expect(out.error).toMatch(/Knock requires deadwood exactly 3/);
   });
 
-  it("allows knock when the best layout's deadwood is strictly below the knock-card value", () => {
-    /* knockCheckCard=TS → knockVal=10; our best deadwood is 5, so 5 ≤ 10 should knock cleanly. */
+  it("rejects knock when deadwood is below the knock-card value (equality knock)", () => {
+    /* knockCheckCard=TS → knockVal=10; best deadwood is 5, must equal 10 to knock. */
     const s = buildKnockReadyState("TS");
     const out = applyIntent(
       s,
       { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
       () => 0.5,
     );
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.state.phase).toBe("knockLayoff");
-    expect(out.state.knock!.knockerDeadwood).toEqual(["5C"]);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/Knock requires deadwood exactly 10/);
+  });
+
+  it("rejects knock when deadwood is strictly less than knock value", () => {
+    const s = buildKnockReadyState("7S"); /* knockVal=7, best deadwood is 5 */
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/Knock requires deadwood exactly 7/);
   });
 
   it("forbids knocking when the knock card is an Ace", () => {
