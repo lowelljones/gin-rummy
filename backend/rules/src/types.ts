@@ -144,13 +144,6 @@ export interface ServerTruth {
   turnPickup?: { seat: Seat; type: PickupKind; card: CardId } | null;
 
   /**
-   * Set when both players passed the down card: this seat (the non-dealer) must
-   * draw from the stock and may NOT take the refused upcard. Cleared by that
-   * draw and on every new deal. Omitted in legacy rows — treated as null.
-   */
-  mustDrawFromStock?: Seat | null;
-
-  /**
    * Optional mid-hand redeal request (same hand index / scores if redealt).
    * Omitted in legacy persisted rows — treated as null.
    */

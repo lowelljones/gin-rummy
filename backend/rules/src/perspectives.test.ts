@@ -83,18 +83,6 @@ describe("buildPerspective lastAction masking", () => {
   });
 });
 
-describe("buildPerspective mustDrawFromStock", () => {
-  it("defaults to false on legacy states and flags only the constrained seat", () => {
-    const legacy = makeState();
-    expect(buildPerspective(legacy, 0).mustDrawFromStock).toBe(false);
-
-    const s = makeState();
-    s.mustDrawFromStock = 0;
-    expect(buildPerspective(s, 0).mustDrawFromStock).toBe(true);
-    expect(buildPerspective(s, 1).mustDrawFromStock).toBe(false);
-  });
-});
-
 describe("buildPerspectives", () => {
   it("returns both seats keyed by string seat ids", () => {
     const both = buildPerspectives(makeState());

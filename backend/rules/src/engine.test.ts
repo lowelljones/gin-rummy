@@ -106,7 +106,7 @@ describe("upcard offer: turn order and the double-pass rule", () => {
     expect(take.state.hands[1]).toContain("JS");
   });
 
-  it("after both pass, the non-dealer must draw from the deck (not the refused upcard)", () => {
+  it("after both pass, the non-dealer leads and may draw from the deck", () => {
     const s = makeUpcardOfferState();
     const p0 = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
     expect(p0.ok).toBe(true);
@@ -116,19 +116,10 @@ describe("upcard offer: turn order and the double-pass rule", () => {
     if (!p1.ok) return;
     expect(p1.state.phase).toBe("play");
     expect(p1.state.currentTurn).toBe(0);
-    expect(p1.state.mustDrawFromStock).toBe(0);
 
-    /* Taking the twice-refused upcard is illegal. */
-    const take = applyIntent(p1.state, { type: "takeDiscard", seat: 0 }, () => 0.5);
-    expect(take.ok).toBe(false);
-    if (take.ok) return;
-    expect(take.error).toMatch(/must draw from the deck/);
-
-    /* Drawing from the stock clears the restriction and play continues. */
     const draw = applyIntent(p1.state, { type: "drawStock", seat: 0 }, () => 0.5);
     expect(draw.ok).toBe(true);
     if (!draw.ok) return;
-    expect(draw.state.mustDrawFromStock).toBeNull();
     expect(draw.state.hands[0]).toHaveLength(11);
 
     const disc = applyIntent(
@@ -144,7 +135,7 @@ describe("upcard offer: turn order and the double-pass rule", () => {
     expect(dealerTake.ok).toBe(true);
   });
 
-  it("exposes mustDrawFromStock only to the constrained viewer", async () => {
+  it("after both pass, the non-dealer may still take the twice-refused upcard (house rule)", () => {
     const s = makeUpcardOfferState();
     const p0 = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
     expect(p0.ok).toBe(true);
@@ -153,9 +144,12 @@ describe("upcard offer: turn order and the double-pass rule", () => {
     expect(p1.ok).toBe(true);
     if (!p1.ok) return;
 
-    const { buildPerspective } = await import("./perspectives.js");
-    expect(buildPerspective(p1.state, 0).mustDrawFromStock).toBe(true);
-    expect(buildPerspective(p1.state, 1).mustDrawFromStock).toBe(false);
+    const take = applyIntent(p1.state, { type: "takeDiscard", seat: 0 }, () => 0.5);
+    expect(take.ok).toBe(true);
+    if (!take.ok) return;
+    expect(take.state.hands[0]).toContain("JS");
+    expect(take.state.discard).toHaveLength(0);
+    expect(take.state.turnPickup).toEqual({ seat: 0, type: "takeDiscard", card: "JS" });
   });
 });
 

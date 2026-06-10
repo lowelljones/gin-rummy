@@ -32,11 +32,6 @@ export interface PlayerPerspective {
   handResult: HandResult | null;
   /** Per-seat Continue acks during handOver (next hand deals when both are true). */
   handOverAcks: [boolean, boolean] | null;
-  /**
-   * True when both players passed the down card and YOU (the non-dealer) must
-   * draw from the stock — taking the refused upcard is illegal this turn.
-   */
-  mustDrawFromStock: boolean;
   /** Cards opponent is known to hold (from draws you did not see — usually empty). */
   inferred: Record<string, unknown>;
   /**
@@ -139,7 +134,6 @@ export function buildPerspective(state: ServerTruth, viewer: Seat): PlayerPerspe
     redeal: state.redeal ?? null,
     handResult: state.lastHandResult ?? null,
     handOverAcks: state.handOverAcks ?? null,
-    mustDrawFromStock: (state.mustDrawFromStock ?? null) === viewer,
     inferred: {},
     lastAction: maskLastAction(state.lastAction ?? null, viewer),
   };

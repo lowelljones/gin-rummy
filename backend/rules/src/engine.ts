@@ -85,7 +85,6 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     bettingBucket: null,
     seenBy: {},
     redeal: null,
-    mustDrawFromStock: null,
   };
 }
 
@@ -168,7 +167,6 @@ function applyRespondRedeal(state: ServerTruth, seat: Seat, accept: boolean, rng
 function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
   state.lastAction = null;
   state.turnPickup = null;
-  state.mustDrawFromStock = null;
   state.hands = [[], []];
   for (let i = 0; i < 10; i++) {
     state.hands[state.nonDealer].push(pile.pop()!);
@@ -449,10 +447,9 @@ function applyUpcardPass(state: ServerTruth, seat: Seat): ApplyOutcome {
     if (!state.upcardOffer.nonDealerPassed) return { ok: false, error: "Invalid pass order" };
     state.upcardOffer = null;
     state.phase = "play";
+    /* Both passed: the non-dealer leads and may draw from the stock or even
+     * take the twice-refused upcard (house rule — rare, but allowed). */
     state.currentTurn = nd;
-    /* Both passed: the non-dealer leads but must draw from the stock — the
-     * twice-refused upcard may not be taken. */
-    state.mustDrawFromStock = nd;
     recordAction(state, { seat, type: "passUpcard", card: null, pickup: null });
     return { ok: true, state };
   }
@@ -470,7 +467,6 @@ function applyDrawStock(state: ServerTruth, seat: Seat): ApplyOutcome {
   const c = state.stock.pop()!;
   state.hands[seat].push(c);
   markSeen(state, c, [seat]);
-  if (state.mustDrawFromStock === seat) state.mustDrawFromStock = null;
   state.turnPickup = { seat, type: "drawStock", card: c };
   recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
   return { ok: true, state };
@@ -488,12 +484,6 @@ function applyTakeDiscard(state: ServerTruth, seat: Seat): ApplyOutcome {
   }
   if (state.discard.length === 0) {
     return { ok: false, error: "No discard" };
-  }
-  if (state.mustDrawFromStock === seat) {
-    return {
-      ok: false,
-      error: "Both players passed the down card — you must draw from the deck this turn.",
-    };
   }
   const c = state.discard.pop()!;
   state.hands[seat].push(c);

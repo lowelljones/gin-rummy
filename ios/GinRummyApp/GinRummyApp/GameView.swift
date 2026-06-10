@@ -1395,7 +1395,6 @@ struct GameView: View {
         guard p.phase == "play",
               p.currentTurn == p.seat,
               p.hands[p.seat].count == 10,
-              p.mustDrawFromStock != true, // both passed the down card: deck only
               let top = p.discard.last, !top.isEmpty
         else { return nil }
         return {
