@@ -142,7 +142,9 @@ final class AppModel: ObservableObject {
         lobbyInviteJoinHandoffNonce += 1
     }
 
-    private static func parseInviteCode(from url: URL) -> String? {
+    /// Internal (not private) so tests can pin the share-link → tapped-link →
+    /// code round trip for both URL forms.
+    static func parseInviteCode(from url: URL) -> String? {
         if url.scheme?.lowercased() == "ginrummy", url.host?.lowercased() == "join" {
             let code = url.pathComponents.dropFirst().first ?? ""
             return code.isEmpty ? nil : code

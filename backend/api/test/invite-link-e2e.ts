@@ -13,16 +13,63 @@
  * Also verifies a bad/expired code returns the friendly "invite not found"
  * page instead of a dead end.
  *
- * Run: npx tsx invite-link-e2e.ts   (expects the API on http://127.0.0.1:8799
- * or set API. Uses .env Supabase creds to provision throwaway users.)
+ * Run: npm run test:invite-link
+ *
+ * By default this is fully hermetic: it spawns the in-memory mock Supabase
+ * (test/mock-supabase.ts) plus the API server, runs the flow, and tears both
+ * down. To run against an already-running API + real Supabase instead, set
+ * API, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_ANON_KEY.
  */
-import "dotenv/config";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-const API = process.env.API ?? "http://127.0.0.1:8799";
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const ANON_KEY = process.env.SUPABASE_ANON_KEY!;
+const SELF_HOSTED = !process.env.API;
+const MOCK_PORT = 9123;
+const API_PORT = 8799;
+
+const API = process.env.API ?? `http://127.0.0.1:${API_PORT}`;
+const SUPABASE_URL = process.env.SUPABASE_URL ?? `http://127.0.0.1:${MOCK_PORT}`;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "mock-service-key";
+const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "mock-anon-key";
+
+const apiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const children: ChildProcess[] = [];
+
+function spawnChild(label: string, script: string, env: Record<string, string>): ChildProcess {
+  const child = spawn("npx", ["tsx", script], {
+    cwd: apiDir,
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", () => {});
+  child.stderr?.on("data", (d) => process.stderr.write(`[${label}] ${d}`));
+  children.push(child);
+  return child;
+}
+
+async function waitForHttp(url: string, label: string, attempts = 40): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await fetch(url);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw new Error(`${label} did not come up at ${url}`);
+}
+
+function teardownChildren() {
+  for (const c of children) {
+    try {
+      c.kill("SIGTERM");
+    } catch {
+      /* already dead */
+    }
+  }
+}
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -87,6 +134,21 @@ function parseInviteCode(url: string): string | null {
 }
 
 async function main() {
+  if (SELF_HOSTED) {
+    console.log("Starting mock Supabase + API server…");
+    spawnChild("mock-supabase", "test/mock-supabase.ts", {
+      MOCK_SUPABASE_PORT: String(MOCK_PORT),
+    });
+    await waitForHttp(`${SUPABASE_URL}/auth/v1/user`, "mock Supabase");
+    spawnChild("api", "src/server.ts", {
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: SERVICE_KEY,
+      SUPABASE_ANON_KEY: ANON_KEY,
+      PORT: String(API_PORT),
+    });
+    await waitForHttp(`${API}/health`, "API server");
+  }
+
   console.log(`Invite link E2E against ${API}\n`);
 
   const host = await makeUser("host");
@@ -183,10 +245,12 @@ async function main() {
   }
 
   console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
+  teardownChildren();
   process.exit(failures === 0 ? 0 : 1);
 }
 
 main().catch((e) => {
   console.error("E2E crashed:", e);
+  teardownChildren();
   process.exit(1);
 });

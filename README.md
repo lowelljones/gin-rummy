@@ -73,7 +73,27 @@ npm test
 
 Open [`ios/GinRummyApp/GinRummyApp.xcodeproj`](ios/GinRummyApp/GinRummyApp.xcodeproj) in Xcode, set your bundle ID and signing team, add `Info.plist` values above, then run on a simulator or device.
 
-### Universal links (production)
+### Invite links
+
+Invite links shared from the lobby are **HTTPS** URLs served by the API itself:
+`https://<api-domain>/join/<CODE>`. They're tappable in iMessage (custom
+`ginrummy://` links are not), and the page bounces the friend into the
+installed app via `ginrummy://join/<CODE>`, with the code + instructions as a
+fallback. The link domain comes from `GIN_INVITE_WEB_BASE_URL` in `Info.plist`
+(falls back to `GIN_API_BASE_URL` when it's HTTPS).
+
+Test the whole two-player flow (create lobby → text link → tap → join → both
+ready → game starts) hermetically, no live Supabase needed:
+
+```bash
+cd backend/api
+npm run test:invite-link
+```
+
+### Universal links (optional upgrade)
+
+The landing page works without any Apple setup. To make links open the app
+*directly* from Messages (skipping the Safari hop), configure Universal Links:
 
 1. Host **AASA** (no file extension) at `https://<your-domain>/.well-known/apple-app-site-association` with JSON like:
 

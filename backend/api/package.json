@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/api/src/server.js"
+    "start": "node dist/api/src/server.js",
+    "test:invite-link": "tsx test/invite-link-e2e.ts"
   },
   "engines": {
     "node": ">=20"
