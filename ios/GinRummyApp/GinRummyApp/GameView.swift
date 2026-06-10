@@ -1,3 +1,4 @@
+import AudioToolbox
 import SwiftUI
 
 struct GameView: View {
@@ -1385,17 +1386,25 @@ struct GameView: View {
             let r = try await app.api.fetchGameChat(gameId: gameId, token: token, after: after)
             await MainActor.run {
                 var known = Set(chatMessages.map(\.id))
+                var receivedIncoming = false
                 for m in r.messages {
                     guard !known.contains(m.id) else { continue }
                     known.insert(m.id)
                     chatMessages.append(m)
-                    if !m.fromSelf && !sheetOpen {
-                        chatUnreadCount += 1
-                        enqueueChatToast(for: m)
+                    if !m.fromSelf {
+                        receivedIncoming = true
+                        if !sheetOpen {
+                            chatUnreadCount += 1
+                            enqueueChatToast(for: m)
+                        }
                     }
                 }
                 chatMessages.sort { $0.createdAt < $1.createdAt }
                 chatWatermarkIso = chatMessages.map(\.createdAt).max() ?? Self.chatEpochIso
+                if receivedIncoming {
+                    // Full device vibration (like an incoming text), once per poll batch.
+                    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                }
             }
         } catch {}
     }
