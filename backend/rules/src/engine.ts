@@ -6,9 +6,9 @@ import {
   type CardId,
 } from "./cards.js";
 import {
-  applyLayoffsGreedy,
   bestAfterDiscard11,
   bestDeadwood,
+  bestLayoff,
   isBigGin11,
   isValidMeld,
   type Meld,
@@ -513,7 +513,9 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
 
   if (gin) {
     const opp = otherSeat(seat);
-    const pts = scoreGin(state.hands[opp]);
+    /* Only the opponent's unmelded cards count toward gin points — their own melds don't. */
+    const oppUnmelded = bestDeadwood(state.hands[opp]).partition.deadwood;
+    const pts = scoreGin(oppUnmelded);
     awardHand(state, seat, pts);
     return { ok: true, state };
   }
@@ -550,7 +552,9 @@ function applyDeclareBigGin(state: ServerTruth, seat: Seat): ApplyOutcome {
   if (hand.length !== 11) return { ok: false, error: "Need 11 cards for EO" };
   if (!isBigGin11(hand)) return { ok: false, error: "Not EO" };
   const opp = otherSeat(seat);
-  const pts = scoreEO(state.hands[opp]);
+  /* Only the opponent's unmelded cards count toward EO points — their own melds don't. */
+  const oppUnmelded = bestDeadwood(state.hands[opp]).partition.deadwood;
+  const pts = scoreEO(oppUnmelded);
   state.hands[seat] = [];
   awardHand(state, seat, pts);
   return { ok: true, state };
@@ -588,20 +592,17 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
   if (seat === knocker) return { ok: false, error: "Knocker cannot finish layoff" };
 
   /**
-   * Greedy auto-layoff: attach every opponent deadwood card that legally extends
-   * one of the knocker's melds before scoring. The client UI today only exposes a
-   * "Done" button, so without this the opponent always loses their entire hand as
-   * deadwood — even cards that obviously fit on the knocker's runs/sets.
+   * Resolve the opponent's hand optimally before scoring: combine layoffs onto the
+   * knocker's melds with the opponent's own melds so that only truly unmelded cards
+   * count against them. The client UI today only exposes a "Done" button, so the
+   * server computes the best outcome on the opponent's behalf.
    */
   const beforeDeadwood = [...state.knock.opponentDeadwood];
-  const { melds: newMelds, opponentDeadwood: newDeadwood } = applyLayoffsGreedy(
-    state.knock.knockerMeldsAfterLayoff,
-    beforeDeadwood,
-  );
-  const attached = beforeDeadwood.filter((c) => !newDeadwood.includes(c));
-  state.knock.knockerMeldsAfterLayoff = newMelds;
-  state.knock.opponentDeadwood = newDeadwood;
-  for (const c of attached) {
+  const result = bestLayoff(state.knock.knockerMeldsAfterLayoff, beforeDeadwood);
+  state.knock.knockerMeldsAfterLayoff = result.melds;
+  state.knock.opponentDeadwood = [...result.opponentDeadwood];
+  const removed = beforeDeadwood.filter((c) => !result.opponentDeadwood.includes(c));
+  for (const c of removed) {
     const hi = state.hands[seat].indexOf(c);
     if (hi >= 0) state.hands[seat].splice(hi, 1);
     markSeen(state, c, [0, 1]);

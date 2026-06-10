@@ -22,7 +22,10 @@ export interface KnockState {
   knockerMelds: Meld[];
   knockerDeadwood: CardId[];
   opponentOriginalHand: CardId[];
-  /** After layoffs — mutated through layoff intents. */
+  /**
+   * Opponent cards not yet laid off — mutated through layoff intents. After layoffDone
+   * this holds only the opponent's truly unmelded cards (own melds excluded).
+   */
   opponentDeadwood: CardId[];
   knockerMeldsAfterLayoff: Meld[];
   layoffTurn: Seat;

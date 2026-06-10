@@ -1,21 +1,26 @@
 import type { Seat } from "./types.js";
 import { deadwoodValue, type CardId } from "./cards.js";
-import { applyLayoffsGreedy, bestDeadwood, isValidMeld, type Meld } from "./melds.js";
+import { bestDeadwood, isValidMeld, type Meld } from "./melds.js";
 
 export function deadwoodTotal(cards: CardId[]): number {
   return cards.reduce((s, c) => s + deadwoodValue(c), 0);
 }
 
-/** End-of-hand race points (knock undercut bonus included in basePoints from resolveKnockScoring). */
-export function scoreGin(opponentDeadwood: CardId[]): number {
-  return 25 + deadwoodTotal(opponentDeadwood);
+/** Gin: 25 + opponent's unmelded total. Pass only the opponent's UNMELDED cards. */
+export function scoreGin(opponentUnmelded: CardId[]): number {
+  return 25 + deadwoodTotal(opponentUnmelded);
 }
 
-export function scoreEO(opponentDeadwood: CardId[]): number {
-  return 50 + deadwoodTotal(opponentDeadwood);
+/** EO (11-card gin): 50 + opponent's unmelded total. Pass only the opponent's UNMELDED cards. */
+export function scoreEO(opponentUnmelded: CardId[]): number {
+  return 50 + deadwoodTotal(opponentUnmelded);
 }
 
-/** After manual layoffs: compare deadwood piles only. */
+/**
+ * Compare final unmelded piles after layoffs and the opponent's own melds are resolved.
+ * Lower total wins the difference; a non-knocker win adds the 25-point "Cut".
+ * Ties go to the defender as a Cut (25 points, zero difference).
+ */
 export function resolveKnockFinal(params: {
   knocker: Seat;
   knockerDeadwood: CardId[];
@@ -24,37 +29,10 @@ export function resolveKnockFinal(params: {
   const { knocker, knockerDeadwood, opponentDeadwood } = params;
   const kDead = deadwoodTotal(knockerDeadwood);
   const oDead = deadwoodTotal(opponentDeadwood);
-  if (oDead < kDead) {
+  if (oDead <= kDead) {
     return { winner: (1 - knocker) as Seat, points: kDead - oDead + 25 };
   }
   return { winner: knocker, points: oDead - kDead };
-}
-
-/** Greedy auto-layoff scoring (used for tests / bots). */
-export function resolveKnockScoring(params: {
-  knocker: Seat;
-  knockerMelds: Meld[];
-  knockerDeadwood: CardId[];
-  opponentHand: CardId[];
-}): { winner: Seat; loser: Seat; basePoints: number; undercutBonus: number } {
-  const { knocker, knockerMelds, knockerDeadwood, opponentHand } = params;
-  const { opponentDeadwood } = applyLayoffsGreedy(knockerMelds, opponentHand);
-  const kDead = deadwoodTotal(knockerDeadwood);
-  const oDead = deadwoodTotal(opponentDeadwood);
-  if (oDead < kDead) {
-    return {
-      winner: (1 - knocker) as Seat,
-      loser: knocker,
-      basePoints: kDead - oDead,
-      undercutBonus: 25,
-    };
-  }
-  return {
-    winner: knocker,
-    loser: (1 - knocker) as Seat,
-    basePoints: oDead - kDead,
-    undercutBonus: 0,
-  };
 }
 
 export function computeBettingSettlement(params: {

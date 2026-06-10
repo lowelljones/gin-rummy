@@ -173,60 +173,65 @@ export function isBigGin11(hand11: CardId[]): boolean {
   return canPartition([...hand11]);
 }
 
-/** Attach opponent cards to knocker melds (greedy), return updated melds + remaining opponent deadwood. */
-export function applyLayoffsGreedy(
-  knockerMelds: Meld[],
-  opponentHand: CardId[],
-): { melds: Meld[]; opponentDeadwood: CardId[] } {
-  const melds = knockerMelds.map((m) => ({ ...m, cards: [...m.cards] }));
-  const remaining = [...opponentHand];
+export interface LayoffResult {
+  /** Knocker melds after opponent layoffs. */
+  melds: Meld[];
+  /** Opponent melds formed from the cards they kept. */
+  opponentMelds: Meld[];
+  /** Opponent cards that remain unmelded (these count against the opponent). */
+  opponentDeadwood: CardId[];
+  /** Deadwood sum of `opponentDeadwood`. */
+  unmelded: number;
+}
 
-  const tryAttach = (card: CardId): boolean => {
-    const r = parseRank(card);
-    const s = parseSuit(card);
+/**
+ * Optimal opponent response to a knock: choose the layoff sequence onto the knocker's
+ * melds (order matters when extending runs card by card) and the partition of the kept
+ * cards into the opponent's own melds that together minimize the unmelded total. A
+ * naive greedy attach can hurt the opponent — e.g. laying off the 5 from a 5-6-7 run
+ * onto the knocker's set of 5s strands the 6 and 7 as deadwood.
+ */
+export function bestLayoff(knockerMelds: Meld[], opponentCards: CardId[]): LayoffResult {
+  const cloneMelds = (ms: Meld[]): Meld[] => ms.map((m) => ({ ...m, cards: [...m.cards] }));
+  let best: LayoffResult | null = null;
+  const visited = new Set<string>();
 
-    for (const meld of melds) {
-      if (meld.type === "set") {
-        const rank = parseRank(meld.cards[0]!);
-        if (rank !== r) continue;
-        const suits = new Set(meld.cards.map(parseSuit));
-        if (suits.has(s) || meld.cards.length >= 4) continue;
-        meld.cards.push(card);
-        if (isValidSet(meld.cards)) return true;
-        meld.cards.pop();
-      } else {
-        const suit = parseSuit(meld.cards[0]!);
-        if (suit !== s) continue;
-        const orders = meld.cards.map(rankOrderLow);
-        const o = rankOrderLow(card);
-        const min = Math.min(...orders);
-        const max = Math.max(...orders);
-        if (o === min - 1 || o === max + 1) {
-          meld.cards.push(card);
-          meld.cards.sort((a, b) => rankOrderLow(a) - rankOrderLow(b));
-          if (isValidRun(meld.cards)) return true;
-          meld.cards.splice(
-            meld.cards.findIndex((c) => c === card),
-            1,
-          );
-        }
-      }
+  function visit(melds: Meld[], remaining: CardId[]): void {
+    if (best !== null && best.unmelded === 0) return;
+    const key =
+      melds.map((m) => m.cards.join(",")).join("|") + "#" + [...remaining].sort().join(",");
+    if (visited.has(key)) return;
+    visited.add(key);
+
+    const { sum, partition } = bestDeadwood(remaining);
+    if (best === null || sum < best.unmelded) {
+      best = {
+        melds: cloneMelds(melds),
+        opponentMelds: cloneMelds(partition.melds),
+        opponentDeadwood: [...partition.deadwood],
+        unmelded: sum,
+      };
     }
-    return false;
-  };
 
-  let progress = true;
-  while (progress) {
-    progress = false;
     for (let i = 0; i < remaining.length; i++) {
-      const c = remaining[i]!;
-      if (tryAttach(c)) {
-        remaining.splice(i, 1);
-        progress = true;
-        break;
+      const card = remaining[i]!;
+      for (let mi = 0; mi < melds.length; mi++) {
+        const base = melds[mi]!;
+        const trialCards =
+          base.type === "run"
+            ? [...base.cards, card].sort((a, b) => rankOrderLow(a) - rankOrderLow(b))
+            : [...base.cards, card];
+        const trial: Meld = { type: base.type, cards: trialCards };
+        if (!isValidMeld(trial)) continue;
+        const nextMelds = melds.map((m, j) => (j === mi ? trial : m));
+        visit(
+          nextMelds,
+          remaining.filter((_, j) => j !== i),
+        );
       }
     }
   }
 
-  return { melds, opponentDeadwood: remaining };
+  visit(cloneMelds(knockerMelds), [...opponentCards]);
+  return best!;
 }
