@@ -5,6 +5,43 @@ struct RedealStateDTO: Codable, Equatable {
     let status: String
 }
 
+struct MeldDTO: Codable, Equatable, Hashable {
+    /// "set" | "run"
+    let type: String
+    let cards: [String]
+}
+
+/// Full reveal of how the last hand ended — both layouts, layoffs, and the score
+/// delta. Present during `handOver` / `matchOver`; nil otherwise (and on legacy servers).
+struct HandResultDTO: Codable, Equatable {
+    /// "gin" | "bigGin" | "knock" | "undercut"
+    let kind: String
+    let winner: Int
+    let points: Int
+    /// Seat that ended the hand (the ginner or knocker).
+    let closer: Int
+    /// Indexed by seat. Laid-off cards appear inside the closer's melds.
+    let sides: [Side]
+    /// Defender cards attached onto the closer's melds (knock hands only).
+    let layoffs: [Layoff]
+
+    struct Side: Codable, Equatable {
+        let melds: [MeldDTO]
+        let deadwood: [String]
+        let deadwoodPoints: Int
+    }
+
+    struct Layoff: Codable, Equatable {
+        let card: String
+        let meldIndex: Int
+    }
+
+    func side(forSeat seat: Int) -> Side? {
+        guard seat >= 0, seat < sides.count else { return nil }
+        return sides[seat]
+    }
+}
+
 struct PlayerPerspective: Codable, Equatable {
     let seat: Int
     let hands: [[String]]
@@ -26,6 +63,10 @@ struct PlayerPerspective: Codable, Equatable {
     let cut: CutState?
     /// Mutual mid-hand redeal proposal (optional — older servers omit).
     let redeal: RedealStateDTO?
+    /// Full reveal of the last hand during handOver / matchOver (optional — older servers omit).
+    let handResult: HandResultDTO?
+    /// Per-seat Continue acks during handOver; the next hand deals once both are true.
+    let handOverAcks: [Bool]?
 
     struct LastCutResult: Codable, Equatable {
         let p0: String
@@ -59,11 +100,6 @@ struct PlayerPerspective: Codable, Equatable {
         let opponentDeadwood: [String]
         let knockerMeldsAfterLayoff: [MeldDTO]?
         let layoffTurn: Int
-
-        struct MeldDTO: Codable, Equatable {
-            let type: String
-            let cards: [String]
-        }
     }
 }
 
@@ -250,11 +286,13 @@ struct AuthTokenResponse: Codable {
 /// suit ("S","H","D","C"). All inputs are assumed to be valid card ids; malformed
 /// inputs are treated conservatively (no melds available).
 enum MeldSolver {
-    enum MeldType { case set, run }
+    enum MeldType: Hashable { case set, run }
 
-    struct Meld {
+    struct Meld: Equatable, Hashable {
         let type: MeldType
         let cards: [String]
+
+        var dtoType: String { type == .set ? "set" : "run" }
     }
 
     struct Partition {
@@ -434,6 +472,92 @@ enum MeldSolver {
             if let kv = knockVal, best > 0, best == kv { e.knockable.insert(c) }
         }
         return e
+    }
+
+    // MARK: Partition enumeration (knock layout chooser / defender meld suggestions)
+
+    /// One way to arrange a hand into melds, with whatever is left as deadwood.
+    struct PartitionOption: Equatable, Identifiable {
+        let melds: [Meld]
+        let deadwood: [String]
+        let deadwoodPoints: Int
+
+        var id: String {
+            melds.map { $0.cards.joined(separator: ",") }.sorted().joined(separator: "|")
+        }
+    }
+
+    /// Sort run cards low→high for display (string sort misplaces A/T/J/Q/K).
+    static func rankSorted(_ cards: [String]) -> [String] {
+        cards.sorted { rankOrderLow($0) < rankOrderLow($1) }
+    }
+
+    /// All *maximal* meld partitions of `hand` (no further meld can be formed from the
+    /// leftovers), deduped and sorted by unmelded points ascending. Powers the knocker's
+    /// layout chooser and the defender's meld suggestions during a knock.
+    static func allMaximalPartitions(_ hand: [String], limit: Int = 12) -> [PartitionOption] {
+        guard !hand.isEmpty, Set(hand).count == hand.count else { return [] }
+        var seen = Set<String>()
+        var options: [PartitionOption] = []
+
+        func anyMeldFormable(_ remaining: [String]) -> Bool {
+            if remaining.count < 3 { return false }
+            for combo in subsetsOfSize(remaining, k: 3) {
+                let sortedCombo = combo.sorted()
+                if isValidMeld(Meld(type: .set, cards: sortedCombo)) { return true }
+                if isValidMeld(Meld(type: .run, cards: sortedCombo)) { return true }
+            }
+            return false
+        }
+
+        func record(_ melds: [Meld], _ deadwood: [String]) {
+            let normalized = melds.map { m in
+                Meld(type: m.type, cards: m.type == .run ? rankSorted(m.cards) : m.cards)
+            }
+            let sig = normalized.map { $0.cards.joined(separator: ",") }.sorted().joined(separator: "|")
+            if seen.contains(sig) { return }
+            seen.insert(sig)
+            options.append(
+                PartitionOption(
+                    melds: normalized,
+                    deadwood: deadwood.sorted(),
+                    deadwoodPoints: deadwoodSum(deadwood)
+                )
+            )
+        }
+
+        func dfs(_ remaining: [String], _ meldsSoFar: [Meld]) {
+            if options.count >= 64 { return }
+            if !anyMeldFormable(remaining) {
+                record(meldsSoFar, remaining)
+                return
+            }
+            for len in stride(from: min(4, remaining.count), through: 3, by: -1) {
+                for combo in subsetsOfSize(remaining, k: len) {
+                    let sortedCombo = combo.sorted()
+                    for meld in [Meld(type: .set, cards: sortedCombo), Meld(type: .run, cards: sortedCombo)] {
+                        if !isValidMeld(meld) { continue }
+                        let used = Set(meld.cards)
+                        dfs(remaining.filter { !used.contains($0) }, meldsSoFar + [meld])
+                    }
+                }
+            }
+        }
+
+        dfs(hand.sorted(), [])
+        options.sort { $0.deadwoodPoints < $1.deadwoodPoints }
+        if options.count > limit { options = Array(options.prefix(limit)) }
+        return options
+    }
+
+    // MARK: Layoff eligibility (defender attaching cards to the knocker's melds)
+
+    /// True if `card` legally extends a meld of the given DTO type ("set"/"run").
+    static func canExtend(meldType: String, cards: [String], with card: String) -> Bool {
+        if cards.contains(card) { return false }
+        if meldType == "set" { return isValidSet(cards + [card]) }
+        if meldType == "run" { return isValidRun(cards + [card]) }
+        return false
     }
 
     /// True iff all 11 cards can be partitioned into valid melds (Big Gin / "EO").

@@ -1,5 +1,5 @@
 import type { CardId } from "./cards.js";
-import type { Seat, ServerTruth } from "./types.js";
+import type { HandResult, Seat, ServerTruth } from "./types.js";
 
 export type MaskedCard = CardId | "HIDDEN";
 
@@ -25,6 +25,10 @@ export interface PlayerPerspective {
   cut: CutPerspective | null;
   /** Mid-hand mutual redeal proposal (optional on legacy rows). */
   redeal: null | { fromSeat: Seat; status: "pending" | "declined" };
+  /** Full reveal of the last hand (both layouts) during handOver / matchOver. */
+  handResult: HandResult | null;
+  /** Per-seat Continue acks during handOver (next hand deals when both are true). */
+  handOverAcks: [boolean, boolean] | null;
   /** Cards opponent is known to hold (from draws you did not see — usually empty). */
   inferred: Record<string, unknown>;
 }
@@ -105,6 +109,8 @@ export function buildPerspective(state: ServerTruth, viewer: Seat): PlayerPerspe
     lastCut: state.lastCutResult ?? null,
     cut: state.cut ? buildCutPerspective(state.cut, viewer) : null,
     redeal: state.redeal ?? null,
+    handResult: state.lastHandResult ?? null,
+    handOverAcks: state.handOverAcks ?? null,
     inferred: {},
   };
 }

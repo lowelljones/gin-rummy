@@ -252,6 +252,236 @@ describe("knock resolution counts only true unmelded totals", () => {
   });
 });
 
+describe("layoffResolve: defender chooses melds and layoffs (no server optimization)", () => {
+  it("applies own melds + layoffs and builds the hand result reveal", () => {
+    const s = makePlayState({
+      hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C", "6C"],
+      hand1: ["4S", "6H", "KS", "TD", "JD", "QD", "2D", "3D", "4D", "2C"],
+      stock: ["9C", "TC"],
+      discard: ["JS"],
+      knockCheckCard: "5S",
+    });
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+
+    const r = applyIntent(
+      k.state,
+      {
+        type: "layoffResolve",
+        seat: 1,
+        ownMelds: [
+          { type: "run", cards: ["TD", "JD", "QD"] },
+          { type: "run", cards: ["2D", "3D", "4D"] },
+        ],
+        layoffs: [
+          { card: "4S", meldIndex: 0 },
+          { card: "6H", meldIndex: 1 },
+          { card: "KS", meldIndex: 2 },
+        ],
+      },
+      () => 0.5,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    /* Only 2C (2) is unmelded; 2 < knocker's 5 → undercut: (5 - 2) + 25 = 28. */
+    expect(r.state.phase).toBe("handOver");
+    expect(r.state.lastHandWinner).toBe(1);
+    expect(r.state.lastHandPoints).toBe(28);
+
+    const hr = r.state.lastHandResult!;
+    expect(hr.kind).toBe("undercut");
+    expect(hr.closer).toBe(0);
+    expect(hr.winner).toBe(1);
+    expect(hr.points).toBe(28);
+    expect(hr.layoffs).toEqual([
+      { card: "4S", meldIndex: 0 },
+      { card: "6H", meldIndex: 1 },
+      { card: "KS", meldIndex: 2 },
+    ]);
+    expect(hr.sides[0].deadwood).toEqual(["5C"]);
+    expect(hr.sides[0].deadwoodPoints).toBe(5);
+    /* Laid-off cards live inside the knocker's melds. */
+    expect(hr.sides[0].melds.flatMap((m) => m.cards)).toContain("4S");
+    expect(hr.sides[1].melds).toHaveLength(2);
+    expect(hr.sides[1].deadwood).toEqual(["2C"]);
+    expect(hr.sides[1].deadwoodPoints).toBe(2);
+  });
+
+  it("a suboptimal arrangement stands (skipped layoff counts against the defender)", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+
+    /* Lays off 4S and KS but keeps 6H in hand — optimal play would shed it too. */
+    const r = applyIntent(
+      k.state,
+      {
+        type: "layoffResolve",
+        seat: 1,
+        ownMelds: [],
+        layoffs: [
+          { card: "4S", meldIndex: 0 },
+          { card: "KS", meldIndex: 2 },
+        ],
+      },
+      () => 0.5,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    /* Remaining 6H 2D 3C 4C 5D 8C 8D 9C = 45 → knocker wins 45 - 5 = 40. */
+    expect(r.state.lastHandWinner).toBe(0);
+    expect(r.state.lastHandPoints).toBe(40);
+    expect(r.state.lastHandResult!.kind).toBe("knock");
+  });
+
+  it("rejects a layoff card that does not extend the target meld", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+    const r = applyIntent(
+      k.state,
+      { type: "layoffResolve", seat: 1, ownMelds: [], layoffs: [{ card: "8C", meldIndex: 0 }] },
+      () => 0.5,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/cannot attach/);
+  });
+
+  it("rejects invalid or overlapping own melds and cards not in hand", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+
+    const badMeld = applyIntent(
+      k.state,
+      {
+        type: "layoffResolve",
+        seat: 1,
+        ownMelds: [{ type: "run", cards: ["2D", "3C", "4C"] }],
+        layoffs: [],
+      },
+      () => 0.5,
+    );
+    expect(badMeld.ok).toBe(false);
+
+    const notInHand = applyIntent(
+      k.state,
+      { type: "layoffResolve", seat: 1, ownMelds: [], layoffs: [{ card: "AS", meldIndex: 0 }] },
+      () => 0.5,
+    );
+    expect(notInHand.ok).toBe(false);
+  });
+});
+
+describe("gin builds a full hand result reveal", () => {
+  it("includes the ginner's melds and the opponent's optimal partition", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D", "7D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: false, gin: true },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const hr = out.state.lastHandResult!;
+    expect(hr.kind).toBe("gin");
+    expect(hr.closer).toBe(0);
+    expect(hr.winner).toBe(0);
+    expect(hr.points).toBe(39);
+    expect(hr.sides[0].deadwood).toEqual([]);
+    expect(hr.sides[0].deadwoodPoints).toBe(0);
+    expect(hr.sides[0].melds.flatMap((m) => m.cards)).toHaveLength(10);
+    expect(hr.sides[1].melds).toHaveLength(2);
+    expect(hr.sides[1].deadwoodPoints).toBe(14);
+    expect([...hr.sides[1].deadwood].sort()).toEqual(["2D", "3D", "4C", "5C"]);
+  });
+});
+
+describe("seat-scoped ackHandOver requires both players (ready-up)", () => {
+  it("waits for both seats before dealing the next hand", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+    const d = applyIntent(k.state, { type: "layoffDone", seat: 1 }, () => 0.5);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.state.phase).toBe("handOver");
+    expect(d.state.handOverAcks).toEqual([false, false]);
+    expect(d.state.lastHandResult).not.toBeNull();
+
+    const a0 = applyIntent(d.state, { type: "ackHandOver", seat: 0 }, () => 0.5);
+    expect(a0.ok).toBe(true);
+    if (!a0.ok) return;
+    expect(a0.state.phase).toBe("handOver");
+    expect(a0.state.handOverAcks).toEqual([true, false]);
+
+    /* Same seat acking again is idempotent. */
+    const again = applyIntent(a0.state, { type: "ackHandOver", seat: 0 }, () => 0.5);
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.state.phase).toBe("handOver");
+
+    const a1 = applyIntent(again.state, { type: "ackHandOver", seat: 1 }, () => 0.42);
+    expect(a1.ok).toBe(true);
+    if (!a1.ok) return;
+    expect(a1.state.phase).toBe("upcardOffer");
+    expect(a1.state.handIndex).toBe(1);
+    expect(a1.state.lastHandResult).toBeNull();
+    expect(a1.state.handOverAcks).toBeNull();
+  });
+
+  it("layoffDone also produces a hand result with computed layoffs", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+    const d = applyIntent(k.state, { type: "layoffDone", seat: 1 }, () => 0.5);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    const hr = d.state.lastHandResult!;
+    expect(hr.kind).toBe("knock");
+    expect(hr.layoffs.map((l) => l.card).sort()).toEqual(["4S", "6H", "KS"]);
+    expect(hr.sides[1].deadwoodPoints).toBe(39);
+  });
+});
+
 describe("match end at 125 with betting settlement", () => {
   it("crossing the race target sets matchOver and computes raw/bucket", () => {
     const s = buildKnockReadyState("5S");

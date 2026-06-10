@@ -1,6 +1,7 @@
 import {
   buildDeck,
   compareCutCards,
+  rankOrderLow,
   shuffleDeck,
   upcardKnockValue,
   type CardId,
@@ -21,7 +22,8 @@ import {
   scoreGin,
   validateKnockerLayout,
 } from "./scoring.js";
-import type { ApplyOutcome, Intent, Seat, ServerTruth } from "./types.js";
+import type { ApplyOutcome, HandResult, Intent, Seat, ServerTruth } from "./types.js";
+import type { Partition } from "./melds.js";
 
 function cloneState(s: ServerTruth): ServerTruth {
   return JSON.parse(JSON.stringify(s)) as ServerTruth;
@@ -69,11 +71,40 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     knock: null,
     lastHandWinner: null,
     lastHandPoints: null,
+    lastHandResult: null,
+    handOverAcks: null,
     bettingRaw: null,
     bettingBucket: null,
     seenBy: {},
     redeal: null,
   };
+}
+
+function cloneMelds(ms: Meld[]): Meld[] {
+  return ms.map((m) => ({ type: m.type, cards: [...m.cards] }));
+}
+
+/**
+ * Build the end-of-hand reveal payload. `winner`/`points` are filled in by
+ * `awardHand`, which is the single place a hand is scored.
+ */
+function makeHandResult(
+  kind: HandResult["kind"],
+  closer: Seat,
+  closerPartition: Partition,
+  defenderPartition: Partition,
+  layoffs: HandResult["layoffs"],
+): Omit<HandResult, "winner" | "points"> {
+  const sideFor = (p: Partition) => ({
+    melds: cloneMelds(p.melds),
+    deadwood: [...p.deadwood],
+    deadwoodPoints: deadwoodTotal(p.deadwood),
+  });
+  const sides: [HandResult["sides"][0], HandResult["sides"][1]] =
+    closer === 0
+      ? [sideFor(closerPartition), sideFor(defenderPartition)]
+      : [sideFor(defenderPartition), sideFor(closerPartition)];
+  return { kind, closer, sides, layoffs: layoffs.map((l) => ({ ...l })) };
 }
 
 /** Same hand number and dealer; fresh shuffle and back to down-card (upcard) phase. */
@@ -87,6 +118,8 @@ function voidAndRedeal(state: ServerTruth, rng: () => number): void {
   state.hands = [[], []];
   state.lastHandWinner = null;
   state.lastHandPoints = null;
+  state.lastHandResult = null;
+  state.handOverAcks = null;
   beginHand(state, rng);
 }
 
@@ -179,11 +212,18 @@ function finishCutAndDealFirstHand(state: ServerTruth): void {
   state.knock = null;
 }
 
-function awardHand(state: ServerTruth, winner: Seat, points: number) {
+function awardHand(
+  state: ServerTruth,
+  winner: Seat,
+  points: number,
+  result?: Omit<HandResult, "winner" | "points">,
+) {
   state.scores[winner] += points;
   state.handsWon[winner] += 1;
   state.lastHandWinner = winner;
   state.lastHandPoints = points;
+  state.lastHandResult = result ? { ...result, winner, points } : null;
+  state.handOverAcks = [false, false];
   state.phase = "handOver";
 
   const w = matchWinnerSeat(state.scores, state.raceTarget);
@@ -214,6 +254,8 @@ function maybeStartNextHand(state: ServerTruth, rng: () => number) {
   state.knock = null;
   state.lastHandWinner = null;
   state.lastHandPoints = null;
+  state.lastHandResult = null;
+  state.handOverAcks = null;
   beginHand(state, rng);
 }
 
@@ -252,6 +294,18 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
     if (intent.type !== "ackHandOver") {
       return { ok: false, error: "Waiting for hand acknowledgment" };
     }
+    const seat = intent.seat;
+    if (seat === 0 || seat === 1) {
+      /* Ready-up: the next hand only deals once both players have continued. */
+      const acks: [boolean, boolean] = s.handOverAcks ?? [false, false];
+      acks[seat] = true;
+      s.handOverAcks = acks;
+      if (acks[0] && acks[1]) {
+        maybeStartNextHand(s, rng);
+      }
+      return { ok: true, state: s };
+    }
+    /* Legacy seatless ack (older clients): advance immediately. */
     maybeStartNextHand(s, rng);
     return { ok: true, state: s };
   }
@@ -275,6 +329,8 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
       return applyDeclareBigGin(s, intent.seat);
     case "layoffAttach":
       return applyLayoffAttach(s, intent);
+    case "layoffResolve":
+      return applyLayoffResolve(s, intent);
     case "layoffDone":
       return applyLayoffDone(s, intent.seat);
     default:
@@ -513,10 +569,14 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
 
   if (gin) {
     const opp = otherSeat(seat);
-    /* Only the opponent's unmelded cards count toward gin points — their own melds don't. */
-    const oppUnmelded = bestDeadwood(state.hands[opp]).partition.deadwood;
-    const pts = scoreGin(oppUnmelded);
-    awardHand(state, seat, pts);
+    /* Only the opponent's unmelded cards count toward gin points — their own melds don't.
+     * Any optimal partition works for the ginner's display: all 10 cards are melded. */
+    const ginnerPartition = bestDeadwood(hand10).partition;
+    const oppPartition = bestDeadwood(state.hands[opp]).partition;
+    const pts = scoreGin(oppPartition.deadwood);
+    for (const c of state.hands[opp]) markSeen(state, c, [0, 1]);
+    for (const c of hand10) markSeen(state, c, [0, 1]);
+    awardHand(state, seat, pts, makeHandResult("gin", seat, ginnerPartition, oppPartition, []));
     return { ok: true, state };
   }
 
@@ -553,10 +613,13 @@ function applyDeclareBigGin(state: ServerTruth, seat: Seat): ApplyOutcome {
   if (!isBigGin11(hand)) return { ok: false, error: "Not EO" };
   const opp = otherSeat(seat);
   /* Only the opponent's unmelded cards count toward EO points — their own melds don't. */
-  const oppUnmelded = bestDeadwood(state.hands[opp]).partition.deadwood;
-  const pts = scoreEO(oppUnmelded);
+  const ginnerPartition = bestDeadwood(hand).partition; /* all 11 meld (EO verified above) */
+  const oppPartition = bestDeadwood(state.hands[opp]).partition;
+  const pts = scoreEO(oppPartition.deadwood);
+  for (const c of state.hands[opp]) markSeen(state, c, [0, 1]);
+  for (const c of hand) markSeen(state, c, [0, 1]);
   state.hands[seat] = [];
-  awardHand(state, seat, pts);
+  awardHand(state, seat, pts, makeHandResult("bigGin", seat, ginnerPartition, oppPartition, []));
   return { ok: true, state };
 }
 
@@ -585,6 +648,92 @@ function applyLayoffAttach(state: ServerTruth, intent: Intent): ApplyOutcome {
   return { ok: true, state };
 }
 
+/** Append `card` to a meld, keeping run cards in rank order for display. */
+function extendMeld(base: Meld, card: CardId): Meld {
+  const cards =
+    base.type === "run"
+      ? [...base.cards, card].sort((a, b) => rankOrderLow(a) - rankOrderLow(b))
+      : [...base.cards, card];
+  return { type: base.type, cards };
+}
+
+/**
+ * Defender's single-shot answer to a knock: their chosen meld partition plus an
+ * ordered layoff sequence. The choices are validated for legality only — a
+ * suboptimal arrangement stands (that's the skill), unlike `layoffDone` which
+ * optimizes on the defender's behalf (kept for the test bot / legacy clients).
+ */
+function applyLayoffResolve(state: ServerTruth, intent: Intent): ApplyOutcome {
+  if (intent.type !== "layoffResolve") return { ok: false, error: "Internal" };
+  if (state.phase !== "knockLayoff" || !state.knock) return { ok: false, error: "No knock layoff" };
+  const { seat, ownMelds, layoffs } = intent;
+  if (state.knock.layoffTurn !== seat) return { ok: false, error: "Not layoff turn" };
+  const knocker = state.knock.knocker;
+  if (seat === knocker) return { ok: false, error: "Knocker cannot resolve layoffs" };
+
+  const available = [...state.knock.opponentDeadwood];
+  const used = new Set<CardId>();
+
+  const resolvedOwnMelds: Meld[] = [];
+  for (const raw of ownMelds) {
+    const meld: Meld =
+      raw.type === "run"
+        ? { type: "run", cards: [...raw.cards].sort((a, b) => rankOrderLow(a) - rankOrderLow(b)) }
+        : { type: "set", cards: [...raw.cards] };
+    if (!isValidMeld(meld)) {
+      return { ok: false, error: `Invalid meld: ${meld.cards.join(" ")}` };
+    }
+    for (const c of meld.cards) {
+      if (used.has(c)) return { ok: false, error: `Card ${c} used in more than one meld` };
+      if (!available.includes(c)) return { ok: false, error: `Card ${c} not in your hand` };
+      used.add(c);
+    }
+    resolvedOwnMelds.push(meld);
+  }
+
+  const meldsAfter = state.knock.knockerMeldsAfterLayoff.map((m) => ({ ...m, cards: [...m.cards] }));
+  const appliedLayoffs: { card: CardId; meldIndex: number }[] = [];
+  for (const lo of layoffs) {
+    const { card, meldIndex } = lo;
+    if (used.has(card)) return { ok: false, error: `Card ${card} already melded or laid off` };
+    if (!available.includes(card)) return { ok: false, error: `Card ${card} not in your hand` };
+    const base = meldsAfter[meldIndex];
+    if (!base) return { ok: false, error: "Invalid meld index" };
+    const trial = extendMeld(base, card);
+    if (!isValidMeld(trial)) {
+      return { ok: false, error: `Card ${card} cannot attach to that meld` };
+    }
+    meldsAfter[meldIndex] = trial;
+    used.add(card);
+    appliedLayoffs.push({ card, meldIndex });
+  }
+
+  const remaining = available.filter((c) => !used.has(c));
+  state.knock.knockerMeldsAfterLayoff = meldsAfter;
+  state.knock.opponentDeadwood = remaining;
+  for (const c of available) markSeen(state, c, [0, 1]);
+
+  const { winner, points } = resolveKnockFinal({
+    knocker,
+    knockerDeadwood: state.knock.knockerDeadwood,
+    opponentDeadwood: remaining,
+  });
+
+  const result = makeHandResult(
+    winner === knocker ? "knock" : "undercut",
+    knocker,
+    { melds: meldsAfter, deadwood: state.knock.knockerDeadwood },
+    { melds: resolvedOwnMelds, deadwood: remaining },
+    appliedLayoffs,
+  );
+
+  state.hands[knocker] = [];
+  state.hands[otherSeat(knocker)] = [];
+  awardHand(state, winner, points, result);
+  state.knock = null;
+  return { ok: true, state };
+}
+
 function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
   if (state.phase !== "knockLayoff" || !state.knock) return { ok: false, error: "No knock layoff" };
   if (state.knock.layoffTurn !== seat) return { ok: false, error: "Not layoff turn" };
@@ -598,6 +747,7 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
    * server computes the best outcome on the opponent's behalf.
    */
   const beforeDeadwood = [...state.knock.opponentDeadwood];
+  const beforeMelds = state.knock.knockerMeldsAfterLayoff.map((m) => ({ ...m, cards: [...m.cards] }));
   const result = bestLayoff(state.knock.knockerMeldsAfterLayoff, beforeDeadwood);
   state.knock.knockerMeldsAfterLayoff = result.melds;
   state.knock.opponentDeadwood = [...result.opponentDeadwood];
@@ -607,6 +757,16 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
     if (hi >= 0) state.hands[seat].splice(hi, 1);
     markSeen(state, c, [0, 1]);
   }
+  for (const c of beforeDeadwood) markSeen(state, c, [0, 1]);
+
+  /* Which laid-off cards landed on which knocker meld (indices are stable through bestLayoff). */
+  const layoffs: { card: CardId; meldIndex: number }[] = [];
+  result.melds.forEach((m, i) => {
+    const baseCards = new Set(beforeMelds[i]?.cards ?? []);
+    for (const c of m.cards) {
+      if (!baseCards.has(c)) layoffs.push({ card: c, meldIndex: i });
+    }
+  });
 
   const { winner, points } = resolveKnockFinal({
     knocker,
@@ -614,9 +774,17 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
     opponentDeadwood: state.knock.opponentDeadwood,
   });
 
+  const handResult = makeHandResult(
+    winner === knocker ? "knock" : "undercut",
+    knocker,
+    { melds: result.melds, deadwood: state.knock.knockerDeadwood },
+    { melds: result.opponentMelds, deadwood: result.opponentDeadwood },
+    layoffs,
+  );
+
   state.hands[knocker] = [];
   state.hands[otherSeat(knocker)] = [];
-  awardHand(state, winner, points);
+  awardHand(state, winner, points, handResult);
   state.knock = null;
   return { ok: true, state };
 }

@@ -38,6 +38,10 @@ struct GameView: View {
     @State private var showLeaveConfirm = false
     @State private var showAcceptInviteConfirm = false
 
+    /// matchOver: the end-of-hand reveal shows first; this flips when the player
+    /// taps through to the final match summary.
+    @State private var showMatchSummaryAfterReveal = false
+
     @State private var showChatSheet = false
     @State private var chatMessages: [GameChatMessageDTO] = []
     @State private var chatWatermarkIso: String?
@@ -137,9 +141,26 @@ struct GameView: View {
 
     private func showsTurnRibbon(_ surface: GamePlaySurface) -> Bool {
         switch surface {
-        case .downCard, .play, .knockLayoff: true
+        case .downCard, .play: true
         default: false
         }
+    }
+
+    /// The fanned "YOU" hand row. Hidden during knock layoff (the arrangement view
+    /// renders your cards grouped by meld) and during the end-of-hand reveal.
+    private func showsYouHand(_ surface: GamePlaySurface, p: PlayerPerspective) -> Bool {
+        guard showsScoreRail(surface) else { return false }
+        if surface == .knockLayoff { return false }
+        if (surface == .handOver || surface == .matchOver), p.handResult != nil { return false }
+        return true
+    }
+
+    /// True when the dedicated end-of-hand reveal should own the table.
+    private func showsHandReveal(_ surface: GamePlaySurface, p: PlayerPerspective) -> Bool {
+        guard p.handResult != nil else { return false }
+        if surface == .handOver { return true }
+        if surface == .matchOver, !showMatchSummaryAfterReveal { return true }
+        return false
     }
 
     private func canReorderHand(for surface: GamePlaySurface) -> Bool {
@@ -544,28 +565,6 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func knockLayoffPanel(p: PlayerPerspective, k: PlayerPerspective.KnockPerspective) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(knockLayoffLine(p, k: k))
-                .font(.subheadline.weight(.semibold))
-            Text("Attach cards to knocker melds where legal, then tap Done.")
-                .font(.caption)
-                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(GamePlaySurface.knockLayoff.accent.opacity(0.14))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(GamePlaySurface.knockLayoff.accent.opacity(0.32), lineWidth: 1)
-        )
-        .contentTransition(.opacity)
-    }
-
-    @ViewBuilder
     private func turnBanner(p: PlayerPerspective) -> some View {
         HStack {
             Spacer(minLength: 0)
@@ -788,6 +787,29 @@ struct GameView: View {
                     ZStack(alignment: .top) {
                         phaseBackdrop(surface: surface)
                         ScrollView {
+                            if showsHandReveal(surface, p: p), let hr = p.handResult {
+                                HandRevealView(
+                                    p: p,
+                                    result: hr,
+                                    opponentName: app.opponentDisplayName,
+                                    isMatchOver: surface == .matchOver,
+                                    onContinue: {
+                                        Task {
+                                            await send(
+                                                gameId: gameId,
+                                                token: app.accessToken,
+                                                intent: ["type": "ackHandOver"],
+                                                success: "Ready for the next hand.",
+                                                feedbackText: $feedbackText,
+                                                feedbackIsError: $feedbackIsError
+                                            )
+                                        }
+                                    },
+                                    onShowFinalResults: { showMatchSummaryAfterReveal = true }
+                                )
+                                .id(handRevealIdentity(hr))
+                                .padding(8)
+                            } else {
                             VStack(alignment: .leading, spacing: 10) {
                                 phaseRibbon(surface: surface, p: p)
                                 cutProminentTitle(surface: surface, p: p)
@@ -799,15 +821,32 @@ struct GameView: View {
                                     matchSummaryPanel(p: p)
                                 }
 
-                                if surface == .handOver {
+                                if surface == .handOver, p.handResult == nil {
                                     handOverPanel(p: p)
                                 }
 
                                 if surface == .knockLayoff, let k = p.knock {
-                                    knockLayoffPanel(p: p, k: k)
+                                    if k.layoffTurn == p.seat, k.knocker != p.seat {
+                                        LayoffArrangementView(
+                                            p: p,
+                                            knock: k,
+                                            opponentName: app.opponentDisplayName,
+                                            onSubmit: { melds, layoffs in
+                                                Task {
+                                                    await submitLayoffResolve(
+                                                        gameId: gameId,
+                                                        ownMelds: melds,
+                                                        layoffs: layoffs
+                                                    )
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        KnockerWaitingView(knock: k, opponentName: app.opponentDisplayName)
+                                    }
                                 }
 
-                                if showsScoreRail(surface) {
+                                if showsYouHand(surface, p: p) {
                                     youHandBlock(surface: surface, p: p, selectedHandCard: $selectedHandCard)
                                 }
 
@@ -815,7 +854,7 @@ struct GameView: View {
                                     turnBanner(p: p)
                                 }
 
-                                if showsScoreRail(surface) {
+                                if showsYouHand(surface, p: p) {
                                     bottomActivityLog()
                                 }
 
@@ -829,6 +868,7 @@ struct GameView: View {
                                 )
                             }
                             .padding(8)
+                            }
                         }
                     }
                 }
@@ -892,7 +932,36 @@ struct GameView: View {
                 showPostCutInterstitial = false
                 pendingDealerDeclineAfterCutSequence = false
             }
+            if old.phase != new.phase, new.phase != "matchOver" {
+                showMatchSummaryAfterReveal = false
+            }
         }
+    }
+
+    /// Stable identity for one hand's reveal so polling re-renders don't restart the sequence.
+    private func handRevealIdentity(_ hr: HandResultDTO) -> String {
+        let cards = hr.sides.flatMap { $0.melds.flatMap(\.cards) + $0.deadwood }.joined(separator: ",")
+        return "\(hr.kind)-\(hr.winner)-\(hr.points)-\(cards)"
+    }
+
+    private func submitLayoffResolve(
+        gameId: String,
+        ownMelds: [MeldSolver.Meld],
+        layoffs: [(card: String, meldIndex: Int)]
+    ) async {
+        let intent: [String: Any] = [
+            "type": "layoffResolve",
+            "ownMelds": ownMelds.map { ["type": $0.dtoType, "cards": $0.cards] },
+            "layoffs": layoffs.map { ["card": $0.card, "meldIndex": $0.meldIndex] },
+        ]
+        await send(
+            gameId: gameId,
+            token: app.accessToken,
+            intent: intent,
+            success: "Layoffs locked in.",
+            feedbackText: $feedbackText,
+            feedbackIsError: $feedbackIsError
+        )
     }
 
     private func cardName(_ raw: String) -> String {
@@ -1575,17 +1644,8 @@ struct GameView: View {
                         EmptyView()
                     }
                 case .knockLayoff:
-                    if p.knock?.layoffTurn == p.seat {
-                        knockButtons(
-                            gameId: gameId,
-                            p: p,
-                            token: app.accessToken,
-                            feedbackText: feedbackText,
-                            feedbackIsError: feedbackIsError
-                        )
-                    } else {
-                        EmptyView()
-                    }
+                    /* Done lives inside LayoffArrangementView — only the redeal footer renders here. */
+                    EmptyView()
                 case .handOver:
                     Button("Continue") {
                         Task {
@@ -1985,22 +2045,6 @@ struct GameView: View {
         }
     }
 
-    private func knockButtons(
-        gameId: String,
-        p: PlayerPerspective,
-        token: String?,
-        feedbackText: Binding<String>,
-        feedbackIsError: Binding<Bool>
-    ) -> some View {
-        Group {
-            Button("Done") {
-                Task { await send(gameId: gameId, token: token, intent: ["type": "layoffDone"], success: "Layoffs finished.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(GinRummyPalette.navy)
-        }
-    }
-
     private func send(
         gameId: String,
         token: String?,
@@ -2140,6 +2184,16 @@ private struct DiscardHelper: View {
     @State private var lastEvaluatedHand: [String] = []
     @State private var lastEvaluatedKnockCard: String? = nil
 
+    /// Presented when a knock has more than one valid meld arrangement: the knocker
+    /// chooses which melds hit the table before the knock goes through.
+    private struct KnockChooserModel: Identifiable {
+        let id = UUID()
+        let discard: String
+        let options: [MeldSolver.PartitionOption]
+    }
+
+    @State private var knockChooser: KnockChooserModel?
+
     var body: some View {
         let s = selectedCard
         let haveSelection = !(s?.isEmpty ?? true)
@@ -2168,6 +2222,17 @@ private struct DiscardHelper: View {
         .onAppear { recomputeIfNeeded() }
         .onChange(of: hand) { _, _ in recomputeIfNeeded() }
         .onChange(of: knockCheckCard) { _, _ in recomputeIfNeeded() }
+        .sheet(item: $knockChooser) { model in
+            KnockLayoutChooserView(
+                options: model.options,
+                knockCard: model.discard,
+                onConfirm: { option in
+                    knockChooser = nil
+                    Task { await submitKnock(discard: model.discard, layout: option) }
+                },
+                onCancel: { knockChooser = nil }
+            )
+        }
     }
 
     private func recomputeIfNeeded() {
@@ -2194,7 +2259,6 @@ private struct DiscardHelper: View {
     }
 
     private func submit(plain: Bool, gin: Bool = false, knock: Bool = false) async {
-        guard let token else { return }
         let raw = selectedCard ?? ""
         if let fmt = CardIdValidation.formatProblem(in: raw) {
             await MainActor.run {
@@ -2211,15 +2275,54 @@ private struct DiscardHelper: View {
             }
             return
         }
+
+        if knock, !plain {
+            /* Knock layouts with the same unmelded total can still differ in which melds
+             * hit the table (and therefore what the opponent can lay off). When there's a
+             * genuine choice, the knocker picks; with a single layout we submit directly. */
+            let hand10 = hand.filter { $0 != c }
+            if let kv = MeldSolver.upcardKnockValue(knockCheckCard) {
+                let options = MeldSolver.allMaximalPartitions(hand10).filter { $0.deadwoodPoints == kv }
+                if options.count > 1 {
+                    await MainActor.run {
+                        knockChooser = KnockChooserModel(discard: c, options: options)
+                    }
+                    return
+                }
+                if let only = options.first {
+                    await submitKnock(discard: c, layout: only)
+                    return
+                }
+            }
+        }
+
+        await performSubmit(card: c, plain: plain, gin: gin, knock: knock, layout: nil)
+    }
+
+    private func submitKnock(discard: String, layout: MeldSolver.PartitionOption) async {
+        await performSubmit(card: discard, plain: false, gin: false, knock: true, layout: layout)
+    }
+
+    private func performSubmit(
+        card c: String,
+        plain: Bool,
+        gin: Bool,
+        knock: Bool,
+        layout: MeldSolver.PartitionOption?
+    ) async {
+        guard let token else { return }
         var intent: [String: Any] = [
             "type": "discard",
             "card": c,
             "knock": knock,
             "gin": gin,
         ]
-        // Knock layout is intentionally omitted; the server fills in the unique
-        // optimal partition for the chosen discard. If no legal layout achieves
-        // deadwood == knockCheckCard value, the server returns a clear 400.
+        if let layout {
+            intent["layout"] = [
+                "melds": layout.melds.map { ["type": $0.dtoType, "cards": $0.cards] },
+                "deadwood": layout.deadwood,
+            ]
+        }
         if plain {
             intent["knock"] = false
             intent["gin"] = false

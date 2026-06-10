@@ -7,6 +7,7 @@ import {
   buildPerspective,
   buildPerspectives,
   createNewMatch,
+  type CardId,
   type Intent,
   type ServerTruth,
 } from "../../rules/src/index.js";
@@ -278,15 +279,20 @@ app.post("/lobbies", async (req, reply) => {
   }
 });
 
-async function lookupInvitePreview(code: string): Promise<
-  { invite_code: string; status: string; host_display_name: string } | null
-> {
+type InviteLookup =
+  | { kind: "found"; preview: { invite_code: string; status: string; host_display_name: string } }
+  | { kind: "missing" }
+  /** The lobby query itself failed (Supabase down/paused/misconfigured) — NOT the same as a bad code. */
+  | { kind: "error"; message: string };
+
+async function lookupInvitePreview(code: string): Promise<InviteLookup> {
   const { data: lobby, error: lErr } = await admin
     .from("lobbies")
     .select("id, status, created_by")
     .eq("invite_code", code)
     .maybeSingle();
-  if (lErr || !lobby) return null;
+  if (lErr) return { kind: "error", message: lErr.message };
+  if (!lobby) return { kind: "missing" };
 
   const { data: profile } = await admin
     .from("profiles")
@@ -299,18 +305,25 @@ async function lookupInvitePreview(code: string): Promise<
     : "Someone";
 
   return {
-    invite_code: code,
-    status: lobby.status as string,
-    host_display_name: hostDisplayName,
+    kind: "found",
+    preview: {
+      invite_code: code,
+      status: lobby.status as string,
+      host_display_name: hostDisplayName,
+    },
   };
 }
 
 /** Public-ish preview so invite links can show the host display name without joining yet. */
 app.get("/lobbies/:code/preview", async (req, reply) => {
   const code = (req.params as { code: string }).code.toUpperCase();
-  const preview = await lookupInvitePreview(code);
-  if (!preview) return reply.code(404).send({ error: "Lobby not found" });
-  return preview;
+  const lookup = await lookupInvitePreview(code);
+  if (lookup.kind === "error") {
+    req.log.error({ code, err: lookup.message }, "invite preview lookup failed");
+    return reply.code(503).send({ error: "Game service is temporarily unavailable — try again in a minute." });
+  }
+  if (lookup.kind === "missing") return reply.code(404).send({ error: "Lobby not found" });
+  return lookup.preview;
 });
 
 function escapeHtml(s: string): string {
@@ -326,20 +339,24 @@ const INVITE_CODE_RE = /^[A-Z0-9]{4,16}$/;
 
 function renderInvitePage(opts: {
   code: string;
-  found: boolean;
-  open: boolean;
+  variant: "open" | "started" | "missing" | "unavailable";
   hostName: string;
 }): string {
-  const { code, found, open, hostName } = opts;
+  const { code, variant, hostName } = opts;
+  const found = variant === "open" || variant === "started";
+  const open = variant === "open";
   const safeCode = escapeHtml(code);
   const safeHost = escapeHtml(hostName);
   const appLink = `ginrummy://join/${safeCode}`;
   const title = found ? `${safeHost} invited you to Gin Rummy` : "Gin Rummy invite";
-  const subtitle = !found
-    ? "This invite link doesn't match an active lobby. Ask your friend to send a fresh link."
-    : open
-      ? `Open this page on your iPhone, then tap the button below to join the game.`
-      : "This game already started or the lobby has closed. Ask your friend for a new invite.";
+  const subtitle =
+    variant === "unavailable"
+      ? "We couldn't check this invite right now — the game service is briefly unavailable. Try the link again in a minute."
+      : variant === "missing"
+        ? "This invite link doesn't match an active lobby. Ask your friend to send a fresh link."
+        : open
+          ? `Open this page on your iPhone, then tap the button below to join the game.`
+          : "This game already started or the lobby has closed. Ask your friend for a new invite.";
 
   return `<!doctype html>
 <html lang="en">
@@ -416,17 +433,30 @@ function renderInvitePage(opts: {
 app.get("/join/:code", async (req, reply) => {
   const raw = (req.params as { code: string }).code.toUpperCase().trim();
   const code = INVITE_CODE_RE.test(raw) ? raw : "";
-  const preview = code ? await lookupInvitePreview(code) : null;
+  const lookup: InviteLookup = code ? await lookupInvitePreview(code) : { kind: "missing" };
+
+  let variant: "open" | "started" | "missing" | "unavailable";
+  let status: number;
+  if (lookup.kind === "error") {
+    req.log.error({ code, err: lookup.message }, "invite page lookup failed");
+    variant = "unavailable";
+    status = 503;
+  } else if (lookup.kind === "missing") {
+    variant = "missing";
+    status = 404;
+  } else {
+    variant = lookup.preview.status === "open" ? "open" : "started";
+    status = 200;
+  }
 
   const html = renderInvitePage({
     code: code || raw.slice(0, 16),
-    found: preview !== null,
-    open: preview?.status === "open",
-    hostName: preview?.host_display_name ?? "Someone",
+    variant,
+    hostName: lookup.kind === "found" ? lookup.preview.host_display_name : "Someone",
   });
 
   return reply
-    .code(preview ? 200 : 404)
+    .code(status)
     .header("Cache-Control", "no-store")
     .type("text/html; charset=utf-8")
     .send(html);
@@ -1250,7 +1280,41 @@ function parseClientIntent(body: { intent?: unknown }, seat: 0 | 1): Intent {
     if (typeof r.accept !== "boolean") throw new Error("respondRedeal requires accept (boolean)");
     return { type: "respondRedeal", seat, accept: r.accept };
   }
+  if (t === "layoffResolve") {
+    const r = raw as { ownMelds?: unknown; layoffs?: unknown };
+    return { type: "layoffResolve", seat, ownMelds: parseMelds(r.ownMelds), layoffs: parseLayoffs(r.layoffs) };
+  }
   return normalizeIntentSeat(raw as Intent, seat);
+}
+
+function parseCardId(raw: unknown): CardId {
+  if (typeof raw !== "string" || !/^[A2-9TJQK][SHDC]$/.test(raw)) {
+    throw new Error(`layoffResolve: invalid card id ${String(raw)}`);
+  }
+  return raw as CardId;
+}
+
+function parseMelds(raw: unknown): { type: "set" | "run"; cards: CardId[] }[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error("layoffResolve: ownMelds must be an array");
+  return raw.map((m) => {
+    const meld = m as { type?: unknown; cards?: unknown };
+    if (meld.type !== "set" && meld.type !== "run") throw new Error("layoffResolve: meld type must be set or run");
+    if (!Array.isArray(meld.cards)) throw new Error("layoffResolve: meld cards must be an array");
+    return { type: meld.type, cards: meld.cards.map(parseCardId) };
+  });
+}
+
+function parseLayoffs(raw: unknown): { card: CardId; meldIndex: number }[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error("layoffResolve: layoffs must be an array");
+  return raw.map((l) => {
+    const lo = l as { card?: unknown; meldIndex?: unknown };
+    const card = parseCardId(lo.card);
+    const idx = Math.floor(Number(lo.meldIndex));
+    if (!Number.isFinite(idx) || idx < 0) throw new Error("layoffResolve: invalid meldIndex");
+    return { card, meldIndex: idx };
+  });
 }
 
 function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
@@ -1264,12 +1328,14 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
     case "declareBigGin":
     case "layoffDone":
     case "layoffAttach":
+    case "layoffResolve":
       return { ...intent, seat };
     case "proposeRedeal":
     case "respondRedeal":
       return { ...intent, seat };
     case "ackHandOver":
-      return intent;
+      /* Seat-scoped ready-up: both players must Continue before the next deal. */
+      return { ...intent, seat };
     default:
       return intent;
   }

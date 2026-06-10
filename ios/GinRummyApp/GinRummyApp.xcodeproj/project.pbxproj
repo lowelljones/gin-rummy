@@ -26,7 +26,9 @@
 		E90100000000000000000013 /* GinRummyTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000013 /* GinRummyTheme.swift */; };
 		E90100000000000000000014 /* LobbyFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000014 /* LobbyFlows.swift */; };
 		E90100000000000000000015 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000015 /* KeychainStore.swift */; };
+		E90100000000000000000016 /* HandEndViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000016 /* HandEndViews.swift */; };
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
+		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,8 +64,10 @@
 		E80100000000000000000013 /* GinRummyTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTheme.swift; sourceTree = "<group>"; };
 		E80100000000000000000014 /* LobbyFlows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyFlows.swift; sourceTree = "<group>"; };
 		E80100000000000000000015 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		E80100000000000000000016 /* HandEndViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandEndViews.swift; sourceTree = "<group>"; };
 		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
+				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -117,6 +122,7 @@
 				E80100000000000000000009 /* GameView.swift */,
 				E80100000000000000000012 /* GameChatSheet.swift */,
 				E80100000000000000000010 /* PostCutCardsStrip.swift */,
+				E80100000000000000000016 /* HandEndViews.swift */,
 				E8010000000000000000000D /* PlayerFeedback.swift */,
 				E8010000000000000000000E /* CardViews.swift */,
 				E8010000000000000000000F /* GinRummyTableTheme.swift */,
@@ -242,6 +248,7 @@
 				E90100000000000000000009 /* GameView.swift in Sources */,
 				E90100000000000000000012 /* GameChatSheet.swift in Sources */,
 				E90100000000000000000010 /* PostCutCardsStrip.swift in Sources */,
+				E90100000000000000000016 /* HandEndViews.swift in Sources */,
 				E9010000000000000000000B /* PlayerFeedback.swift in Sources */,
 				E9010000000000000000000C /* CardViews.swift in Sources */,
 				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
@@ -255,6 +262,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */,
+				EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

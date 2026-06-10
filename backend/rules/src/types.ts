@@ -16,6 +16,31 @@ export interface UpcardOfferState {
   nonDealerPassed: boolean;
 }
 
+/** One seat's final layout when a hand ends (used by the end-of-hand reveal). */
+export interface HandResultSide {
+  melds: Meld[];
+  /** Cards that counted against this seat (unmelded, after any layoffs). */
+  deadwood: CardId[];
+  deadwoodPoints: number;
+}
+
+/**
+ * Full reveal of how the hand ended: both layouts, the laid-off cards, and the
+ * score delta. Exposed to both players during `handOver` / `matchOver` and
+ * cleared when the next hand is dealt.
+ */
+export interface HandResult {
+  kind: "gin" | "bigGin" | "knock" | "undercut";
+  winner: Seat;
+  points: number;
+  /** Seat that ended the hand (the ginner or knocker). */
+  closer: Seat;
+  /** Indexed by seat. Laid-off cards appear inside the closer's melds. */
+  sides: [HandResultSide, HandResultSide];
+  /** Defender cards attached onto the closer's melds (knock hands only). */
+  layoffs: { card: CardId; meldIndex: number }[];
+}
+
 export interface KnockState {
   knocker: Seat;
   knockCard: CardId;
@@ -76,6 +101,15 @@ export interface ServerTruth {
   lastHandWinner: Seat | null;
   lastHandPoints: number | null;
 
+  /** Full reveal of the last hand (omitted in legacy persisted rows — treated as null). */
+  lastHandResult?: HandResult | null;
+
+  /**
+   * Per-seat hand-over acknowledgments: the next hand deals once both are true.
+   * Omitted in legacy rows. A legacy unscoped `ackHandOver` advances immediately.
+   */
+  handOverAcks?: [boolean, boolean] | null;
+
   /** Betting settlement at match end. */
   bettingRaw: number | null;
   bettingBucket: number | null;
@@ -107,7 +141,19 @@ export type Intent =
   | { type: "declareBigGin"; seat: Seat }
   | { type: "layoffDone"; seat: Seat }
   | { type: "layoffAttach"; seat: Seat; card: CardId; meldIndex: number }
-  | { type: "ackHandOver" }
+  /**
+   * Defender's full response to a knock in one shot: their own meld partition plus
+   * an ordered list of layoffs onto the knocker's melds. Whatever is left over
+   * counts against them — the server does NOT optimize on their behalf.
+   */
+  | {
+      type: "layoffResolve";
+      seat: Seat;
+      ownMelds: Meld[];
+      layoffs: { card: CardId; meldIndex: number }[];
+    }
+  /** Seat-scoped acks ready-up (both required); legacy seatless ack advances immediately. */
+  | { type: "ackHandOver"; seat?: Seat }
   | { type: "proposeRedeal"; seat: Seat }
   | { type: "respondRedeal"; seat: Seat; accept: boolean };
 
