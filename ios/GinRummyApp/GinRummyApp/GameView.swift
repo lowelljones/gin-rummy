@@ -1395,6 +1395,7 @@ struct GameView: View {
         guard p.phase == "play",
               p.currentTurn == p.seat,
               p.hands[p.seat].count == 10,
+              p.mustDrawFromStock != true, // both passed the down card: deck only
               let top = p.discard.last, !top.isEmpty
         else { return nil }
         return {
@@ -1428,23 +1429,8 @@ struct GameView: View {
                 }
             }
         }
-        if p.phase == "upcardOffer",
-           p.upcardOffer?.stage == "dealer",
-           p.upcardOffer?.nonDealerPassed == true,
-           p.seat == p.nonDealer {
-            return {
-                Task {
-                    await send(
-                        gameId: gameId,
-                        token: app.accessToken,
-                        intent: ["type": "drawStock"],
-                        success: "You drew from the Deck — you lead with the down card on the table.",
-                        feedbackText: $feedbackText,
-                        feedbackIsError: $feedbackIsError
-                    )
-                }
-            }
-        }
+        // While the dealer is deciding on the down card it is not the non-dealer's
+        // turn — the server rejects early deck draws, so no button is offered here.
         return nil
     }
 

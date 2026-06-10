@@ -55,6 +55,21 @@ function makePlayState(opts: {
   };
 }
 
+/** Fresh-deal state in the down-card (upcardOffer) phase: seat 0 is non-dealer. */
+function makeUpcardOfferState(): ServerTruth {
+  const s = makePlayState({
+    hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C"],
+    hand1: ["4S", "6H", "KS", "2D", "3C", "4C", "5D", "8C", "8D", "9C"],
+    stock: ["3D", "4D", "6C", "7C"],
+    discard: ["JS"],
+    knockCheckCard: "JS",
+  });
+  s.phase = "upcardOffer";
+  s.upcardOffer = { stage: "nonDealer", nonDealerPassed: false };
+  s.currentTurn = 0;
+  return s;
+}
+
 function buildKnockReadyState(knockCheckCard: CardId = "5S"): ServerTruth {
   return makePlayState({
     hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C", "6C"],
@@ -64,6 +79,85 @@ function buildKnockReadyState(knockCheckCard: CardId = "5S"): ServerTruth {
     knockCheckCard,
   });
 }
+
+describe("upcard offer: turn order and the double-pass rule", () => {
+  it("non-dealer cannot draw from stock while the dealer is still deciding", () => {
+    const s = makeUpcardOfferState();
+    const passed = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
+    expect(passed.ok).toBe(true);
+    if (!passed.ok) return;
+    expect(passed.state.phase).toBe("upcardOffer");
+    expect(passed.state.upcardOffer).toEqual({ stage: "dealer", nonDealerPassed: true });
+    expect(passed.state.currentTurn).toBe(1);
+
+    /* Out-of-turn stock draw by the non-dealer must be rejected — the dealer
+       still holds the option on the down card. */
+    const sneak = applyIntent(passed.state, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(sneak.ok).toBe(false);
+    if (sneak.ok) return;
+    expect(sneak.error).toMatch(/Cannot draw now/);
+
+    /* The dealer can still take the down card afterwards. */
+    const take = applyIntent(passed.state, { type: "upcardTake", seat: 1 }, () => 0.5);
+    expect(take.ok).toBe(true);
+    if (!take.ok) return;
+    expect(take.state.phase).toBe("play");
+    expect(take.state.currentTurn).toBe(1);
+    expect(take.state.hands[1]).toContain("JS");
+  });
+
+  it("after both pass, the non-dealer must draw from the deck (not the refused upcard)", () => {
+    const s = makeUpcardOfferState();
+    const p0 = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
+    expect(p0.ok).toBe(true);
+    if (!p0.ok) return;
+    const p1 = applyIntent(p0.state, { type: "upcardPass", seat: 1 }, () => 0.5);
+    expect(p1.ok).toBe(true);
+    if (!p1.ok) return;
+    expect(p1.state.phase).toBe("play");
+    expect(p1.state.currentTurn).toBe(0);
+    expect(p1.state.mustDrawFromStock).toBe(0);
+
+    /* Taking the twice-refused upcard is illegal. */
+    const take = applyIntent(p1.state, { type: "takeDiscard", seat: 0 }, () => 0.5);
+    expect(take.ok).toBe(false);
+    if (take.ok) return;
+    expect(take.error).toMatch(/must draw from the deck/);
+
+    /* Drawing from the stock clears the restriction and play continues. */
+    const draw = applyIntent(p1.state, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(draw.ok).toBe(true);
+    if (!draw.ok) return;
+    expect(draw.state.mustDrawFromStock).toBeNull();
+    expect(draw.state.hands[0]).toHaveLength(11);
+
+    const disc = applyIntent(
+      draw.state,
+      { type: "discard", seat: 0, card: "5C", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+
+    /* The dealer may take from the discard pile normally on their turn. */
+    const dealerTake = applyIntent(disc.state, { type: "takeDiscard", seat: 1 }, () => 0.5);
+    expect(dealerTake.ok).toBe(true);
+  });
+
+  it("exposes mustDrawFromStock only to the constrained viewer", async () => {
+    const s = makeUpcardOfferState();
+    const p0 = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
+    expect(p0.ok).toBe(true);
+    if (!p0.ok) return;
+    const p1 = applyIntent(p0.state, { type: "upcardPass", seat: 1 }, () => 0.5);
+    expect(p1.ok).toBe(true);
+    if (!p1.ok) return;
+
+    const { buildPerspective } = await import("./perspectives.js");
+    expect(buildPerspective(p1.state, 0).mustDrawFromStock).toBe(true);
+    expect(buildPerspective(p1.state, 1).mustDrawFromStock).toBe(false);
+  });
+});
 
 describe("knock without explicit layout", () => {
   it("server fills in the optimal layout when client omits it", () => {
@@ -479,6 +573,42 @@ describe("seat-scoped ackHandOver requires both players (ready-up)", () => {
     expect(hr.kind).toBe("knock");
     expect(hr.layoffs.map((l) => l.card).sort()).toEqual(["4S", "6H", "KS"]);
     expect(hr.sides[1].deadwoodPoints).toBe(39);
+  });
+});
+
+describe("layoffAttach followed by layoffDone", () => {
+  it("includes manually attached cards in the hand-result layoffs", () => {
+    const s = buildKnockReadyState("5S");
+    const k = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(k.ok).toBe(true);
+    if (!k.ok) return;
+
+    /* Attach 4S by hand onto the A-2-3 of spades run, then let Done optimize the rest. */
+    const runIdx = k.state.knock!.knockerMeldsAfterLayoff.findIndex((m) => m.cards.includes("AS"));
+    expect(runIdx).toBeGreaterThanOrEqual(0);
+    const att = applyIntent(
+      k.state,
+      { type: "layoffAttach", seat: 1, card: "4S", meldIndex: runIdx },
+      () => 0.5,
+    );
+    expect(att.ok).toBe(true);
+    if (!att.ok) return;
+    expect(att.state.knock!.opponentDeadwood).not.toContain("4S");
+
+    const d = applyIntent(att.state, { type: "layoffDone", seat: 1 }, () => 0.5);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+
+    const hr = d.state.lastHandResult!;
+    /* All three laid-off cards appear in the reveal — including the manual 4S. */
+    expect(hr.layoffs.map((l) => l.card).sort()).toEqual(["4S", "6H", "KS"]);
+    expect(hr.layoffs.find((l) => l.card === "4S")!.meldIndex).toBe(runIdx);
+    expect(d.state.lastHandWinner).toBe(0);
+    expect(d.state.lastHandPoints).toBe(34);
   });
 });
 

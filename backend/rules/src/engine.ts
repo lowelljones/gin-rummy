@@ -85,6 +85,7 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     bettingBucket: null,
     seenBy: {},
     redeal: null,
+    mustDrawFromStock: null,
   };
 }
 
@@ -167,6 +168,7 @@ function applyRespondRedeal(state: ServerTruth, seat: Seat, accept: boolean, rng
 function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
   state.lastAction = null;
   state.turnPickup = null;
+  state.mustDrawFromStock = null;
   state.hands = [[], []];
   for (let i = 0; i < 10; i++) {
     state.hands[state.nonDealer].push(pile.pop()!);
@@ -448,6 +450,9 @@ function applyUpcardPass(state: ServerTruth, seat: Seat): ApplyOutcome {
     state.upcardOffer = null;
     state.phase = "play";
     state.currentTurn = nd;
+    /* Both passed: the non-dealer leads but must draw from the stock — the
+     * twice-refused upcard may not be taken. */
+    state.mustDrawFromStock = nd;
     recordAction(state, { seat, type: "passUpcard", card: null, pickup: null });
     return { ok: true, state };
   }
@@ -456,38 +461,19 @@ function applyUpcardPass(state: ServerTruth, seat: Seat): ApplyOutcome {
 }
 
 function applyDrawStock(state: ServerTruth, seat: Seat): ApplyOutcome {
-  if (state.phase === "play") {
-    if (state.currentTurn !== seat) return { ok: false, error: "Not your turn" };
-    if (state.hands[seat].length !== 10) return { ok: false, error: "Expected 10 cards before draw" };
-    if (state.stock.length === 0) return { ok: false, error: "Stock empty" };
-    const c = state.stock.pop()!;
-    state.hands[seat].push(c);
-    markSeen(state, c, [seat]);
-    state.turnPickup = { seat, type: "drawStock", card: c };
-    recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
-    return { ok: true, state };
-  }
-
-  if (state.phase === "upcardOffer") {
-    const nd = state.nonDealer;
-    if (seat !== nd) return { ok: false, error: "Only non-dealer draws after two passes" };
-    if (!state.upcardOffer || state.upcardOffer.stage !== "dealer" || !state.upcardOffer.nonDealerPassed) {
-      return { ok: false, error: "Passes not complete" };
-    }
-    if (state.hands[seat].length !== 10) return { ok: false, error: "Invalid hand size" };
-    if (state.stock.length === 0) return { ok: false, error: "Stock empty" };
-    const c = state.stock.pop()!;
-    state.hands[seat].push(c);
-    markSeen(state, c, [seat]);
-    state.turnPickup = { seat, type: "drawStock", card: c };
-    recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
-    state.upcardOffer = null;
-    state.phase = "play";
-    state.currentTurn = nd;
-    return { ok: true, state };
-  }
-
-  return { ok: false, error: "Cannot draw now" };
+  /* During the down-card offer only upcardTake/upcardPass are legal — drawing
+   * here would let the non-dealer preempt the dealer's option on the upcard. */
+  if (state.phase !== "play") return { ok: false, error: "Cannot draw now" };
+  if (state.currentTurn !== seat) return { ok: false, error: "Not your turn" };
+  if (state.hands[seat].length !== 10) return { ok: false, error: "Expected 10 cards before draw" };
+  if (state.stock.length === 0) return { ok: false, error: "Stock empty" };
+  const c = state.stock.pop()!;
+  state.hands[seat].push(c);
+  markSeen(state, c, [seat]);
+  if (state.mustDrawFromStock === seat) state.mustDrawFromStock = null;
+  state.turnPickup = { seat, type: "drawStock", card: c };
+  recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
+  return { ok: true, state };
 }
 
 function applyTakeDiscard(state: ServerTruth, seat: Seat): ApplyOutcome {
@@ -502,6 +488,12 @@ function applyTakeDiscard(state: ServerTruth, seat: Seat): ApplyOutcome {
   }
   if (state.discard.length === 0) {
     return { ok: false, error: "No discard" };
+  }
+  if (state.mustDrawFromStock === seat) {
+    return {
+      ok: false,
+      error: "Both players passed the down card — you must draw from the deck this turn.",
+    };
   }
   const c = state.discard.pop()!;
   state.hands[seat].push(c);
@@ -776,7 +768,6 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
    * server computes the best outcome on the opponent's behalf.
    */
   const beforeDeadwood = [...state.knock.opponentDeadwood];
-  const beforeMelds = state.knock.knockerMeldsAfterLayoff.map((m) => ({ ...m, cards: [...m.cards] }));
   const result = bestLayoff(state.knock.knockerMeldsAfterLayoff, beforeDeadwood);
   state.knock.knockerMeldsAfterLayoff = result.melds;
   state.knock.opponentDeadwood = [...result.opponentDeadwood];
@@ -788,10 +779,12 @@ function applyLayoffDone(state: ServerTruth, seat: Seat): ApplyOutcome {
   }
   for (const c of beforeDeadwood) markSeen(state, c, [0, 1]);
 
-  /* Which laid-off cards landed on which knocker meld (indices are stable through bestLayoff). */
+  /* Which laid-off cards landed on which knocker meld (indices are stable through
+   * bestLayoff). Diff against the knocker's ORIGINAL melds so cards the defender
+   * already attached via layoffAttach are included in the reveal too. */
   const layoffs: { card: CardId; meldIndex: number }[] = [];
   result.melds.forEach((m, i) => {
-    const baseCards = new Set(beforeMelds[i]?.cards ?? []);
+    const baseCards = new Set(state.knock!.knockerMelds[i]?.cards ?? []);
     for (const c of m.cards) {
       if (!baseCards.has(c)) layoffs.push({ card: c, meldIndex: i });
     }

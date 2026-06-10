@@ -59,12 +59,20 @@ npm run dev
 ### Solo test bot (no second phone)
 
 - Apply migration [`supabase/migrations/20260426000001_test_bot.sql`](supabase/migrations/20260426000001_test_bot.sql) in the SQL editor.
-- In the iOS lobby, turn on **Solo: play vs test bot**, then **Start vs test bot**. The host is seat `0`; seat `1` is a server-driven bot that **passes** on the upcard offer, then on its turn **draws** from stock and **discards** the last card in hand (and auto-`ackHandOver`, `layoffDone` on knock). Bot moves are stored in `game_moves` with `actor_user_id = null`.
+- In the iOS lobby, turn on **Solo: play vs test bot**, then **Start vs test bot**. The host is seat `0`; seat `1` is a server-driven bot that **passes** on the upcard offer, then on its turn **draws** from stock and **discards** the last card in hand — declaring **gin / big gin** whenever the engine requires it (and auto-`ackHandOver`, `layoffDone` on knock). Bot moves are stored in `game_moves` with `actor_user_id = null`.
 
 ## Rules engine tests
 
 ```bash
 cd backend/rules
+npm install
+npm test
+```
+
+## API unit tests (bot + chat moderation)
+
+```bash
+cd backend/api
 npm install
 npm test
 ```

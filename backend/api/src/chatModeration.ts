@@ -52,6 +52,17 @@ export function moderateChatText(raw: unknown): ModerationResult {
   return { ok: true, text: trimmed };
 }
 
+/* Entries older than the cooldown are useless; sweep occasionally so the map
+ * doesn't grow forever on a long-lived process. */
+const PRUNE_THRESHOLD = 5000;
+
+function pruneStaleEntries(now: number) {
+  if (lastPostByUserGame.size < PRUNE_THRESHOLD) return;
+  for (const [key, ts] of lastPostByUserGame) {
+    if (now - ts >= CHAT_COOLDOWN_MS) lastPostByUserGame.delete(key);
+  }
+}
+
 export function assertChatRateAllowed(userId: string, gameId: string): { ok: true } | { ok: false; error: string } {
   const key = `${userId}:${gameId}`;
   const now = Date.now();
@@ -59,6 +70,7 @@ export function assertChatRateAllowed(userId: string, gameId: string): { ok: tru
   if (now - last < CHAT_COOLDOWN_MS) {
     return { ok: false, error: "Slow down — try again in a moment" };
   }
+  pruneStaleEntries(now);
   lastPostByUserGame.set(key, now);
   return { ok: true };
 }

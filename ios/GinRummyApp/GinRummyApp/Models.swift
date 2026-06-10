@@ -70,6 +70,9 @@ struct PlayerPerspective: Codable, Equatable {
     /// Server-authoritative latest action (optional — older servers omit). Used for the
     /// bottom activity log so both players see the same pickup/discard story.
     let lastAction: LastAction?
+    /// True when both players passed the down card and YOU must draw from the deck —
+    /// taking the refused upcard is illegal this turn (optional — older servers omit).
+    let mustDrawFromStock: Bool?
 
     struct LastAction: Codable, Equatable {
         /// Monotonic per-game counter; a changed value means a new action happened.
