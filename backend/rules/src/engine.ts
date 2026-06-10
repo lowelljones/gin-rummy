@@ -7,7 +7,6 @@ import {
   type CardId,
 } from "./cards.js";
 import {
-  bestAfterDiscard11,
   bestDeadwood,
   bestLayoff,
   isBigGin11,
@@ -560,12 +559,10 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
       resolvedKnockMelds = best.partition.melds;
       resolvedKnockDeadwood = best.partition.deadwood;
     }
-  } else {
-    const best = bestAfterDiscard11(hand);
-    if (best.bestSum === 0) {
-      return { ok: false, error: "Must declare gin with deadwood 0" };
-    }
   }
+  /* Plain discard: always allowed, even when the remaining 10 meld perfectly.
+   * Gin and EO are explicit declarations — a player may pass up gin to keep
+   * drawing toward 11-card big gin. */
 
   state.hands[seat] = hand10;
   state.discard.push(card);

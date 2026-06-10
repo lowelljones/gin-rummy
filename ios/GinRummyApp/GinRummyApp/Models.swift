@@ -469,8 +469,10 @@ enum MeldSolver {
 
     /// Per-card eligibility for the player's 11-card hand. For each potential discard
     /// we run `bestDeadwood` on the remaining 10 cards and bucket the discard:
-    /// - `plain`    — the remaining 10 have deadwood > 0, plain Discard is legal.
-    /// - `ginable`  — the remaining 10 have deadwood == 0, Gin is legal.
+    /// - `plain`    — always legal: you may discard any card and keep playing, even
+    ///   when the remaining 10 meld perfectly (passing up gin to chase EO is valid).
+    /// - `ginable`  — the remaining 10 have deadwood == 0; Gin is available if you
+    ///   choose to declare it.
     /// - `knockable`— the remaining 10 have deadwood exactly equal to knockValue (first
     ///   upcard; not an Ace), Knock is legal. Gin (deadwood 0) is separate.
     /// ~11 calls to `bestDeadwood(10 cards)` per hand snapshot; well under 100ms in practice.
@@ -487,7 +489,7 @@ enum MeldSolver {
         for c in hand {
             let hand10 = hand.filter { $0 != c }
             let best = bestDeadwood(hand10).sum
-            if best > 0 { e.plain.insert(c) }
+            e.plain.insert(c)
             if best == 0 { e.ginable.insert(c) }
             if let kv = knockVal, best > 0, best == kv { e.knockable.insert(c) }
         }

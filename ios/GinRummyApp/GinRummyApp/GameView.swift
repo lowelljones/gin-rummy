@@ -2275,7 +2275,7 @@ private struct DiscardHelper: View {
     }
 
     private func inlineHint(canPlain: Bool, canGin: Bool, canKnock: Bool) -> String? {
-        if canGin { return "Gin available — declare for the bonus." }
+        if canGin { return "Gin available — declare for the bonus, or Discard to keep playing (e.g. for EO)." }
         if canPlain, !canKnock {
             if MeldSolver.upcardKnockValue(knockCheckCard) == nil {
                 return "Knock disabled — first upcard is an Ace (no knock this hand, even with 1 deadwood)."

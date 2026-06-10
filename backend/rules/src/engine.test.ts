@@ -244,6 +244,75 @@ describe("knock without explicit layout", () => {
   });
 });
 
+describe("plain discard vs explicit gin / EO", () => {
+  it("allows a plain discard when the remaining 10 meld perfectly (play continues)", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D", "7D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("play");
+    expect(out.state.currentTurn).toBe(1);
+    expect(out.state.lastHandWinner).toBeNull();
+    expect(out.state.scores).toEqual([0, 0]);
+  });
+
+  it("only ends the hand on gin when gin: true is declared", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D", "7D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: false, gin: true },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("handOver");
+    expect(out.state.lastHandWinner).toBe(0);
+    expect(out.state.lastHandPoints).toBe(39);
+  });
+
+  it("EO requires an explicit declareBigGin intent", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8H", "9C", "9D", "9H", "9S"],
+      hand1: ["TS", "JS", "QS", "KC", "KD", "KH", "AD", "2D", "3C", "4C"],
+      stock: ["5D", "6D"],
+      discard: ["TD"],
+      knockCheckCard: "TD",
+    });
+    /* Plain discard with all 11 melded is impossible (must discard one), but
+       drawing to 11 then plain-discarding a meld card keeps play going. */
+    const plain = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "9S", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(plain.ok).toBe(true);
+    if (!plain.ok) return;
+    expect(plain.state.phase).toBe("play");
+
+    const eo = applyIntent(s, { type: "declareBigGin", seat: 0 }, () => 0.5);
+    expect(eo.ok).toBe(true);
+    if (!eo.ok) return;
+    expect(eo.state.phase).toBe("handOver");
+    expect(eo.state.lastHandResult!.kind).toBe("bigGin");
+  });
+});
+
 describe("gin and EO score only the opponent's unmelded cards", () => {
   it("gin awards 25 + opponent unmelded (opponent's own melds don't count)", () => {
     const s = makePlayState({

@@ -61,9 +61,7 @@ describe("computeTestBotIntent in play phase", () => {
     expect(computeTestBotIntent(s)).toEqual({ type: "declareBigGin", seat: BOT });
   });
 
-  it("declares gin (not a plain discard) when one discard reaches zero deadwood", () => {
-    /* Discarding 4C gins: A-2-3S, 7-8-9H, KC/KD/KH/KS. A plain discard would be
-       rejected by the engine here, wedging the bot game forever. */
+  it("plain-discards even when a gin discard is available (dumb bot does not declare gin)", () => {
     const s = makeBotTurnState({
       botHand: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "KS", "4C"],
       humanHand: ["6H", "2D", "3C", "5C", "5D", "8C", "8D", "9C", "TD", "JD"],
@@ -71,14 +69,13 @@ describe("computeTestBotIntent in play phase", () => {
       discard: ["JS"],
     });
     const intent = computeTestBotIntent(s);
-    expect(intent).toEqual({ type: "discard", seat: BOT, card: "4C", knock: false, gin: true });
+    expect(intent).toEqual({ type: "discard", seat: BOT, card: "4C", knock: false, gin: false });
 
-    /* And the engine accepts it. */
     const out = applyIntent(s, intent!, () => 0.5);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.state.phase).toBe("handOver");
-    expect(out.state.lastHandWinner).toBe(BOT);
+    expect(out.state.phase).toBe("play");
+    expect(out.state.currentTurn).toBe(0);
   });
 
   it("falls back to discarding the drawn (last) card with 11 cards and no gin", () => {

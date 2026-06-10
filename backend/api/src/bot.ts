@@ -1,4 +1,4 @@
-import { bestAfterDiscard11, isBigGin11, type Intent, type ServerTruth, type Seat } from "../../rules/src/index.js";
+import { isBigGin11, type Intent, type ServerTruth, type Seat } from "../../rules/src/index.js";
 
 const TEST_BOT_SEAT: Seat = 1;
 
@@ -56,13 +56,6 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
     if (hand.length === 11) {
       if (isBigGin11(hand)) {
         return { type: "declareBigGin", seat: TEST_BOT_SEAT };
-      }
-      /* The engine forces gin when some discard reaches 0 deadwood (plain discards
-       * are rejected), so the bot must declare it or it would wedge the game
-       * retrying an illegal discard forever. */
-      const best = bestAfterDiscard11(hand);
-      if (best.bestSum === 0) {
-        return { type: "discard", seat: TEST_BOT_SEAT, card: best.discard, knock: false, gin: true };
       }
       const drawn = hand[hand.length - 1]!;
       return { type: "discard", seat: TEST_BOT_SEAT, card: drawn, knock: false, gin: false };
