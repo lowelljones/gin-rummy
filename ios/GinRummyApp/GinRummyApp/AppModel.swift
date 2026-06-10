@@ -7,6 +7,19 @@ struct InviteAcceptPresentation: Identifiable, Equatable {
     var id: String { inviteCode }
 }
 
+/// An invite that arrived while the user was mid-game. Surfaced as a banner at
+/// the top of the table instead of the full-screen InviteAcceptView, since
+/// accepting means forfeiting the game in progress.
+struct InGameInvite: Equatable {
+    let inviteCode: String
+    var hostDisplayName: String?
+
+    var hostLabel: String {
+        let t = hostDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? "Someone" : t
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     /// Current bearer used for every authenticated API call. Kept in sync with `refreshToken` /
@@ -22,6 +35,8 @@ final class AppModel: ObservableObject {
     private var lobbyInviteJoinHandoffCode: String?
 
     @Published var activeGameId: String?
+    /// Invite link that landed while a game was active — drives the in-game banner.
+    @Published var inGameInvite: InGameInvite?
     @Published var lastPerspective: PlayerPerspective?
     /// Display name for the other seat at the table (from API; defaults to "Opponent").
     @Published var opponentDisplayName: String = "Opponent"
@@ -65,10 +80,53 @@ final class AppModel: ObservableObject {
     }
 
     func handleInviteURL(_ url: URL) {
-        guard activeGameId == nil else { return }
         guard let code = Self.parseInviteCode(from: url), code.count >= 4 else { return }
-        deepLinkInviteCode = code.uppercased()
+        let normalized = code.uppercased()
+        if activeGameId != nil {
+            /* Mid-game: surface a banner over the table instead of the full-screen
+             * invite sheet. Host name is fetched async; banner shows immediately. */
+            inGameInvite = InGameInvite(inviteCode: normalized, hostDisplayName: nil)
+            Task { @MainActor in
+                if let preview = try? await api.lobbyInvitePreview(inviteCode: normalized),
+                   inGameInvite?.inviteCode == normalized {
+                    inGameInvite?.hostDisplayName = preview.host_display_name
+                }
+            }
+            return
+        }
+        deepLinkInviteCode = normalized
         reconcileInviteAcceptPresentation()
+    }
+
+    func dismissInGameInvite() {
+        inGameInvite = nil
+    }
+
+    /// Tear down all per-game state. Used when the player leaves mid-game, when the
+    /// opponent abandons, and when returning to the lobby after match end.
+    func clearActiveGame() {
+        activeGameId = nil
+        lastPerspective = nil
+        lastBetting = nil
+        opponentDisplayName = "Opponent"
+        /* An invite that arrived mid-game but was never answered follows the player
+         * back to the lobby as the regular full-screen invite sheet. */
+        if let invite = inGameInvite {
+            inGameInvite = nil
+            deepLinkInviteCode = invite.inviteCode
+        }
+        reconcileInviteAcceptPresentation()
+    }
+
+    /// Accepting an in-game invite: the current game has already been forfeited by the
+    /// caller; clear the table and hand the lobby code to LobbyView so the player lands
+    /// in the new game's waiting room.
+    func finishInGameInviteAccepted() {
+        guard let invite = inGameInvite else { return }
+        inGameInvite = nil
+        clearActiveGame()
+        lobbyInviteJoinHandoffCode = invite.inviteCode
+        lobbyInviteJoinHandoffNonce += 1
     }
 
     func rejectInviteFromDeepLink() {
@@ -116,6 +174,7 @@ final class AppModel: ObservableObject {
         refreshToken = nil
         expiresAt = nil
         activeGameId = nil
+        inGameInvite = nil
         lastPerspective = nil
         opponentDisplayName = "Opponent"
         lastBetting = nil

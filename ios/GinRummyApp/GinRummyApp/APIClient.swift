@@ -153,6 +153,12 @@ final class APIClient {
         try await request(path: "/games/\(gameId)/state", method: "GET", token: token)
     }
 
+    /// Leave (forfeit) an active game before it concludes. Idempotent on the server,
+    /// so retries are safe.
+    func leaveGame(gameId: String, token: String) async throws -> GameLeaveResponse {
+        try await request(path: "/games/\(gameId)/leave", method: "POST", token: token)
+    }
+
     func submitMove(gameId: String, token: String, intent: [String: Any]) async throws -> MoveResponse {
         let body = try JSONSerialization.data(withJSONObject: ["intent": intent])
         return try await request(path: "/games/\(gameId)/move", method: "POST", token: token, body: body)

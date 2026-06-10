@@ -1,5 +1,24 @@
 import SwiftUI
 
+/// Which top-level screen RootView shows. Pulled out of the view body as a pure
+/// function so the lobby→game handoff is unit-testable: the invariant that the
+/// game table *replaces* the lobby stack (waiting room included) the instant
+/// `activeGameId` flips must never regress into the old "swipe back to find the
+/// game" bug.
+enum RootScreen: Equatable {
+    case restoringSession
+    case auth
+    case game
+    case lobby
+
+    static func resolve(restoring: Bool, hasSession: Bool, activeGameId: String?) -> RootScreen {
+        if restoring { return .restoringSession }
+        guard hasSession else { return .auth }
+        if activeGameId != nil { return .game }
+        return .lobby
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var app: AppModel
 
@@ -13,7 +32,12 @@ struct RootView: View {
     /// switching branches replaces the whole stack atomically.
     var body: some View {
         Group {
-            if app.restoring {
+            switch RootScreen.resolve(
+                restoring: app.restoring,
+                hasSession: app.accessToken != nil,
+                activeGameId: app.activeGameId
+            ) {
+            case .restoringSession:
                 /* Stored refresh token is being exchanged at launch — avoid flashing AuthView. */
                 NavigationStack {
                     ProgressView("Restoring session…")
@@ -23,17 +47,17 @@ struct RootView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .rootNavChrome()
-            } else if app.accessToken == nil {
+            case .auth:
                 NavigationStack {
                     AuthView()
                 }
                 .rootNavChrome()
-            } else if app.activeGameId != nil {
+            case .game:
                 NavigationStack {
                     GameView()
                 }
                 .rootNavChrome()
-            } else {
+            case .lobby:
                 /* LobbyView brings its own NavigationStack with a `path` binding
                  * for pushing the join-code screen and the waiting room. */
                 LobbyView()

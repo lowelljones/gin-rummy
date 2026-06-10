@@ -34,7 +34,7 @@
 	<key>GIN_API_BASE_URL</key>
 	<string>https://gin-rummy-production.up.railway.app</string>
 	<key>GIN_INVITE_WEB_BASE_URL</key>
-	<string></string>
+	<string>https://gin-rummy-production.up.railway.app</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>SUPABASE_ANON_KEY</key>

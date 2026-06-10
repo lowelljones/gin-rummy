@@ -18,9 +18,9 @@ enum AppConfig {
         Bundle.main.object(forInfoDictionaryKey: "GIN_INVITE_WEB_BASE_URL") as? String ?? ""
     }
 
-    /// Host/path prefix for HTTPS invite links — strips optional `http(s)://`; empty when unset / placeholder domain.
-    private static func normalizedInviteWebAuthority() -> String {
-        var s = inviteWebBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Strips optional `http(s)://` and trailing slashes from a base URL string; "" when unusable.
+    private static func normalizedAuthority(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.last == "/" { s.removeLast() }
         let lower = s.lowercased()
         if lower.hasPrefix("https://") {
@@ -32,16 +32,33 @@ enum AppConfig {
         return s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    /// When `true`, share/copy uses custom URL scheme links (`ginrummy://`).
-    static var usesInviteCustomURLScheme: Bool {
-        let auth = normalizedInviteWebAuthority().lowercased()
-        return auth.isEmpty || auth.contains("example.com")
+    /// Domain that hosts the `/join/:code` invite landing page. Prefers the
+    /// explicit `GIN_INVITE_WEB_BASE_URL`, then falls back to the API's own
+    /// domain (the backend serves `GET /join/:code` itself). Only a local-dev
+    /// API (localhost / LAN IP) leaves this empty.
+    private static func inviteLinkAuthority() -> String {
+        let explicit = normalizedAuthority(inviteWebBaseURL)
+        if !explicit.isEmpty, !explicit.lowercased().contains("example.com") {
+            return explicit
+        }
+        // The API serves the invite landing page, so its public domain works too.
+        if apiBaseURL.lowercased().hasPrefix("https://") {
+            return normalizedAuthority(apiBaseURL)
+        }
+        return ""
     }
 
-    /// Link shared with friends; opens the installed app (`ginrummy://`) until you configure a hosted domain + Universal Links.
+    /// When `true`, share/copy falls back to custom URL scheme links (`ginrummy://`) — local dev only.
+    static var usesInviteCustomURLScheme: Bool {
+        inviteLinkAuthority().isEmpty
+    }
+
+    /// Link shared with friends. HTTPS links are tappable in Messages and land
+    /// on the backend's invite page, which bounces into the app. The raw
+    /// `ginrummy://` scheme is only used when no public HTTPS domain exists.
     static func inviteShareURL(forInviteCode inviteCode: String) -> URL {
-        let auth = normalizedInviteWebAuthority().lowercased()
-        if auth.isEmpty || auth.contains("example.com") {
+        let auth = inviteLinkAuthority()
+        if auth.isEmpty {
             return URL(string: "ginrummy://join/\(inviteCode)")!
         }
         return URL(string: "https://\(auth)/join/\(inviteCode)")!

@@ -278,15 +278,15 @@ app.post("/lobbies", async (req, reply) => {
   }
 });
 
-/** Public-ish preview so invite links can show the host display name without joining yet. */
-app.get("/lobbies/:code/preview", async (req, reply) => {
-  const code = (req.params as { code: string }).code.toUpperCase();
+async function lookupInvitePreview(code: string): Promise<
+  { invite_code: string; status: string; host_display_name: string } | null
+> {
   const { data: lobby, error: lErr } = await admin
     .from("lobbies")
     .select("id, status, created_by")
     .eq("invite_code", code)
     .maybeSingle();
-  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+  if (lErr || !lobby) return null;
 
   const { data: profile } = await admin
     .from("profiles")
@@ -303,6 +303,133 @@ app.get("/lobbies/:code/preview", async (req, reply) => {
     status: lobby.status as string,
     host_display_name: hostDisplayName,
   };
+}
+
+/** Public-ish preview so invite links can show the host display name without joining yet. */
+app.get("/lobbies/:code/preview", async (req, reply) => {
+  const code = (req.params as { code: string }).code.toUpperCase();
+  const preview = await lookupInvitePreview(code);
+  if (!preview) return reply.code(404).send({ error: "Lobby not found" });
+  return preview;
+});
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const INVITE_CODE_RE = /^[A-Z0-9]{4,16}$/;
+
+function renderInvitePage(opts: {
+  code: string;
+  found: boolean;
+  open: boolean;
+  hostName: string;
+}): string {
+  const { code, found, open, hostName } = opts;
+  const safeCode = escapeHtml(code);
+  const safeHost = escapeHtml(hostName);
+  const appLink = `ginrummy://join/${safeCode}`;
+  const title = found ? `${safeHost} invited you to Gin Rummy` : "Gin Rummy invite";
+  const subtitle = !found
+    ? "This invite link doesn't match an active lobby. Ask your friend to send a fresh link."
+    : open
+      ? `Open this page on your iPhone, then tap the button below to join the game.`
+      : "This game already started or the lobby has closed. Ask your friend for a new invite.";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title}</title>
+<meta property="og:title" content="${title}" />
+<meta property="og:description" content="Tap to join the Gin Rummy table. Invite code ${safeCode}." />
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at top, #14352a 0%, #0b211a 65%, #081711 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #f3ecd9;
+  }
+  .card {
+    max-width: 420px; width: calc(100% - 48px); padding: 36px 28px; text-align: center;
+    background: rgba(10, 30, 23, 0.82); border: 1px solid rgba(212, 175, 55, 0.45);
+    border-radius: 18px; box-shadow: 0 18px 60px rgba(0,0,0,0.5);
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { color: #b9c9b3; font-size: 15px; line-height: 1.5; margin: 0 0 22px; }
+  .code {
+    display: inline-block; letter-spacing: 4px; font-weight: 700; font-size: 22px;
+    color: #e8c66a; background: rgba(0,0,0,0.28); border: 1px dashed rgba(212,175,55,0.5);
+    border-radius: 10px; padding: 10px 18px; margin-bottom: 24px; user-select: all;
+  }
+  .btn {
+    display: block; width: 100%; box-sizing: border-box; padding: 15px 18px; margin-bottom: 12px;
+    border-radius: 12px; font-size: 17px; font-weight: 600; text-decoration: none; cursor: pointer; border: none;
+  }
+  .btn-primary { background: #d4af37; color: #1c1604; }
+  .btn-secondary { background: transparent; color: #e8c66a; border: 1px solid rgba(212,175,55,0.55); font-size: 15px; }
+  .hint { font-size: 13px; color: #8fa388; margin-top: 14px; margin-bottom: 0; }
+  .copied { color: #b6d7a8; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>${title}</h1>
+    <p>${subtitle}</p>
+    ${found && open ? `<div class="code" id="code">${safeCode}</div>
+    <a class="btn btn-primary" id="openApp" href="${appLink}">Join in the Gin Rummy app</a>
+    <button class="btn btn-secondary" id="copyCode" type="button">Copy invite code</button>
+    <p class="hint" id="hint">Nothing happening? Open the Gin Rummy app, choose &ldquo;Join with code&rdquo;, and enter the code above.</p>
+    <script>
+      document.getElementById("copyCode").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText("${safeCode}");
+          const b = document.getElementById("copyCode");
+          b.textContent = "Copied!";
+          b.classList.add("copied");
+          setTimeout(() => { b.textContent = "Copy invite code"; b.classList.remove("copied"); }, 1600);
+        } catch (e) { /* clipboard unavailable; code is selectable above */ }
+      });
+      // Best-effort auto-open: only fires on a real tap-through from Messages/Safari,
+      // never blocks the visible fallback UI.
+      setTimeout(() => { window.location.href = "${appLink}"; }, 350);
+    </script>` : ``}
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * HTTPS invite landing page. This is what actually gets texted to friends:
+ * iMessage only auto-links http(s) URLs, so custom-scheme links
+ * (ginrummy://…) sent as plain text were untappable / "not found". This page
+ * is served from the same public API domain and bounces into the installed
+ * app via the ginrummy:// scheme, with the code + instructions as fallback.
+ */
+app.get("/join/:code", async (req, reply) => {
+  const raw = (req.params as { code: string }).code.toUpperCase().trim();
+  const code = INVITE_CODE_RE.test(raw) ? raw : "";
+  const preview = code ? await lookupInvitePreview(code) : null;
+
+  const html = renderInvitePage({
+    code: code || raw.slice(0, 16),
+    found: preview !== null,
+    open: preview?.status === "open",
+    hostName: preview?.host_display_name ?? "Someone",
+  });
+
+  return reply
+    .code(preview ? 200 : 404)
+    .header("Cache-Control", "no-store")
+    .type("text/html; charset=utf-8")
+    .send(html);
 });
 
 type LobbyPlayerRow = {
@@ -759,30 +886,113 @@ app.get("/games/:id/state", async (req, reply) => {
 
   const { data: game, error } = await admin
     .from("games")
-    .select("id, server_truth, seat_for_user, move_seq, status")
+    .select("id, server_truth, seat_for_user, move_seq, status, abandoned_by")
     .eq("id", id)
     .maybeSingle();
 
   if (error || !game) return reply.code(404).send({ error: "Game not found" });
 
+  const seatMap = (game as { seat_for_user: Record<string, number> }).seat_for_user;
   const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id);
   if (seat === null) return reply.code(403).send({ error: "Not a participant" });
 
   const truth = game.server_truth as ServerTruth;
-  const oppName = await opponentDisplayNameForGame(
-    (game as { seat_for_user: Record<string, number> }).seat_for_user,
-    user.id,
-  );
+  const oppName = await opponentDisplayNameForGame(seatMap, user.id);
+  const abandonedBy = (game as { abandoned_by?: string | null }).abandoned_by ?? null;
+  const leftBySeat =
+    game.status === "abandoned" && abandonedBy !== null
+      ? seatMap[abandonedBy] ?? null
+      : null;
   return {
     perspective: buildPerspective(truth, seat),
     moveSeq: game.move_seq,
     status: game.status,
+    /** Seat (0/1) of the player who left an abandoned game; null otherwise. */
+    leftBySeat,
     opponentDisplayName: oppName,
     betting:
       truth.phase === "matchOver"
         ? { raw: truth.bettingRaw, bucket: truth.bettingBucket }
         : null,
   };
+});
+
+/**
+ * Leave (forfeit) an active game before it concludes. Marks the game
+ * "abandoned", records who left, and closes the lobby so neither player can
+ * keep playing. Idempotent: leaving a game that is already abandoned or
+ * completed returns the current status instead of an error, so a retry from
+ * a flaky connection never strands the client.
+ */
+app.post("/games/:id/leave", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const id = (req.params as { id: string }).id;
+  const { data: game, error } = await admin
+    .from("games")
+    .select("id, status, seat_for_user, lobby_id, abandoned_by")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error || !game) return reply.code(404).send({ error: "Game not found" });
+
+  const seatMap = (game as { seat_for_user: Record<string, number> }).seat_for_user;
+  const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id);
+  if (seat === null) return reply.code(403).send({ error: "Not a participant" });
+
+  if (game.status !== "active") {
+    const abandonedBy = (game as { abandoned_by?: string | null }).abandoned_by ?? null;
+    return {
+      ok: true,
+      status: game.status,
+      leftBySeat:
+        game.status === "abandoned" && abandonedBy !== null
+          ? seatMap[abandonedBy] ?? null
+          : null,
+    };
+  }
+
+  // Atomic claim: only one writer flips active -> abandoned, so two players
+  // leaving simultaneously can't both think they were "first".
+  const { data: claimed, error: uErr } = await admin
+    .from("games")
+    .update({
+      status: "abandoned",
+      abandoned_by: user.id,
+      abandoned_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+
+  if (uErr) return reply.code(500).send({ error: uErr.message });
+  if (!claimed) {
+    // Someone else finished/abandoned the game between our read and update.
+    const { data: after } = await admin
+      .from("games")
+      .select("status, abandoned_by")
+      .eq("id", id)
+      .single();
+    const abandonedBy = (after as { abandoned_by?: string | null } | null)?.abandoned_by ?? null;
+    return {
+      ok: true,
+      status: after?.status ?? "abandoned",
+      leftBySeat:
+        after?.status === "abandoned" && abandonedBy !== null
+          ? seatMap[abandonedBy] ?? null
+          : null,
+    };
+  }
+
+  const lobbyId = (game as { lobby_id?: string | null }).lobby_id;
+  if (lobbyId) {
+    await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
+  }
+
+  app.log.info({ gameId: id, userId: user.id, seat }, "player left game");
+  return { ok: true, status: "abandoned", leftBySeat: seat };
 });
 
 const CHAT_PAGE = 100;

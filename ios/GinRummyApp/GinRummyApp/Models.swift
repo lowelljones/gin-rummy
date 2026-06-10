@@ -160,6 +160,19 @@ struct LobbyStatusResponse: Codable {
     }
 }
 
+extension LobbyStatusResponse {
+    /// Non-nil exactly when the waiting room should leave the lobby and land on
+    /// the game table: the server has created a game (`gameId` present) *and*
+    /// the lobby has transitioned out of "open". Both the 2s poll loop and the
+    /// optimistic ready-up response funnel through this single gate so the two
+    /// paths can never disagree about when to enter the game.
+    var gameIdToEnter: String? {
+        guard let gid = gameId else { return nil }
+        guard lobby.status == "in_game" || lobby.status == "closed" else { return nil }
+        return gid
+    }
+}
+
 struct GameStartResponse: Codable {
     let gameId: String
     let perspective: PlayerPerspective
@@ -176,8 +189,17 @@ struct GameStateResponse: Codable {
     let perspective: PlayerPerspective
     let moveSeq: Int
     let status: String
+    /// Seat (0/1) of the player who left when `status == "abandoned"`; nil otherwise
+    /// (and on older servers that don't send it).
+    let leftBySeat: Int?
     let betting: BettingDTO?
     let opponentDisplayName: String?
+}
+
+struct GameLeaveResponse: Codable {
+    let ok: Bool
+    let status: String
+    let leftBySeat: Int?
 }
 
 struct MoveResponse: Codable {

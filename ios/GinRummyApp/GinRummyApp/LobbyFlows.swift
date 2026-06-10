@@ -208,6 +208,9 @@ struct LobbyWaitingRoomView: View {
     /// Shown discreetly when polling repeatedly fails so the user understands
     /// why the roster isn't updating instead of staring at a placeholder card.
     @State private var pollErrorHint: String?
+    /// Transient "Link copied" / "Code copied" feedback next to the copy buttons.
+    @State private var copyConfirmation = ""
+    @State private var copyConfirmationTask: Task<Void, Never>?
 
     private var normalizedCode: String { inviteCode.uppercased() }
 
@@ -574,24 +577,67 @@ struct LobbyWaitingRoomView: View {
 
     private var sharePanel: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                ShareLink(item: inviteShareLinkURL()) {
-                    Label("Share link", systemImage: "square.and.arrow.up")
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(shareLinkMuted)
+            // Visible invite link with the system share sheet (recents +
+            // apps) right next to it. Copying stays a separate action below.
+            HStack(spacing: 10) {
+                Text(inviteShareLinkURL().absoluteString)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(GinRummyPalette.cream.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .background(GinRummyPalette.bgDeep.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(GinRummyPalette.gold.opacity(0.3), lineWidth: 1)
+                    )
 
-                Button("Copy link") {
+                ShareLink(
+                    item: inviteShareLinkURL(),
+                    subject: Text("Gin Rummy invite"),
+                    message: Text("Join my Gin Rummy game! Code \(normalizedCode)"),
+                    preview: SharePreview("Gin Rummy invite — code \(normalizedCode)")
+                ) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(GinRummyPalette.bgDeep)
+                        .frame(width: 38, height: 36)
+                        .background(GinRummyPalette.gold)
+                        .clipShape(RoundedRectangle(cornerRadius: 9))
+                }
+                .accessibilityLabel("Share invite link")
+            }
+
+            HStack(spacing: 14) {
+                Button {
                     UIPasteboard.general.string = inviteShareLinkURL().absoluteString
+                    flashCopyConfirmation("Link copied")
+                } label: {
+                    Label("Copy link", systemImage: "doc.on.doc")
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
 
-                Button("Copy code") {
+                Button {
                     UIPasteboard.general.string = normalizedCode
+                    flashCopyConfirmation("Code copied")
+                } label: {
+                    Label("Copy code", systemImage: "number")
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
+
+                Spacer()
+
+                if !copyConfirmation.isEmpty {
+                    Text(copyConfirmation)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.sage)
+                        .transition(.opacity)
+                }
             }
 
             Text(inviteShareLinkHint())
@@ -606,6 +652,16 @@ struct LobbyWaitingRoomView: View {
         .background(panelFill)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .ginGoldBorder(cornerRadius: 14)
+    }
+
+    private func flashCopyConfirmation(_ text: String) {
+        withAnimation(.easeIn(duration: 0.12)) { copyConfirmation = text }
+        copyConfirmationTask?.cancel()
+        copyConfirmationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { copyConfirmation = "" }
+        }
     }
 
     private var readyButton: some View {
@@ -632,9 +688,9 @@ struct LobbyWaitingRoomView: View {
 
     private func inviteShareLinkHint() -> String {
         if AppConfig.usesInviteCustomURLScheme {
-            return "Invite links open this app directly (ginrummy://join/…)."
+            return "Local dev: links use ginrummy://join/… and only open on a device with the app installed."
         }
-        return "Hosted invite links open the app when Universal Links are configured."
+        return "Friends can tap this link in Messages — it opens a page that jumps straight into the app."
     }
 
     // MARK: - Polling + ready action
@@ -660,7 +716,7 @@ struct LobbyWaitingRoomView: View {
                     if let me = s.players.first(where: { $0.isSelf }) {
                         localReady = me.ready
                     }
-                    if let gid = s.gameId, s.lobby.status == "in_game" || s.lobby.status == "closed" {
+                    if let gid = s.gameIdToEnter {
                         await transitionToGame(gameId: gid, token: token)
                         return
                     }
@@ -723,7 +779,7 @@ struct LobbyWaitingRoomView: View {
             if let me = s.players.first(where: { $0.isSelf }) {
                 localReady = me.ready
             }
-            if let gid = s.gameId, s.lobby.status == "in_game" || s.lobby.status == "closed" {
+            if let gid = s.gameIdToEnter {
                 await transitionToGame(gameId: gid, token: token)
             }
         } catch {

@@ -28,6 +28,11 @@ struct LobbyView: View {
         .onChange(of: app.lobbyInviteJoinHandoffNonce) {
             applyLobbyInviteJoinHandoffIfNeeded()
         }
+        .onAppear {
+            /* Handoff can be staged before LobbyView mounts (accepting an invite
+             * mid-game tears down the table first), so onChange alone would miss it. */
+            applyLobbyInviteJoinHandoffIfNeeded()
+        }
     }
 
     private var homeScreen: some View {

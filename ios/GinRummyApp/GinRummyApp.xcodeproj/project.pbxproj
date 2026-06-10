@@ -26,7 +26,18 @@
 		E90100000000000000000013 /* GinRummyTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000013 /* GinRummyTheme.swift */; };
 		E90100000000000000000014 /* LobbyFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000014 /* LobbyFlows.swift */; };
 		E90100000000000000000015 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000015 /* KeychainStore.swift */; };
+		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		EA0900000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E70600000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E70400000000000000000001;
+			remoteInfo = GinRummyApp;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		E80000000000000000000001 /* GinRummyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GinRummyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -51,10 +62,19 @@
 		E80100000000000000000013 /* GinRummyTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinRummyTheme.swift; sourceTree = "<group>"; };
 		E80100000000000000000014 /* LobbyFlows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyFlows.swift; sourceTree = "<group>"; };
 		E80100000000000000000015 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		E70200000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EA0400000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -68,8 +88,17 @@
 			isa = PBXGroup;
 			children = (
 				E70300000000000000000002 /* GinRummyApp */,
+				EA0300000000000000000001 /* GinRummyAppTests */,
 				E70300000000000000000003 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		EA0300000000000000000001 /* GinRummyAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
+			);
+			path = GinRummyAppTests;
 			sourceTree = "<group>";
 		};
 		E70300000000000000000002 /* GinRummyApp */ = {
@@ -104,6 +133,7 @@
 			isa = PBXGroup;
 			children = (
 				E80000000000000000000001 /* GinRummyApp.app */,
+				EA0000000000000000000001 /* GinRummyAppTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -128,6 +158,23 @@
 			productReference = E80000000000000000000001 /* GinRummyApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		EA0600000000000000000001 /* GinRummyAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA0700000000000000000001 /* Build configuration list for PBXNativeTarget "GinRummyAppTests" */;
+			buildPhases = (
+				EA0500000000000000000001 /* Sources */,
+				EA0400000000000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EA0800000000000000000001 /* PBXTargetDependency */,
+			);
+			name = GinRummyAppTests;
+			productName = GinRummyAppTests;
+			productReference = EA0000000000000000000001 /* GinRummyAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -140,6 +187,10 @@
 				TargetAttributes = {
 					E70400000000000000000001 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					EA0600000000000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = E70400000000000000000001;
 					};
 				};
 			};
@@ -157,6 +208,7 @@
 			projectRoot = "";
 			targets = (
 				E70400000000000000000001 /* GinRummyApp */,
+				EA0600000000000000000001 /* GinRummyAppTests */,
 			);
 		};
 /* End PBXProject section */
@@ -198,7 +250,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EA0500000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EA0800000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E70400000000000000000001 /* GinRummyApp */;
+			targetProxy = EA0900000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		E70800000000000000000001 /* Debug */ = {
@@ -286,6 +354,44 @@
 			};
 			name = Release;
 		};
+		EA0A00000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BDDQS574XW;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyAppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GinRummyApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GinRummyApp";
+			};
+			name = Debug;
+		};
+		EA0A00000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BDDQS574XW;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyAppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GinRummyApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GinRummyApp";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -303,6 +409,15 @@
 			buildConfigurations = (
 				E70800000000000000000003 /* Debug */,
 				E70800000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EA0700000000000000000001 /* Build configuration list for PBXNativeTarget "GinRummyAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EA0A00000000000000000001 /* Debug */,
+				EA0A00000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

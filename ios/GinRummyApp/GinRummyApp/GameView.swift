@@ -23,6 +23,20 @@ struct GameView: View {
     @State private var youAcceptedDownCardPendingDiscard = false
     @State private var opponentAcceptedDownCardPendingDiscard = false
 
+    /// Terminal/transition states for leaving an unfinished game (yours or the opponent's).
+    private enum GameExitState: Equatable {
+        /// The leave API call is in flight — brief "leaving the table" visual.
+        case leavingInProgress
+        /// You left voluntarily — confirmation screen with a back-to-lobby button.
+        case youLeft
+        /// The opponent abandoned the game — notice + back-to-lobby button.
+        case opponentLeft
+    }
+
+    @State private var exitState: GameExitState?
+    @State private var showLeaveConfirm = false
+    @State private var showAcceptInviteConfirm = false
+
     @State private var showChatSheet = false
     @State private var chatMessages: [GameChatMessageDTO] = []
     @State private var chatWatermarkIso: String?
@@ -167,6 +181,17 @@ struct GameView: View {
         .navigationTitle("Table")
         .toolbar {
             if app.activeGameId != nil {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showLeaveConfirm = true
+                    } label: {
+                        Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
+                    }
+                    .disabled(exitState != nil || app.lastPerspective?.phase == "matchOver")
+                    .accessibilityLabel("Leave game")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showChatSheet = true
@@ -194,6 +219,30 @@ struct GameView: View {
                     .accessibilityLabel(chatToolbarAccessibilityLabel)
                 }
             }
+        }
+        .confirmationDialog(
+            "Leave this game?",
+            isPresented: $showLeaveConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Leave game", role: .destructive) {
+                Task { await leaveCurrentGame(acceptingInvite: nil) }
+            }
+            Button("Keep playing", role: .cancel) {}
+        } message: {
+            Text("\(app.opponentDisplayName) will be told you left, and this match will end without a result.")
+        }
+        .confirmationDialog(
+            "Join \(app.inGameInvite?.hostLabel ?? "their") game?",
+            isPresented: $showAcceptInviteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Leave & join new game", role: .destructive) {
+                Task { await leaveCurrentGame(acceptingInvite: app.inGameInvite) }
+            }
+            Button("Keep playing", role: .cancel) {}
+        } message: {
+            Text("Accepting forfeits your current game with \(app.opponentDisplayName) — they'll be notified that you left.")
         }
         .sheet(isPresented: $showChatSheet) {
             Group {
@@ -724,7 +773,11 @@ struct GameView: View {
     private func gameContent(gameId: String, p: PlayerPerspective) -> some View {
         let surface = gamePlaySurface(for: p)
         return ZStack {
-            if showPostCutInterstitial, let lc = p.lastCut {
+            if let exit = exitState {
+                gameExitScreen(exit)
+                    .zIndex(300)
+                    .transition(.opacity)
+            } else if showPostCutInterstitial, let lc = p.lastCut {
                 PostCutInterstitial(last: lc, youAreSeat: p.seat)
                     .id("\(lc.p0)-\(lc.p1)-\(lc.nonDealer)-interstitial")
                     .zIndex(200)
@@ -782,15 +835,22 @@ struct GameView: View {
         }
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
         .animation(.easeInOut(duration: 0.28), value: surface)
+        .animation(.easeInOut(duration: 0.28), value: exitState)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: p.redeal?.status)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: p.redeal?.fromSeat)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: app.inGameInvite)
         .overlay(alignment: .top) {
-            redealProposalBanner(
-                gameId: gameId,
-                p: p,
-                feedbackText: $feedbackText,
-                feedbackIsError: $feedbackIsError
-            )
+            VStack(spacing: 8) {
+                if exitState == nil {
+                    inGameInviteBanner()
+                }
+                redealProposalBanner(
+                    gameId: gameId,
+                    p: p,
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
+            }
             .padding(.horizontal, 10)
             .padding(.top, 6)
         }
@@ -1368,9 +1428,27 @@ struct GameView: View {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 continue
             }
+            /* Correct-game guard: if the active game changed under this loop (player
+             * left for another table), stop applying stale snapshots immediately. */
+            guard await MainActor.run(body: { app.activeGameId == gameId }) else { return }
             do {
                 let s = try await app.api.gameState(gameId: gameId, token: token)
+                let gameWasAbandoned = await MainActor.run { () -> Bool in
+                    guard app.activeGameId == gameId else { return true }
+                    guard s.status == "abandoned" else { return false }
+                    if exitState == nil {
+                        if let leftBy = s.leftBySeat, leftBy == s.perspective.seat {
+                            /* Our own leave (e.g. from another device / a retried request). */
+                            exitState = .youLeft
+                        } else {
+                            exitState = .opponentLeft
+                        }
+                    }
+                    return true
+                }
+                if gameWasAbandoned { return }
                 await MainActor.run {
+                    guard app.activeGameId == gameId else { return }
                     scheduleChatBaselineLoadOnce(gameId: gameId)
 
                     let before = app.lastPerspective
@@ -1458,10 +1536,7 @@ struct GameView: View {
                         postCutTask?.cancel()
                         cardFlightClearTask?.cancel()
                         messageTask?.cancel()
-                        app.activeGameId = nil
-                        app.lastPerspective = nil
-                        app.lastBetting = nil
-                        app.opponentDisplayName = "Opponent"
+                        app.clearActiveGame()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(GinRummyPalette.burgundy)
@@ -1657,6 +1732,158 @@ struct GameView: View {
             )
             .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
             .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Banner shown over the table when an invite link arrives mid-game.
+    /// Accept (after confirmation) forfeits this game and joins the new lobby;
+    /// deny just dismisses the banner.
+    @ViewBuilder
+    private func inGameInviteBanner() -> some View {
+        if let invite = app.inGameInvite {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("\(invite.hostLabel) invited you to a new game", systemImage: "envelope.badge.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                Text("Accepting will end your current game.")
+                    .font(.caption)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                HStack(spacing: 14) {
+                    Button {
+                        showAcceptInviteConfirm = true
+                    } label: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.green.opacity(0.95))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Accept invite")
+
+                    Button {
+                        app.dismissInGameInvite()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.red.opacity(0.92))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Deny invite")
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(GinRummyPalette.burgundy.opacity(0.94))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(GinRummyPalette.gold.opacity(0.4), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Full-table screen shown while leaving, after you left, or after the
+    /// opponent abandoned the game.
+    @ViewBuilder
+    private func gameExitScreen(_ state: GameExitState) -> some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 24)
+            switch state {
+            case .leavingInProgress:
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(GinRummyPalette.gold)
+                Text("Leaving the table…")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                Text("Letting \(app.opponentDisplayName) know you've left.")
+                    .font(.subheadline)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .multilineTextAlignment(.center)
+            case .youLeft:
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.system(size: 52))
+                    .foregroundStyle(GinRummyPalette.gold)
+                Text("You left the game")
+                    .font(.title2.bold())
+                    .foregroundStyle(GinRummyPalette.cream)
+                Text("\(app.opponentDisplayName) has been notified. The match ended without a result.")
+                    .font(.subheadline)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Button("Back to main lobby") {
+                    app.clearActiveGame()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.burgundy)
+                .controlSize(.large)
+                .padding(.top, 8)
+            case .opponentLeft:
+                Image(systemName: "figure.walk.departure")
+                    .font(.system(size: 52))
+                    .foregroundStyle(GinRummyPalette.gold)
+                Text("\(app.opponentDisplayName) left the game")
+                    .font(.title2.bold())
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Text("Your opponent walked away from the table, so this match has ended.")
+                    .font(.subheadline)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Button("Back to main lobby") {
+                    app.clearActiveGame()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.burgundy)
+                .controlSize(.large)
+                .padding(.top, 8)
+            }
+            Spacer(minLength: 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GinRummyPalette.bgDeep.opacity(0.97))
+    }
+
+    /// Forfeit the current game. When `acceptingInvite` is non-nil, the new lobby is
+    /// joined *first* (so a full/closed lobby never costs you your game), then the
+    /// current game is abandoned and the player is handed off to the new waiting room.
+    private func leaveCurrentGame(acceptingInvite invite: InGameInvite?) async {
+        guard let gid = app.activeGameId, let token = app.accessToken else { return }
+        await MainActor.run {
+            pollTask?.cancel()
+            exitState = .leavingInProgress
+        }
+        do {
+            if let invite {
+                try await app.api.joinLobby(code: invite.inviteCode, token: token)
+            }
+            _ = try await app.api.leaveGame(gameId: gid, token: token)
+            /* Brief pause so the "leaving the table" visual registers instead of flashing. */
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await MainActor.run {
+                if invite != nil {
+                    app.finishInGameInviteAccepted()
+                } else {
+                    exitState = .youLeft
+                }
+            }
+        } catch {
+            await MainActor.run {
+                exitState = nil
+                setFeedback(UserFeedback.from(error), error: true)
+                if let activeGid = app.activeGameId {
+                    pollTask?.cancel()
+                    pollTask = Task { await pollLoop(gameId: activeGid) }
+                }
+            }
         }
     }
 
