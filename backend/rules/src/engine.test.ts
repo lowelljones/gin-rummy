@@ -135,6 +135,17 @@ describe("upcard offer: turn order and the double-pass rule", () => {
     expect(dealerTake.ok).toBe(true);
   });
 
+  it("rejects draw and take-discard during the down-card offer phase", () => {
+    const s = makeUpcardOfferState();
+    expect(applyIntent(s, { type: "drawStock", seat: 0 }, () => 0.5).ok).toBe(false);
+    expect(applyIntent(s, { type: "takeDiscard", seat: 0 }, () => 0.5).ok).toBe(false);
+
+    const passed = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
+    expect(passed.ok).toBe(true);
+    if (!passed.ok) return;
+    expect(applyIntent(passed.state, { type: "drawStock", seat: 1 }, () => 0.5).ok).toBe(false);
+  });
+
   it("after both pass, the non-dealer may still take the twice-refused upcard (house rule)", () => {
     const s = makeUpcardOfferState();
     const p0 = applyIntent(s, { type: "upcardPass", seat: 0 }, () => 0.5);
@@ -284,6 +295,98 @@ describe("plain discard vs explicit gin / EO", () => {
     expect(out.state.phase).toBe("handOver");
     expect(out.state.lastHandWinner).toBe(0);
     expect(out.state.lastHandPoints).toBe(39);
+  });
+
+  it("rejects knock when the discard would leave zero deadwood (must declare gin)", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D", "7D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/Must declare gin/);
+  });
+
+  it("rejects gin declaration when the remaining 10 do not meld", () => {
+    const s = buildKnockReadyState("5S");
+    const out = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: false, gin: true },
+      () => 0.5,
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/Gin not legal/);
+  });
+
+  it("rejects declareBigGin when not all 11 cards meld", () => {
+    const s = makePlayState({
+      hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C", "6C"],
+      hand1: ["4S", "6H", "KS", "2D", "3C", "4C", "5D", "8C", "8D", "9C"],
+      stock: ["3D", "4D"],
+      discard: ["JS"],
+      knockCheckCard: "5S",
+    });
+    const out = applyIntent(s, { type: "declareBigGin", seat: 0 }, () => 0.5);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/Not EO/);
+  });
+
+  it("passing up gin keeps play going so the player can draw toward EO", () => {
+    /* 11 cards: gin if KD is discarded; pass it up, draw 5S to extend the spade
+       run, all 11 meld → EO. */
+    let s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "JS", "QS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["5S", "9H"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    const passGin = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(passGin.ok).toBe(true);
+    if (!passGin.ok) return;
+    expect(passGin.state.phase).toBe("play");
+    expect(passGin.state.hands[0]).toHaveLength(10);
+    expect(passGin.state.lastHandWinner).toBeNull();
+    expect(passGin.state.scores).toEqual([0, 0]);
+
+    /* Opponent draws and discards so seat 0 can act again. */
+    const oDraw = applyIntent(passGin.state, { type: "drawStock", seat: 1 }, () => 0.5);
+    expect(oDraw.ok).toBe(true);
+    if (!oDraw.ok) return;
+    const oDisc = applyIntent(
+      oDraw.state,
+      { type: "discard", seat: 1, card: "9H", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(oDisc.ok).toBe(true);
+    if (!oDisc.ok) return;
+
+    const draw = applyIntent(oDisc.state, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(draw.ok).toBe(true);
+    if (!draw.ok) return;
+    expect(draw.state.hands[0]).toContain("5S");
+
+    const eo = applyIntent(draw.state, { type: "declareBigGin", seat: 0 }, () => 0.5);
+    expect(eo.ok).toBe(true);
+    if (!eo.ok) return;
+    expect(eo.state.phase).toBe("handOver");
+    expect(eo.state.lastHandResult!.kind).toBe("bigGin");
+    expect(eo.state.lastHandWinner).toBe(0);
+    expect(eo.state.lastHandPoints).toBeGreaterThan(50);
   });
 
   it("EO requires an explicit declareBigGin intent", () => {

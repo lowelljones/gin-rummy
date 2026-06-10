@@ -8,7 +8,10 @@
   },
   "scripts": {
     "install:api": "npm install --prefix backend/api",
+    "install:rules": "npm install --prefix backend/rules",
     "build": "npm run install:api && npm run build --prefix backend/api",
-    "start": "npm start --prefix backend/api"
+    "start": "npm start --prefix backend/api",
+    "test": "npm run install:rules && npm test --prefix backend/rules && npm run install:api && npm test --prefix backend/api",
+    "test:e2e": "npm run install:api && npm run test:invite-link --prefix backend/api"
   }
 }

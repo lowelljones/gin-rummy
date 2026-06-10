@@ -61,21 +61,44 @@ npm run dev
 - Apply migration [`supabase/migrations/20260426000001_test_bot.sql`](supabase/migrations/20260426000001_test_bot.sql) in the SQL editor.
 - In the iOS lobby, turn on **Solo: play vs test bot**, then **Start vs test bot**. The host is seat `0`; seat `1` is a server-driven bot that **passes** on the upcard offer, then on its turn **draws** from stock and **discards** the last card in hand (declaring **EO** only when all 11 meld; it does not auto-declare gin — and auto-`ackHandOver`, `layoffDone` on knock). Bot moves are stored in `game_moves` with `actor_user_id = null`.
 
-## Rules engine tests
+## Tests
+
+Run all backend unit tests from the repo root:
 
 ```bash
-cd backend/rules
-npm install
 npm test
 ```
 
-## API unit tests (bot + chat moderation)
+Hermetic invite-link e2e (spawns mock Supabase + API):
 
 ```bash
-cd backend/api
-npm install
-npm test
+npm run test:e2e
 ```
+
+Individual packages:
+
+```bash
+cd backend/rules && npm install && npm test   # rules engine (authoritative game logic)
+cd backend/api && npm install && npm test     # bot + chat moderation
+```
+
+iOS unit tests (Xcode or CLI):
+
+```bash
+xcodebuild test -project ios/GinRummyApp/GinRummyApp.xcodeproj -scheme GinRummyApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
+```
+
+### House rules locked in by tests
+
+| Rule | Where tested |
+|------|----------------|
+| Non-dealer cannot draw while dealer decides on down card | `engine.test.ts` |
+| After both pass, non-dealer may take the refused upcard | `engine.test.ts` |
+| Plain discard allowed at zero deadwood (pass up gin for EO) | `engine.test.ts`, `MeldSolverTests.swift` |
+| Gin / EO only on explicit declaration | `engine.test.ts`, `bot.test.ts`, `MeldSolverTests.swift` |
+| Knock rejected at zero deadwood | `engine.test.ts` |
+| Layoff reveal includes manual attachments | `engine.test.ts` |
 
 ## iOS app
 

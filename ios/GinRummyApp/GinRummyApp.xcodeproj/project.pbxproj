@@ -29,6 +29,7 @@
 		E90100000000000000000016 /* HandEndViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000016 /* HandEndViews.swift */; };
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
+		EA0100000000000000000003 /* MeldSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000003 /* MeldSolverTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +69,7 @@
 		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000003 /* MeldSolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeldSolverTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +104,7 @@
 			children = (
 				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
 				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
+				EA0200000000000000000003 /* MeldSolverTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -263,6 +266,7 @@
 			files = (
 				EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */,
 				EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */,
+				EA0100000000000000000003 /* MeldSolverTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
