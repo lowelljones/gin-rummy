@@ -23,6 +23,8 @@ struct GameView: View {
     @State private var stockCountAfterOurDiscardEndsTurn: Int? = nil
     @State private var youAcceptedDownCardPendingDiscard = false
     @State private var opponentAcceptedDownCardPendingDiscard = false
+    /// `seq` of the most recent server-reported action we've already logged (0 = none yet).
+    @State private var lastSeenServerActionSeq = 0
 
     /// Terminal/transition states for leaving an unfinished game (yours or the opponent's).
     private enum GameExitState: Equatable {
@@ -305,18 +307,63 @@ struct GameView: View {
         detectCutCompletion(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
         updateCardFlights(before: before, after: after)
-        if let b = before {
-            if let msg = consolidatedStatusLine(before: b, after: after) {
+        if let line = serverActionStatusLine(after) {
+            setBottomLog(line)
+        } else if let b = before {
+            // Legacy servers (no lastAction in the perspective): fall back to the
+            // snapshot-diff heuristics. Never mix the two on the same game — the
+            // heuristics can mis-attribute a deck draw as a discard-pile pickup
+            // when polls collapse multiple moves.
+            if after.lastAction == nil, let msg = consolidatedStatusLine(before: b, after: after) {
                 setBottomLog(msg)
             }
-        } else {
-            if after.phase == "upcardOffer" {
-                setBottomLog(
-                    after.currentTurn == after.seat
-                        ? "This hand · Down card — your turn"
-                        : "This hand · Down card — opponent’s turn"
-                )
+        } else if after.phase == "upcardOffer" {
+            setBottomLog(
+                after.currentTurn == after.seat
+                    ? "This hand · Down card — your turn"
+                    : "This hand · Down card — opponent’s turn"
+            )
+        }
+    }
+
+    /// Builds the bottom-log line from the server-reported `lastAction` — the single
+    /// source of truth both clients share, so the two players always see the same
+    /// (correct) story about what was picked up and discarded.
+    private func serverActionStatusLine(_ a: PlayerPerspective) -> String? {
+        guard let act = a.lastAction else { return nil }
+        defer { lastSeenServerActionSeq = act.seq }
+        guard act.seq != lastSeenServerActionSeq else { return nil }
+
+        let who = act.seat == a.seat ? "You" : "Opponent"
+        switch act.type {
+        case "passUpcard":
+            if act.seat == a.nonDealer {
+                let chooser = a.dealer == a.seat ? "You choose" : "Opponent chooses"
+                return "This hand · \(who) passed the down card — \(chooser) next"
             }
+            let leader = a.nonDealer == a.seat ? "You lead" : "Opponent leads"
+            return "This hand · \(who) passed — \(leader) from the deck"
+        case "takeDownCard":
+            return "This hand · \(who) took the down card"
+        case "discard":
+            guard let d = act.card, !d.isEmpty else { return nil }
+            let base = "This hand · \(who) discarded \(cardName(d))"
+            switch act.pickup?.type {
+            case "drawStock":
+                return base + " after drawing from the deck"
+            case "takeDiscard":
+                if let c = act.pickup?.card, !c.isEmpty {
+                    return base + " after taking \(cardName(c)) from the discard pile"
+                }
+                return base + " after drawing from the discard pile"
+            case "takeDownCard":
+                return base + " after taking the down card"
+            default:
+                return base
+            }
+        default:
+            // drawStock / takeDiscard mid-turn: summarized when the discard lands.
+            return nil
         }
     }
 

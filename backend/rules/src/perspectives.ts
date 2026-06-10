@@ -1,7 +1,10 @@
 import type { CardId } from "./cards.js";
-import type { HandResult, Seat, ServerTruth } from "./types.js";
+import type { HandResult, LastAction, Seat, ServerTruth } from "./types.js";
 
 export type MaskedCard = CardId | "HIDDEN";
+
+/** `LastAction` as shown to one viewer: stock-draw faces are hidden from the non-acting seat. */
+export type LastActionPerspective = LastAction;
 
 export interface PlayerPerspective {
   seat: Seat;
@@ -31,6 +34,12 @@ export interface PlayerPerspective {
   handOverAcks: [boolean, boolean] | null;
   /** Cards opponent is known to hold (from draws you did not see — usually empty). */
   inferred: Record<string, unknown>;
+  /**
+   * Server-authoritative latest action (draw/take/pass/discard) so both clients
+   * log the same pickup story. Stock-draw faces are masked for the non-actor.
+   * Omitted by legacy servers.
+   */
+  lastAction: LastActionPerspective | null;
 }
 
 export interface CutPerspective {
@@ -45,6 +54,20 @@ export interface CutPerspective {
   theirCut: CardId | null;
   /** Who was chosen to cut first (legacy states omit this and default to 0). */
   firstCutSeat: Seat;
+}
+
+function maskLastAction(la: ServerTruth["lastAction"], viewer: Seat): LastActionPerspective | null {
+  if (!la) return null;
+  // Only stock draws are private; their face is hidden from the seat that didn't draw.
+  const maskCard = (type: string, card: CardId | null): CardId | null =>
+    type === "drawStock" && la.seat !== viewer ? null : card;
+  return {
+    seq: la.seq,
+    seat: la.seat,
+    type: la.type,
+    card: maskCard(la.type, la.card),
+    pickup: la.pickup ? { type: la.pickup.type, card: maskCard(la.pickup.type, la.pickup.card) } : null,
+  };
 }
 
 function maskHand(viewer: Seat, owner: Seat, hand: CardId[], seenBy: ServerTruth["seenBy"]): MaskedCard[] {
@@ -112,6 +135,7 @@ export function buildPerspective(state: ServerTruth, viewer: Seat): PlayerPerspe
     handResult: state.lastHandResult ?? null,
     handOverAcks: state.handOverAcks ?? null,
     inferred: {},
+    lastAction: maskLastAction(state.lastAction ?? null, viewer),
   };
 }
 

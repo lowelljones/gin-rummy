@@ -41,6 +41,26 @@ export interface HandResult {
   layoffs: { card: CardId; meldIndex: number }[];
 }
 
+/** How a seat picked up the card that brought them to 11 (attached to their discard). */
+export type PickupKind = "drawStock" | "takeDiscard" | "takeDownCard";
+
+/**
+ * Server-authoritative record of the most recent draw/take/pass/discard. Both
+ * clients build their activity log from this instead of diffing polled
+ * snapshots, so the two players always see the same (correct) pickup story.
+ * Stock-draw card faces are masked per viewer in perspectives.
+ */
+export interface LastAction {
+  /** Monotonic per-game counter so clients can detect new actions across polls. */
+  seq: number;
+  seat: Seat;
+  type: "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard";
+  /** Card drawn / taken / discarded by this action (null for passes). */
+  card: CardId | null;
+  /** Discards only: how the discarding seat picked up earlier this turn. */
+  pickup: { type: PickupKind; card: CardId | null } | null;
+}
+
 export interface KnockState {
   knocker: Seat;
   knockCard: CardId;
@@ -116,6 +136,12 @@ export interface ServerTruth {
 
   /** Visibility: cardId -> which seats have seen this specific card face. */
   seenBy: Record<string, [boolean, boolean]>;
+
+  /** Most recent draw/take/pass/discard, for client activity logs. Omitted in legacy rows. */
+  lastAction?: LastAction | null;
+
+  /** The acting seat's pickup this turn — consumed by their discard. Omitted in legacy rows. */
+  turnPickup?: { seat: Seat; type: PickupKind; card: CardId } | null;
 
   /**
    * Optional mid-hand redeal request (same hand index / scores if redealt).

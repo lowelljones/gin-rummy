@@ -571,6 +571,110 @@ describe("ackHandOver advances to the next deal until match end", () => {
   });
 });
 
+describe("lastAction logging", () => {
+  it("records a deck draw + discard with the same pickup story for both perspectives", async () => {
+    const s = makePlayState({
+      hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C"],
+      hand1: ["4S", "6H", "KS", "2D", "3C", "4C", "5D", "8C", "8D", "9C"],
+      stock: ["3D", "4D"],
+      discard: ["JS"],
+      knockCheckCard: "5S",
+    });
+
+    const drew = applyIntent(s, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(drew.ok).toBe(true);
+    if (!drew.ok) return;
+    expect(drew.state.lastAction).toEqual({
+      seq: 1,
+      seat: 0,
+      type: "drawStock",
+      card: "4D",
+      pickup: null,
+    });
+
+    const { buildPerspective } = await import("./perspectives.js");
+    /* The drawer sees the card face; the opponent only learns a deck draw happened. */
+    expect(buildPerspective(drew.state, 0).lastAction?.card).toBe("4D");
+    expect(buildPerspective(drew.state, 1).lastAction?.card).toBeNull();
+    expect(buildPerspective(drew.state, 1).lastAction?.type).toBe("drawStock");
+
+    const disc = applyIntent(
+      drew.state,
+      { type: "discard", seat: 0, card: "5C", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+    expect(disc.state.lastAction).toEqual({
+      seq: 2,
+      seat: 0,
+      type: "discard",
+      card: "5C",
+      pickup: { type: "drawStock", card: "4D" },
+    });
+    /* Both viewers agree: 5C discarded after a deck draw; the drawn face stays hidden from seat 1. */
+    const p0 = buildPerspective(disc.state, 0).lastAction;
+    const p1 = buildPerspective(disc.state, 1).lastAction;
+    expect(p0?.pickup).toEqual({ type: "drawStock", card: "4D" });
+    expect(p1?.pickup).toEqual({ type: "drawStock", card: null });
+    expect(p0?.card).toBe("5C");
+    expect(p1?.card).toBe("5C");
+  });
+
+  it("records a discard-pile pickup with the exact card for both viewers", async () => {
+    const s = makePlayState({
+      hand0: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C"],
+      hand1: ["4S", "6H", "KS", "2D", "3C", "4C", "5D", "8C", "8D", "9C"],
+      stock: ["3D", "4D"],
+      discard: ["JS"],
+      knockCheckCard: "5S",
+    });
+
+    const took = applyIntent(s, { type: "takeDiscard", seat: 0 }, () => 0.5);
+    expect(took.ok).toBe(true);
+    if (!took.ok) return;
+
+    const disc = applyIntent(
+      took.state,
+      { type: "discard", seat: 0, card: "5C", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+
+    const { buildPerspective } = await import("./perspectives.js");
+    const p0 = buildPerspective(disc.state, 0).lastAction;
+    const p1 = buildPerspective(disc.state, 1).lastAction;
+    expect(p0).toEqual(p1);
+    expect(p1?.pickup).toEqual({ type: "takeDiscard", card: "JS" });
+  });
+
+  it("clears lastAction when the next hand deals", () => {
+    const s = buildKnockReadyState("5S");
+    const ginOut = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
+      () => 0.5,
+    );
+    expect(ginOut.ok).toBe(true);
+    if (!ginOut.ok) return;
+    expect(ginOut.state.lastAction?.type).toBe("discard");
+
+    const done = applyIntent(ginOut.state, { type: "layoffDone", seat: 1 }, () => 0.5);
+    expect(done.ok).toBe(true);
+    if (!done.ok) return;
+
+    const a0 = applyIntent(done.state, { type: "ackHandOver", seat: 0 }, () => 0.5);
+    expect(a0.ok).toBe(true);
+    if (!a0.ok) return;
+    const a1 = applyIntent(a0.state, { type: "ackHandOver", seat: 1 }, () => 0.5);
+    expect(a1.ok).toBe(true);
+    if (!a1.ok) return;
+    expect(a1.state.phase).toBe("upcardOffer");
+    expect(a1.state.lastAction ?? null).toBeNull();
+  });
+});
+
 describe("mutual redeal", () => {
   it("accepting voids the hand and returns to down-card phase at the same hand index", () => {
     const s = buildKnockReadyState("5S");

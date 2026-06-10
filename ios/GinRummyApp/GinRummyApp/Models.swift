@@ -67,6 +67,26 @@ struct PlayerPerspective: Codable, Equatable {
     let handResult: HandResultDTO?
     /// Per-seat Continue acks during handOver; the next hand deals once both are true.
     let handOverAcks: [Bool]?
+    /// Server-authoritative latest action (optional — older servers omit). Used for the
+    /// bottom activity log so both players see the same pickup/discard story.
+    let lastAction: LastAction?
+
+    struct LastAction: Codable, Equatable {
+        /// Monotonic per-game counter; a changed value means a new action happened.
+        let seq: Int
+        let seat: Int
+        /// "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard"
+        let type: String
+        /// Card drawn/taken/discarded. Nil for passes and for stock draws viewed by the non-actor.
+        let card: String?
+        /// Discards only: how the discarding seat picked up earlier this turn.
+        let pickup: Pickup?
+
+        struct Pickup: Codable, Equatable {
+            let type: String
+            let card: String?
+        }
+    }
 
     struct LastCutResult: Codable, Equatable {
         let p0: String

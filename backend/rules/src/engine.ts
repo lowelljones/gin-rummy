@@ -22,7 +22,7 @@ import {
   scoreGin,
   validateKnockerLayout,
 } from "./scoring.js";
-import type { ApplyOutcome, HandResult, Intent, Seat, ServerTruth } from "./types.js";
+import type { ApplyOutcome, HandResult, Intent, LastAction, Seat, ServerTruth } from "./types.js";
 import type { Partition } from "./melds.js";
 
 function cloneState(s: ServerTruth): ServerTruth {
@@ -38,6 +38,12 @@ function markSeen(state: ServerTruth, card: CardId, viewers: Seat[]) {
 
 function otherSeat(s: Seat): Seat {
   return (1 - s) as Seat;
+}
+
+/** Record the action just applied so both clients can log it authoritatively. */
+function recordAction(state: ServerTruth, action: Omit<LastAction, "seq">): void {
+  const seq = (state.lastAction?.seq ?? 0) + 1;
+  state.lastAction = { seq, ...action };
 }
 
 /** First to the race target normally wins; if both are at/above target, higher total wins. */
@@ -66,6 +72,8 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     currentTurn: 0,
     cut: { spread: deck, picks: [null, null], firstSeat },
     lastCutResult: null,
+    lastAction: null,
+    turnPickup: null,
     upcardOffer: null,
     knockCheckCard: null,
     knock: null,
@@ -157,6 +165,8 @@ function applyRespondRedeal(state: ServerTruth, seat: Seat, accept: boolean, rng
 }
 
 function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
+  state.lastAction = null;
+  state.turnPickup = null;
   state.hands = [[], []];
   for (let i = 0; i < 10; i++) {
     state.hands[state.nonDealer].push(pile.pop()!);
@@ -391,6 +401,8 @@ function applyUpcardTake(state: ServerTruth, seat: Seat): ApplyOutcome {
     state.hands[seat].push(up);
     state.discard.pop();
     markSeen(state, up, [0, 1]);
+    state.turnPickup = { seat, type: "takeDownCard", card: up };
+    recordAction(state, { seat, type: "takeDownCard", card: up, pickup: null });
     state.upcardOffer = null;
     state.phase = "play";
     state.currentTurn = seat;
@@ -404,6 +416,8 @@ function applyUpcardTake(state: ServerTruth, seat: Seat): ApplyOutcome {
     state.hands[seat].push(up);
     state.discard.pop();
     markSeen(state, up, [0, 1]);
+    state.turnPickup = { seat, type: "takeDownCard", card: up };
+    recordAction(state, { seat, type: "takeDownCard", card: up, pickup: null });
     state.upcardOffer = null;
     state.phase = "play";
     state.currentTurn = seat;
@@ -424,6 +438,7 @@ function applyUpcardPass(state: ServerTruth, seat: Seat): ApplyOutcome {
     if (seat !== nd) return { ok: false, error: "Wrong seat" };
     state.upcardOffer = { stage: "dealer", nonDealerPassed: true };
     state.currentTurn = d;
+    recordAction(state, { seat, type: "passUpcard", card: null, pickup: null });
     return { ok: true, state };
   }
 
@@ -433,6 +448,7 @@ function applyUpcardPass(state: ServerTruth, seat: Seat): ApplyOutcome {
     state.upcardOffer = null;
     state.phase = "play";
     state.currentTurn = nd;
+    recordAction(state, { seat, type: "passUpcard", card: null, pickup: null });
     return { ok: true, state };
   }
 
@@ -447,6 +463,8 @@ function applyDrawStock(state: ServerTruth, seat: Seat): ApplyOutcome {
     const c = state.stock.pop()!;
     state.hands[seat].push(c);
     markSeen(state, c, [seat]);
+    state.turnPickup = { seat, type: "drawStock", card: c };
+    recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
     return { ok: true, state };
   }
 
@@ -461,6 +479,8 @@ function applyDrawStock(state: ServerTruth, seat: Seat): ApplyOutcome {
     const c = state.stock.pop()!;
     state.hands[seat].push(c);
     markSeen(state, c, [seat]);
+    state.turnPickup = { seat, type: "drawStock", card: c };
+    recordAction(state, { seat, type: "drawStock", card: c, pickup: null });
     state.upcardOffer = null;
     state.phase = "play";
     state.currentTurn = nd;
@@ -486,6 +506,8 @@ function applyTakeDiscard(state: ServerTruth, seat: Seat): ApplyOutcome {
   const c = state.discard.pop()!;
   state.hands[seat].push(c);
   markSeen(state, c, [0, 1]);
+  state.turnPickup = { seat, type: "takeDiscard", card: c };
+  recordAction(state, { seat, type: "takeDiscard", card: c, pickup: null });
   return { ok: true, state };
 }
 
@@ -566,6 +588,13 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
   state.hands[seat] = hand10;
   state.discard.push(card);
   markSeen(state, card, [0, 1]);
+
+  const pickup =
+    state.turnPickup && state.turnPickup.seat === seat
+      ? { type: state.turnPickup.type, card: state.turnPickup.card }
+      : null;
+  state.turnPickup = null;
+  recordAction(state, { seat, type: "discard", card, pickup });
 
   if (gin) {
     const opp = otherSeat(seat);
