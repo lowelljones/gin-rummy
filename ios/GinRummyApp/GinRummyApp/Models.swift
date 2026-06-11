@@ -253,6 +253,7 @@ struct BettingSettlementBreakdown: Equatable {
     let scoreDiff: Int
     let winBonus: Int
     let shutoutBonus: Int
+    /// Winner's hands minus loser's hands (not total hands won).
     let netHands: Int
     let handsBonus: Int
     let raw: Int

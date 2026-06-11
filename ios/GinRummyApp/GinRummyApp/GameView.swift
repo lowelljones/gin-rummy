@@ -598,11 +598,11 @@ struct GameView: View {
                     }
                     if breakdown.netHands != 0 {
                         bettingBreakdownRow(
-                            label: "Hands won (25 × \(breakdown.netHands))",
+                            label: "Net boxes (25 × \(breakdown.netHands))",
                             value: breakdown.handsBonus
                         )
                     } else {
-                        bettingBreakdownRow(label: "Hands won (25 × 0)", value: 0)
+                        bettingBreakdownRow(label: "Net boxes (25 × 0)", value: 0)
                     }
                     Divider().padding(.vertical, 2)
                     bettingBreakdownRow(label: "Raw points", value: breakdown.raw, emphasized: true)
