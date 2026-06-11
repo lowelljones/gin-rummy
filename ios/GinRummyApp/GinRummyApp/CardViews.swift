@@ -462,7 +462,7 @@ struct TableStateStrip: View {
 struct StockAndDiscardPiles: View {
     let stockCount: Int
     let discardTop: String?
-    /// When set, tapping the face-up discard takes that card (play: your turn, 10 cards).
+    /// When set, tapping the face-up discard takes that card (down card: your turn; play: your turn, 10 cards).
     var discardOnTap: (() -> Void)? = nil
     /// When set, tapping the stock draws (play or upcard dealer draw).
     var stockOnTap: (() -> Void)? = nil

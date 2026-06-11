@@ -8,6 +8,7 @@ struct GameView: View {
     @State private var feedbackIsError = false
     @State private var selectedHandCard: String?
     @State private var showPostCutInterstitial = false
+    @State private var showRedealFlash = false
     @State private var cutHold: CutHoldState?
     @State private var pendingDealerDeclineAfterCutSequence = false
     @State private var bottomLogText: String = ""
@@ -17,6 +18,7 @@ struct GameView: View {
     @State private var messageTask: Task<Void, Never>?
     @State private var downCardStatusMessage: String?
     @State private var postCutTask: Task<Void, Never>?
+    @State private var redealFlashTask: Task<Void, Never>?
     @State private var lastYouPickup: PickupSource? = nil
     @State private var lastOpponentPickup: PickupSource? = nil
     /// Stock size right after our discard completes, before the opponent picks up — used when a poll skips their 10→11 draw step.
@@ -284,6 +286,7 @@ struct GameView: View {
         .onDisappear {
             pollTask?.cancel()
             postCutTask?.cancel()
+            redealFlashTask?.cancel()
             cardFlightClearTask?.cancel()
             messageTask?.cancel()
             chatBaselineTask?.cancel()
@@ -299,12 +302,16 @@ struct GameView: View {
         cutHold != nil || showPostCutInterstitial
     }
 
+    /// Same duration as `HandRevealView`'s flash stage.
+    private static let redealFlashDurationNs: UInt64 = 2_400_000_000
+
     private func handleAfterPerspectiveUpdate(before: PlayerPerspective?, after: PlayerPerspective) {
         if willStartPostCutSequence(before: before, after: after) {
             detectCutCompletion(before: before, after: after)
             return
         }
         detectCutCompletion(before: before, after: after)
+        detectRedealCompletion(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
         updateCardFlights(before: before, after: after)
         if let line = serverActionStatusLine(after) {
@@ -805,7 +812,7 @@ struct GameView: View {
                     StockAndDiscardPiles(
                         stockCount: p.stockCount,
                         discardTop: p.discard.last,
-                        discardOnTap: takeDiscardActionIfEnabled(gameId: gameId, p: p),
+                        discardOnTap: discardTapActionIfEnabled(gameId: gameId, p: p),
                         stockOnTap: drawStockActionIfEnabled(gameId: gameId, p: p)
                     )
                     Spacer(minLength: 0)
@@ -824,6 +831,10 @@ struct GameView: View {
                 gameExitScreen(exit)
                     .zIndex(300)
                     .transition(.opacity)
+            } else if showRedealFlash {
+                RedealFlashInterstitial()
+                    .zIndex(200)
+                    .transition(.scale(scale: 0.86).combined(with: .opacity))
             } else if showPostCutInterstitial, let lc = p.lastCut {
                 PostCutInterstitial(last: lc, youAreSeat: p.seat)
                     .id("\(lc.p0)-\(lc.p1)-\(lc.nonDealer)-interstitial")
@@ -921,6 +932,7 @@ struct GameView: View {
                 }
             }
         }
+        .animation(.easeInOut(duration: 0.28), value: showRedealFlash)
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
         .animation(.easeInOut(duration: 0.28), value: surface)
         .animation(.easeInOut(duration: 0.28), value: exitState)
@@ -1083,6 +1095,26 @@ struct GameView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func detectRedealCompletion(before: PlayerPerspective?, after: PlayerPerspective) {
+        guard let b = before else { return }
+        guard b.redeal?.status == "pending" else { return }
+        guard after.redeal == nil else { return }
+        guard after.phase == "upcardOffer" else { return }
+        guard b.phase != "handOver" else { return }
+        triggerRedealFlash()
+    }
+
+    private func triggerRedealFlash() {
+        redealFlashTask?.cancel()
+        showRedealFlash = true
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        redealFlashTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.redealFlashDurationNs)
+            if Task.isCancelled { return }
+            showRedealFlash = false
         }
     }
 
@@ -1390,7 +1422,13 @@ struct GameView: View {
         }
     }
 
-    /// Play: take top discard on your turn with 10 cards (same as tap-to-take).
+    /// Play or down-card: tap the face-up discard when take is legal.
+    private func discardTapActionIfEnabled(gameId: String, p: PlayerPerspective) -> (() -> Void)? {
+        takeDiscardActionIfEnabled(gameId: gameId, p: p)
+            ?? takeUpcardActionIfEnabled(gameId: gameId, p: p)
+    }
+
+    /// Play: take top discard on your turn with 10 cards.
     private func takeDiscardActionIfEnabled(gameId: String, p: PlayerPerspective) -> (() -> Void)? {
         guard p.phase == "play",
               p.currentTurn == p.seat,
@@ -1408,6 +1446,29 @@ struct GameView: View {
                     feedbackIsError: $feedbackIsError
                 )
             }
+        }
+    }
+
+    /// Down card: take the up-card on your turn (same as the Take button).
+    private func takeUpcardActionIfEnabled(gameId: String, p: PlayerPerspective) -> (() -> Void)? {
+        guard p.phase == "upcardOffer",
+              p.currentTurn == p.seat,
+              let top = p.discard.last, !top.isEmpty
+        else { return nil }
+        return { performUpcardTake(gameId: gameId) }
+    }
+
+    private func performUpcardTake(gameId: String) {
+        downCardStatusMessage = "You Drew Down Card"
+        Task {
+            await send(
+                gameId: gameId,
+                token: app.accessToken,
+                intent: ["type": "upcardTake"],
+                success: "You Drew Down Card",
+                feedbackText: $feedbackText,
+                feedbackIsError: $feedbackIsError
+            )
         }
     }
 
@@ -2010,17 +2071,7 @@ struct GameView: View {
 
             HStack(spacing: 10) {
                 Button("Take") {
-                    downCardStatusMessage = "You Drew Down Card"
-                    Task {
-                        await send(
-                            gameId: gameId,
-                            token: token,
-                            intent: ["type": "upcardTake"],
-                            success: "You Drew Down Card",
-                            feedbackText: feedbackText,
-                            feedbackIsError: feedbackIsError
-                        )
-                    }
+                    performUpcardTake(gameId: gameId)
                 }
                 Button("Pass") {
                     downCardStatusMessage = "You Declined Down Card"
@@ -2053,7 +2104,7 @@ struct GameView: View {
             if p.hands[p.seat].count == 11 {
                 let canEO = MeldSolver.isBigGin11(p.hands[p.seat])
                 Button("Declare EO") {
-                    Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO (big gin).", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
+                    Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
                 }
                 .disabled(!canEO)
                 .buttonStyle(.borderedProminent)
@@ -2275,7 +2326,7 @@ private struct DiscardHelper: View {
     }
 
     private func inlineHint(canPlain: Bool, canGin: Bool, canKnock: Bool) -> String? {
-        if canGin { return "Gin available — declare for the bonus, or Discard to keep playing (e.g. for EO)." }
+        if canGin { return "Gin available" }
         if canPlain, !canKnock {
             if MeldSolver.upcardKnockValue(knockCheckCard) == nil {
                 return "Knock disabled — first upcard is an Ace (no knock this hand, even with 1 deadwood)."

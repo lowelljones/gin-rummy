@@ -371,7 +371,7 @@ struct HandRevealView: View {
     private var closerBadgeText: String {
         switch result.kind {
         case "gin": return "GIN"
-        case "bigGin": return "BIG GIN"
+        case "bigGin": return "EO"
         default: return "KNOCKED"
         }
     }
@@ -387,7 +387,7 @@ struct HandRevealView: View {
     private var headlineTitle: String {
         switch result.kind {
         case "gin": return result.closer == mySeat ? "You ginned" : "\(opponentName) ginned"
-        case "bigGin": return result.closer == mySeat ? "You declared Big Gin" : "\(opponentName) declared Big Gin"
+        case "bigGin": return result.closer == mySeat ? "You declared EO" : "\(opponentName) declared EO"
         case "undercut": return youWon ? "You undercut the knock" : "\(opponentName) undercut your knock"
         default: return result.closer == mySeat ? "You knocked" : "\(opponentName) knocked"
         }
@@ -396,7 +396,7 @@ struct HandRevealView: View {
     private var flashTitle: String {
         switch result.kind {
         case "gin": return result.closer == mySeat ? "GIN!" : "\(opponentName) ginned"
-        case "bigGin": return result.closer == mySeat ? "BIG GIN!" : "Big Gin against you"
+        case "bigGin": return result.closer == mySeat ? "EO!" : "EO against you"
         case "undercut": return youWon ? "UNDERCUT!" : "Undercut!"
         default: return result.closer == mySeat ? "Knock holds" : "\(opponentName) knocked"
         }
@@ -431,6 +431,55 @@ struct HandRevealView: View {
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             if Task.isCancelled { return }
             stage = .ready
+        }
+    }
+}
+
+// MARK: - Mid-hand redeal flash
+
+/// Full-screen flash when both players agree to void and redeal the current hand.
+/// Matches the duration and styling of the end-of-hand points overlay.
+struct RedealFlashInterstitial: View {
+    var body: some View {
+        ZStack {
+            GinRummyPalette.bgDeep
+                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    GinRummyPalette.bgPanel.opacity(0.45),
+                    GinRummyPalette.bgDeep.opacity(0.92),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 10) {
+                Text("Hand redealt!")
+                    .font(.system(size: 34, weight: .black, design: .serif))
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .multilineTextAlignment(.center)
+                Text("Fresh cards · same hand score")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(GinRummyPalette.gold)
+                    .multilineTextAlignment(.center)
+                Label("New deal starting", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+            }
+            .padding(.horizontal, 26)
+            .padding(.vertical, 30)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(GinRummyPalette.bgDeep.opacity(0.94))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(GinRummyPalette.gold.opacity(0.55), lineWidth: 1.4)
+            )
+            .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
+            .padding(.horizontal, 16)
+            .transition(.scale(scale: 0.86).combined(with: .opacity))
         }
     }
 }

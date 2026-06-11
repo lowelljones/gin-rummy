@@ -28,7 +28,7 @@ struct InstructionsView: View {
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
-                    "Form melds (sets or runs). Reduce deadwood toward zero. Win the hand going gin (25 plus opponent’s unmelded count), EO / big gin (50 plus opponent’s unmelded), or by knocking after your unmelded total exactly matches the first up-card (face cards 10, ace 1)."
+                    "Form melds (sets or runs). Reduce deadwood toward zero. Win the hand going gin (25 plus opponent’s unmelded count), EO (50 plus opponent’s unmelded), or by knocking after your unmelded total exactly matches the first up-card (face cards 10, ace 1)."
                 )
 
                 Text("Deal & turn")
@@ -45,7 +45,7 @@ struct InstructionsView: View {
                     "The non-dealer may take or pass the first up-card, then the dealer may take or pass. If both pass, the non-dealer leads from stock."
                 )
 
-                Text("Gin · Knock · Big gin")
+                Text("Gin · Knock · EO")
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
                 ruleParagraph(
