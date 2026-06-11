@@ -429,7 +429,7 @@ struct TableStateStrip: View {
                     PlayingCardView(card: kc, compact: true, onTap: nil)
                     if !compact {
                         if let v = PlayingCard.knockLimitValue(kc) {
-                            Text("Equality knock: deadwood \(v)")
+                            Text("Knock limit: unmelded ≤ \(v)")
                                 .font(.caption2)
                         } else {
                             Text("Ace first upcard: no knock this hand (house rule — not even with 1 deadwood).")
@@ -493,8 +493,8 @@ struct StockAndDiscardPiles: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(stockOnTap == nil || stockCount <= 0)
-                .opacity(stockOnTap == nil || stockCount <= 0 ? 0.55 : 1)
+                .disabled(stockOnTap == nil || stockCount <= 1)
+                .opacity(stockOnTap == nil || stockCount <= 1 ? 0.55 : 1)
                 Text("Deck")
                     .font(.caption2)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.92))

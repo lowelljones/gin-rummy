@@ -78,6 +78,17 @@ describe("computeTestBotIntent in play phase", () => {
     expect(out.state.currentTurn).toBe(0);
   });
 
+  it("passes on the discard when only one stock card remains", () => {
+    const s = makeBotTurnState({
+      botHand: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      humanHand: HUMAN_HAND,
+      stock: ["6D"],
+      discard: ["JS", "KD"],
+    });
+    s.currentTurn = BOT;
+    expect(computeTestBotIntent(s)).toEqual({ type: "passStock", seat: BOT });
+  });
+
   it("falls back to discarding the drawn (last) card with 11 cards and no gin", () => {
     const s = makeBotTurnState({
       botHand: ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C", "9D"],

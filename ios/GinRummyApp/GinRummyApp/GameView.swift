@@ -8,7 +8,7 @@ struct GameView: View {
     @State private var feedbackIsError = false
     @State private var selectedHandCard: String?
     @State private var showPostCutInterstitial = false
-    @State private var showRedealFlash = false
+    @State private var voidFlashKind: HandVoidFlashKind? = nil
     @State private var cutHold: CutHoldState?
     @State private var pendingDealerDeclineAfterCutSequence = false
     @State private var bottomLogText: String = ""
@@ -312,6 +312,7 @@ struct GameView: View {
         }
         detectCutCompletion(before: before, after: after)
         detectRedealCompletion(before: before, after: after)
+        detectPlayedThroughVoid(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
         updateCardFlights(before: before, after: after)
         if let line = serverActionStatusLine(after) {
@@ -350,6 +351,8 @@ struct GameView: View {
             }
             let leader = a.nonDealer == a.seat ? "You lead" : "Opponent leads"
             return "This hand · \(who) passed — \(leader) from the deck"
+        case "passStock":
+            return "This hand · \(who) passed — deck played through"
         case "takeDownCard":
             return "This hand · \(who) took the down card"
         case "discard":
@@ -569,18 +572,45 @@ struct GameView: View {
             Text("Hands won · \(p.handsWon[0]) – \(p.handsWon[1])")
                 .font(.subheadline)
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-            if let b = app.lastBetting, let raw = b.raw, let bucket = b.bucket {
+            if let b = app.lastBetting, let bucket = b.bucket,
+               let breakdown = BettingSettlementBreakdown.compute(
+                   scores: p.scores,
+                   handsWon: p.handsWon,
+                   raceTarget: p.raceTarget
+               ) {
                 Divider().padding(.vertical, 2)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Betting bucket")
                         .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
                     Text("\(bucket)")
                         .font(.title3.bold().monospacedDigit())
                         .foregroundStyle(GamePlaySurface.matchOver.accent)
                 }
-                Text("Raw points · \(raw)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                VStack(alignment: .leading, spacing: 4) {
+                    bettingBreakdownRow(label: "Win bonus", value: breakdown.winBonus)
+                    bettingBreakdownRow(
+                        label: "Score margin (\(breakdown.winnerScore) − \(breakdown.loserScore))",
+                        value: breakdown.scoreDiff
+                    )
+                    if breakdown.shutoutBonus > 0 {
+                        bettingBreakdownRow(label: "Blitz shutout", value: breakdown.shutoutBonus)
+                    }
+                    if breakdown.netHands != 0 {
+                        bettingBreakdownRow(
+                            label: "Hands won (25 × \(breakdown.netHands))",
+                            value: breakdown.handsBonus
+                        )
+                    } else {
+                        bettingBreakdownRow(label: "Hands won (25 × 0)", value: 0)
+                    }
+                    Divider().padding(.vertical, 2)
+                    bettingBreakdownRow(label: "Raw points", value: breakdown.raw, emphasized: true)
+                    Text("\(breakdown.raw) raw → bucket \(bucket) (\(BettingSettlementBreakdown.bucketRangeLabel(for: bucket)))")
+                        .font(.caption2)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                }
+                .padding(.top, 2)
             }
         }
         .padding(14)
@@ -594,6 +624,25 @@ struct GameView: View {
                 .stroke(GamePlaySurface.matchOver.accent.opacity(0.35), lineWidth: 1)
         )
         .contentTransition(.opacity)
+    }
+
+    @ViewBuilder
+    private func bettingBreakdownRow(label: String, value: Int, emphasized: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(emphasized ? .caption.weight(.semibold) : .caption)
+                .foregroundStyle(GinRummyPalette.sage.opacity(emphasized ? 1 : 0.95))
+            Spacer(minLength: 8)
+            Text(bettingSignedPoints(value))
+                .font(emphasized ? .caption.weight(.semibold).monospacedDigit() : .caption.monospacedDigit())
+                .foregroundStyle(GinRummyPalette.cream.opacity(emphasized ? 1 : 0.95))
+        }
+    }
+
+    private func bettingSignedPoints(_ value: Int) -> String {
+        if value > 0 { return "+\(value)" }
+        if value < 0 { return "\(value)" }
+        return "0"
     }
 
     @ViewBuilder
@@ -831,8 +880,8 @@ struct GameView: View {
                 gameExitScreen(exit)
                     .zIndex(300)
                     .transition(.opacity)
-            } else if showRedealFlash {
-                RedealFlashInterstitial()
+            } else if let flash = voidFlashKind {
+                HandVoidFlashInterstitial(kind: flash)
                     .zIndex(200)
                     .transition(.scale(scale: 0.86).combined(with: .opacity))
             } else if showPostCutInterstitial, let lc = p.lastCut {
@@ -932,7 +981,7 @@ struct GameView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.28), value: showRedealFlash)
+        .animation(.easeInOut(duration: 0.28), value: voidFlashKind)
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
         .animation(.easeInOut(duration: 0.28), value: surface)
         .animation(.easeInOut(duration: 0.28), value: exitState)
@@ -1104,18 +1153,29 @@ struct GameView: View {
         guard after.redeal == nil else { return }
         guard after.phase == "upcardOffer" else { return }
         guard b.phase != "handOver" else { return }
-        triggerRedealFlash()
+        triggerVoidFlash(.redeal)
     }
 
-    private func triggerRedealFlash() {
+    private func detectPlayedThroughVoid(before: PlayerPerspective?, after: PlayerPerspective) {
+        guard after.voidFlash == "playedThrough" else { return }
+        guard before?.voidFlash != "playedThrough" else { return }
+        guard after.phase == "upcardOffer" else { return }
+        triggerVoidFlash(.playedThrough)
+    }
+
+    private func triggerVoidFlash(_ kind: HandVoidFlashKind) {
         redealFlashTask?.cancel()
-        showRedealFlash = true
+        voidFlashKind = kind
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         redealFlashTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.redealFlashDurationNs)
             if Task.isCancelled { return }
-            showRedealFlash = false
+            voidFlashKind = nil
         }
+    }
+
+    private func triggerRedealFlash() {
+        triggerVoidFlash(.redeal)
     }
 
     private func detectDownCardStateForDealer(before: PlayerPerspective?, after: PlayerPerspective) {
@@ -1475,7 +1535,8 @@ struct GameView: View {
     private func drawStockActionIfEnabled(gameId: String, p: PlayerPerspective) -> (() -> Void)? {
         if p.phase == "play",
            p.currentTurn == p.seat,
-           p.hands[p.seat].count == 10 {
+           p.hands[p.seat].count == 10,
+           p.stockCount > 1 {
             return {
                 Task {
                     await send(
@@ -2101,7 +2162,27 @@ struct GameView: View {
         selectedHandCard: Binding<String?>
     ) -> some View {
         Group {
-            if p.hands[p.seat].count == 11 {
+            if p.hands[p.seat].count == 10, p.stockCount == 1 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("One card left in the deck — take the discard or pass.")
+                        .font(.caption)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    Button("Pass (deck played through)") {
+                        Task {
+                            await send(
+                                gameId: gameId,
+                                token: token,
+                                intent: ["type": "passStock"],
+                                success: "Hand played through — re-dealing.",
+                                feedbackText: feedbackText,
+                                feedbackIsError: feedbackIsError
+                            )
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(GinRummyPalette.burgundy)
+                }
+            } else if p.hands[p.seat].count == 11 {
                 let canEO = MeldSolver.isBigGin11(p.hands[p.seat])
                 Button("Declare EO") {
                     Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
@@ -2332,7 +2413,7 @@ private struct DiscardHelper: View {
                 return "Knock disabled — first upcard is an Ace (no knock this hand, even with 1 deadwood)."
             }
             if let kv = MeldSolver.upcardKnockValue(knockCheckCard) {
-                return "Knock needs deadwood exactly \(kv) after this discard (first upcard)."
+                return "Knock needs unmelded points ≤ knock card (\(kv))."
             }
         }
         if !canPlain, !canGin, !canKnock {
@@ -2364,8 +2445,9 @@ private struct DiscardHelper: View {
              * hit the table (and therefore what the opponent can lay off). When there's a
              * genuine choice, the knocker picks; with a single layout we submit directly. */
             let hand10 = hand.filter { $0 != c }
-            if let kv = MeldSolver.upcardKnockValue(knockCheckCard) {
-                let options = MeldSolver.allMaximalPartitions(hand10).filter { $0.deadwoodPoints == kv }
+            if MeldSolver.upcardKnockValue(knockCheckCard) != nil {
+                let bestSum = MeldSolver.bestDeadwood(hand10).sum
+                let options = MeldSolver.allMaximalPartitions(hand10).filter { $0.deadwoodPoints == bestSum }
                 if options.count > 1 {
                     await MainActor.run {
                         knockChooser = KnockChooserModel(discard: c, options: options)

@@ -28,6 +28,8 @@ export interface PlayerPerspective {
   cut: CutPerspective | null;
   /** Mid-hand mutual redeal proposal (optional on legacy rows). */
   redeal: null | { fromSeat: Seat; status: "pending" | "declined" };
+  /** One-shot flash after the deck is played through with no score change. */
+  voidFlash: "playedThrough" | null;
   /** Full reveal of the last hand (both layouts) during handOver / matchOver. */
   handResult: HandResult | null;
   /** Per-seat Continue acks during handOver (next hand deals when both are true). */
@@ -132,6 +134,7 @@ export function buildPerspective(state: ServerTruth, viewer: Seat): PlayerPerspe
     lastCut: state.lastCutResult ?? null,
     cut: state.cut ? buildCutPerspective(state.cut, viewer) : null,
     redeal: state.redeal ?? null,
+    voidFlash: state.voidFlash ?? null,
     handResult: state.lastHandResult ?? null,
     handOverAcks: state.handOverAcks ?? null,
     inferred: {},

@@ -26,6 +26,12 @@ final class MeldSolverTests: XCTestCase {
         XCTAssertTrue(e.plain.contains("6C"))
     }
 
+    func testKnockableWhenUnmeldedBelowDownCardValue() {
+        let hand = ["AS", "2S", "3S", "7H", "8H", "9H", "KC", "KD", "KH", "5C", "6C"]
+        let e = MeldSolver.eligibility(forHand11: hand, knockCheckCard: "TS")
+        XCTAssertTrue(e.knockable.contains("6C"), "5 unmelded is within knock limit 10")
+    }
+
     func testAceUpcardDisablesKnockButNotPlainDiscard() {
         let hand = ["2S", "3S", "4S", "5H", "6H", "7H", "8D", "8C", "8S", "AH", "2C"]
         let e = MeldSolver.eligibility(forHand11: hand, knockCheckCard: "AS")

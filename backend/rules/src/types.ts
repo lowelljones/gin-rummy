@@ -54,7 +54,7 @@ export interface LastAction {
   /** Monotonic per-game counter so clients can detect new actions across polls. */
   seq: number;
   seat: Seat;
-  type: "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard";
+  type: "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard" | "passStock";
   /** Card drawn / taken / discarded by this action (null for passes). */
   card: CardId | null;
   /** Discards only: how the discarding seat picked up earlier this turn. */
@@ -110,8 +110,8 @@ export interface ServerTruth {
 
   /**
    * First upcard placed to the table when the hand was dealt (same as `discard[0]` at that moment).
-   * Fixed for the entire hand — not the current discard pile top. Determines equality knock;
-   * if this card is any ace, neither player may knock for the hand.
+   * Fixed for the entire hand — not the current discard pile top. Knock limit: unmelded
+   * points must be ≤ this card's value (unless the card is an ace — then no knock).
    */
   knockCheckCard: CardId | null;
 
@@ -148,6 +148,12 @@ export interface ServerTruth {
    * Omitted in legacy persisted rows — treated as null.
    */
   redeal?: null | { fromSeat: Seat; status: "pending" | "declined" };
+
+  /**
+   * One-shot client flash after voiding the hand with no score change (deck played through).
+   * Cleared on the next intent. Omitted in legacy persisted rows.
+   */
+  voidFlash?: "playedThrough" | null;
 }
 
 export interface KnockerLayout {
@@ -163,6 +169,8 @@ export type Intent =
   | { type: "drawStock"; seat: Seat }
   /** Play phase: take top of discard instead of stock (10 cards, your turn). */
   | { type: "takeDiscard"; seat: Seat }
+  /** Play phase: refuse the discard when only the reserved stock card remains (10 cards). */
+  | { type: "passStock"; seat: Seat }
   | { type: "discard"; seat: Seat; card: CardId; knock: boolean; gin: boolean; layout?: KnockerLayout }
   | { type: "declareBigGin"; seat: Seat }
   | { type: "layoffDone"; seat: Seat }

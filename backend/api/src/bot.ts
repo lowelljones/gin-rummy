@@ -51,6 +51,9 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
   if (state.phase === "play") {
     const hand = state.hands[TEST_BOT_SEAT];
     if (hand.length === 10) {
+      if (state.stock.length <= 1) {
+        return { type: "passStock", seat: TEST_BOT_SEAT };
+      }
       return { type: "drawStock", seat: TEST_BOT_SEAT };
     }
     if (hand.length === 11) {

@@ -63,6 +63,8 @@ struct PlayerPerspective: Codable, Equatable {
     let cut: CutState?
     /// Mutual mid-hand redeal proposal (optional — older servers omit).
     let redeal: RedealStateDTO?
+    /// One-shot flash after the deck is played through with no score change (optional).
+    let voidFlash: String?
     /// Full reveal of the last hand during handOver / matchOver (optional — older servers omit).
     let handResult: HandResultDTO?
     /// Per-seat Continue acks during handOver; the next hand deals once both are true.
@@ -75,7 +77,7 @@ struct PlayerPerspective: Codable, Equatable {
         /// Monotonic per-game counter; a changed value means a new action happened.
         let seq: Int
         let seat: Int
-        /// "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard"
+        /// "passUpcard" | "takeDownCard" | "drawStock" | "takeDiscard" | "discard" | "passStock"
         let type: String
         /// Card drawn/taken/discarded. Nil for passes and for stock draws viewed by the non-actor.
         let card: String?
@@ -239,6 +241,66 @@ struct GameStartResponse: Codable {
 struct BettingDTO: Codable, Equatable {
     let raw: Int?
     let bucket: Int?
+}
+
+/// Line-item breakdown of match-end betting settlement (mirrors `computeBettingSettlement` in
+/// `backend/rules/src/scoring.ts`).
+struct BettingSettlementBreakdown: Equatable {
+    let winner: Int
+    let loser: Int
+    let winnerScore: Int
+    let loserScore: Int
+    let scoreDiff: Int
+    let winBonus: Int
+    let shutoutBonus: Int
+    let netHands: Int
+    let handsBonus: Int
+    let raw: Int
+    let bucket: Int
+
+    static func compute(scores: [Int], handsWon: [Int], raceTarget: Int) -> BettingSettlementBreakdown? {
+        guard scores.count == 2, handsWon.count == 2 else { return nil }
+        let winner: Int?
+        if scores[0] >= raceTarget { winner = 0 }
+        else if scores[1] >= raceTarget { winner = 1 }
+        else { winner = nil }
+        guard let w = winner else { return nil }
+        let l = 1 - w
+        let wScore = scores[w]
+        let lScore = scores[l]
+        let shutoutBonus = lScore == 0 ? 100 : 0
+        let netHands = handsWon[w] - handsWon[l]
+        let scoreDiff = wScore - lScore
+        let winBonus = 100
+        let handsBonus = 25 * netHands
+        let raw = scoreDiff + winBonus + shutoutBonus + handsBonus
+        let bucket = bettingBucket(forRaw: raw)
+        return BettingSettlementBreakdown(
+            winner: w,
+            loser: l,
+            winnerScore: wScore,
+            loserScore: lScore,
+            scoreDiff: scoreDiff,
+            winBonus: winBonus,
+            shutoutBonus: shutoutBonus,
+            netHands: netHands,
+            handsBonus: handsBonus,
+            raw: raw,
+            bucket: bucket
+        )
+    }
+
+    static func bettingBucket(forRaw raw: Int) -> Int {
+        if raw < 150 { return 1 }
+        return 2 + (raw - 150) / 100
+    }
+
+    /// Human-readable raw range for a bucket (e.g. bucket 4 → "350–449").
+    static func bucketRangeLabel(for bucket: Int) -> String {
+        if bucket == 1 { return "under 150" }
+        let low = 150 + (bucket - 2) * 100
+        return "\(low)–\(low + 99)"
+    }
 }
 
 struct GameStateResponse: Codable {
@@ -473,8 +535,8 @@ enum MeldSolver {
     ///   when the remaining 10 meld perfectly (passing up gin to chase EO is valid).
     /// - `ginable`  — the remaining 10 have deadwood == 0; Gin is available if you
     ///   choose to declare it.
-    /// - `knockable`— the remaining 10 have deadwood exactly equal to knockValue (first
-    ///   upcard; not an Ace), Knock is legal. Gin (deadwood 0) is separate.
+    /// - `knockable`— the remaining 10 have unmelded points > 0 and ≤ knockValue (down
+    ///   card; not an Ace). Gin (unmelded 0) is separate.
     /// ~11 calls to `bestDeadwood(10 cards)` per hand snapshot; well under 100ms in practice.
     struct DiscardEligibility {
         var plain: Set<String> = []
@@ -491,7 +553,7 @@ enum MeldSolver {
             let best = bestDeadwood(hand10).sum
             e.plain.insert(c)
             if best == 0 { e.ginable.insert(c) }
-            if let kv = knockVal, best > 0, best == kv { e.knockable.insert(c) }
+            if let kv = knockVal, best > 0, best <= kv { e.knockable.insert(c) }
         }
         return e
     }

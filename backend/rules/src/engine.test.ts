@@ -52,6 +52,7 @@ function makePlayState(opts: {
     bettingRaw: null,
     bettingBucket: null,
     seenBy,
+    voidFlash: null,
   };
 }
 
@@ -195,32 +196,32 @@ describe("knock without explicit layout", () => {
     );
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.error).toMatch(/Knock requires deadwood exactly 3/);
+    expect(out.error).toMatch(/unmelded points at most 3/);
   });
 
-  it("rejects knock when deadwood is below the knock-card value (equality knock)", () => {
-    /* knockCheckCard=TS → knockVal=10; best deadwood is 5, must equal 10 to knock. */
+  it("allows knock when deadwood is below the knock-card value", () => {
+    /* knockCheckCard=TS → knockVal=10; best deadwood is 5, within limit. */
     const s = buildKnockReadyState("TS");
     const out = applyIntent(
       s,
       { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
       () => 0.5,
     );
-    expect(out.ok).toBe(false);
-    if (out.ok) return;
-    expect(out.error).toMatch(/Knock requires deadwood exactly 10/);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("knockLayoff");
   });
 
-  it("rejects knock when deadwood is strictly less than knock value", () => {
+  it("allows knock when deadwood is strictly less than knock value", () => {
     const s = buildKnockReadyState("7S"); /* knockVal=7, best deadwood is 5 */
     const out = applyIntent(
       s,
       { type: "discard", seat: 0, card: "6C", knock: true, gin: false },
       () => 0.5,
     );
-    expect(out.ok).toBe(false);
-    if (out.ok) return;
-    expect(out.error).toMatch(/Knock requires deadwood exactly 7/);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("knockLayoff");
   });
 
   it("forbids knocking when the knock card is an Ace", () => {
@@ -347,7 +348,7 @@ describe("plain discard vs explicit gin / EO", () => {
     let s = makePlayState({
       hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
       hand1: ["9S", "JS", "QS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
-      stock: ["5S", "9H"],
+      stock: ["9H", "5S", "TC"],
       discard: ["KS"],
       knockCheckCard: "KS",
     });
@@ -369,7 +370,7 @@ describe("plain discard vs explicit gin / EO", () => {
     if (!oDraw.ok) return;
     const oDisc = applyIntent(
       oDraw.state,
-      { type: "discard", seat: 1, card: "9H", knock: false, gin: false },
+      { type: "discard", seat: 1, card: "TC", knock: false, gin: false },
       () => 0.5,
     );
     expect(oDisc.ok).toBe(true);
@@ -1016,5 +1017,163 @@ describe("mutual redeal", () => {
     expect(again.ok).toBe(true);
     if (!again.ok) return;
     expect(again.state.redeal).toBeNull();
+  });
+});
+
+describe("deck played through (last stock card reserved)", () => {
+  it("forbids drawing the last face-down stock card", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS", "KD"],
+      knockCheckCard: "KS",
+      scores: [40, 35],
+    });
+    s.currentTurn = 0;
+    const out = applyIntent(s, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/last card/i);
+  });
+
+  it("allows drawing the second-to-last stock card", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D", "7D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+    });
+    s.currentTurn = 0;
+    const out = applyIntent(s, { type: "drawStock", seat: 0 }, () => 0.5);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.stock).toEqual(["6D"]);
+    expect(out.state.hands[0]).toHaveLength(11);
+  });
+
+  it("continues play after penultimate draw and plain discard", () => {
+    let s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S", "KD"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS"],
+      knockCheckCard: "KS",
+      scores: [10, 20],
+      handsWon: [1, 2],
+    });
+    s.currentTurn = 0;
+    const disc = applyIntent(
+      s,
+      { type: "discard", seat: 0, card: "KD", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+    expect(disc.state.phase).toBe("play");
+    expect(disc.state.currentTurn).toBe(1);
+    expect(disc.state.stock).toEqual(["6D"]);
+    expect(disc.state.scores).toEqual([10, 20]);
+    expect(disc.state.voidFlash ?? null).toBeNull();
+  });
+
+  it("voids with no points when the opponent passes on the discard", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS", "KD"],
+      knockCheckCard: "KS",
+      scores: [55, 60],
+      handsWon: [3, 4],
+    });
+    s.currentTurn = 1;
+    s.handIndex = 7;
+    s.dealer = 0;
+    const out = applyIntent(s, { type: "passStock", seat: 1 }, () => 0.99);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("upcardOffer");
+    expect(out.state.scores).toEqual([55, 60]);
+    expect(out.state.handsWon).toEqual([3, 4]);
+    expect(out.state.handIndex).toBe(7);
+    expect(out.state.dealer).toBe(0);
+    expect(out.state.lastHandWinner).toBeNull();
+    expect(out.state.voidFlash).toBe("playedThrough");
+    expect(out.state.hands[0]).toHaveLength(10);
+    expect(out.state.hands[1]).toHaveLength(10);
+  });
+
+  it("voids with no points when the opponent takes discard then plain-discards", () => {
+    let s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS", "KD"],
+      knockCheckCard: "KS",
+      scores: [22, 33],
+    });
+    s.currentTurn = 1;
+    const take = applyIntent(s, { type: "takeDiscard", seat: 1 }, () => 0.5);
+    expect(take.ok).toBe(true);
+    if (!take.ok) return;
+    expect(take.state.hands[1]).toContain("KD");
+    const disc = applyIntent(
+      take.state,
+      { type: "discard", seat: 1, card: "5C", knock: false, gin: false },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+    expect(disc.state.phase).toBe("upcardOffer");
+    expect(disc.state.scores).toEqual([22, 33]);
+    expect(disc.state.voidFlash).toBe("playedThrough");
+    expect(disc.state.lastHandWinner).toBeNull();
+  });
+
+  it("still scores gin when the opponent takes discard and declares gin", () => {
+    let s = makePlayState({
+      hand0: ["AS", "2D", "3D", "4D", "6C", "7C", "9H", "TH", "JH", "QH"],
+      hand1: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "9C"],
+      stock: ["6D"],
+      discard: ["KS", "8S"],
+      knockCheckCard: "KS",
+    });
+    s.currentTurn = 1;
+    const take = applyIntent(s, { type: "takeDiscard", seat: 1 }, () => 0.5);
+    expect(take.ok).toBe(true);
+    if (!take.ok) return;
+    const disc = applyIntent(
+      take.state,
+      { type: "discard", seat: 1, card: "9C", knock: false, gin: true },
+      () => 0.5,
+    );
+    expect(disc.ok).toBe(true);
+    if (!disc.ok) return;
+    expect(disc.state.phase).toBe("handOver");
+    expect(disc.state.lastHandWinner).toBe(1);
+    expect(disc.state.lastHandPoints).toBeGreaterThan(0);
+    expect(disc.state.voidFlash ?? null).toBeNull();
+  });
+
+  it("clears voidFlash on the next intent", () => {
+    let s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS", "KD"],
+      knockCheckCard: "KS",
+    });
+    s.currentTurn = 1;
+    const voided = applyIntent(s, { type: "passStock", seat: 1 }, () => 0.99);
+    expect(voided.ok).toBe(true);
+    if (!voided.ok) return;
+    expect(voided.state.voidFlash).toBe("playedThrough");
+
+    const next = applyIntent(voided.state, { type: "upcardPass", seat: 0 }, () => 0.5);
+    expect(next.ok).toBe(true);
+    if (!next.ok) return;
+    expect(next.state.voidFlash).toBeNull();
   });
 });

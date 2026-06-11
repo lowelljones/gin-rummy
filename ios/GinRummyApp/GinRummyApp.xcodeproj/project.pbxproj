@@ -30,6 +30,7 @@
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
 		EA0100000000000000000003 /* MeldSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000003 /* MeldSolverTests.swift */; };
+		EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +71,7 @@
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000003 /* MeldSolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeldSolverTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BettingSettlementBreakdownTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
 				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
 				EA0200000000000000000003 /* MeldSolverTests.swift */,
+				EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -267,6 +270,7 @@
 				EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */,
 				EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */,
 				EA0100000000000000000003 /* MeldSolverTests.swift in Sources */,
+				EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -435,11 +435,31 @@ struct HandRevealView: View {
     }
 }
 
-// MARK: - Mid-hand redeal flash
+// MARK: - Mid-hand void flash (redeal / deck played through)
 
-/// Full-screen flash when both players agree to void and redeal the current hand.
-/// Matches the duration and styling of the end-of-hand points overlay.
-struct RedealFlashInterstitial: View {
+enum HandVoidFlashKind: Equatable {
+    case redeal
+    case playedThrough
+}
+
+/// Full-screen flash when a hand is voided with no score change (mutual redeal or deck played through).
+struct HandVoidFlashInterstitial: View {
+    let kind: HandVoidFlashKind
+
+    private var title: String {
+        switch kind {
+        case .redeal: "Hand redealt!"
+        case .playedThrough: "Hand played through!"
+        }
+    }
+
+    private var subtitle: String {
+        switch kind {
+        case .redeal: "Fresh cards · same hand score"
+        case .playedThrough: "Deck exhausted · same hand score"
+        }
+    }
+
     var body: some View {
         ZStack {
             GinRummyPalette.bgDeep
@@ -455,11 +475,11 @@ struct RedealFlashInterstitial: View {
             .ignoresSafeArea()
 
             VStack(spacing: 10) {
-                Text("Hand redealt!")
+                Text(title)
                     .font(.system(size: 34, weight: .black, design: .serif))
                     .foregroundStyle(GinRummyPalette.cream)
                     .multilineTextAlignment(.center)
-                Text("Fresh cards · same hand score")
+                Text(subtitle)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(GinRummyPalette.gold)
                     .multilineTextAlignment(.center)
@@ -481,6 +501,13 @@ struct RedealFlashInterstitial: View {
             .padding(.horizontal, 16)
             .transition(.scale(scale: 0.86).combined(with: .opacity))
         }
+    }
+}
+
+/// Backward-compatible alias for mutual redeal flash.
+struct RedealFlashInterstitial: View {
+    var body: some View {
+        HandVoidFlashInterstitial(kind: .redeal)
     }
 }
 

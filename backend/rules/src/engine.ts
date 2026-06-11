@@ -84,6 +84,7 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     bettingBucket: null,
     seenBy: {},
     redeal: null,
+    voidFlash: null,
   };
 }
 
@@ -128,6 +129,22 @@ function voidAndRedeal(state: ServerTruth, rng: () => number): void {
   state.lastHandResult = null;
   state.handOverAcks = null;
   beginHand(state, rng);
+}
+
+/** Deck played through: void with no score change and flash both clients before the re-deal. */
+function voidHandPlayedThrough(state: ServerTruth, rng: () => number): void {
+  voidAndRedeal(state, rng);
+  state.voidFlash = "playedThrough";
+}
+
+/** The last face-down stock card is never drawn; drawing requires at least two cards. */
+function stockDrawAllowed(state: ServerTruth): boolean {
+  return state.stock.length > 1;
+}
+
+/** True when only the reserved stock card remains (end-of-deck flow). */
+function isPlayedThroughEndTurn(state: ServerTruth): boolean {
+  return state.stock.length === 1;
 }
 
 function applyProposeRedeal(state: ServerTruth, seat: Seat): ApplyOutcome {
@@ -275,6 +292,11 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
     return { ok: false, error: "Match is over" };
   }
 
+  /* One-shot void flash is consumed once either player makes the next move. */
+  if (s.voidFlash && intent.type !== "ackHandOver") {
+    s.voidFlash = null;
+  }
+
   /* Declined proposals clear as soon as either player makes an ordinary move. */
   if (s.redeal?.status === "declined") {
     if (intent.type !== "proposeRedeal" && intent.type !== "respondRedeal") {
@@ -332,8 +354,10 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
       return applyDrawStock(s, intent.seat);
     case "takeDiscard":
       return applyTakeDiscard(s, intent.seat);
+    case "passStock":
+      return applyPassStock(s, intent.seat, rng);
     case "discard":
-      return applyDiscard(s, intent);
+      return applyDiscard(s, intent, rng);
     case "declareBigGin":
       return applyDeclareBigGin(s, intent.seat);
     case "layoffAttach":
@@ -462,7 +486,9 @@ function applyDrawStock(state: ServerTruth, seat: Seat): ApplyOutcome {
   if (state.phase !== "play") return { ok: false, error: "Cannot draw now" };
   if (state.currentTurn !== seat) return { ok: false, error: "Not your turn" };
   if (state.hands[seat].length !== 10) return { ok: false, error: "Expected 10 cards before draw" };
-  if (state.stock.length === 0) return { ok: false, error: "Stock empty" };
+  if (!stockDrawAllowed(state)) {
+    return { ok: false, error: "The last card in the deck cannot be drawn" };
+  }
   const c = state.stock.pop()!;
   state.hands[seat].push(c);
   markSeen(state, c, [seat]);
@@ -492,7 +518,19 @@ function applyTakeDiscard(state: ServerTruth, seat: Seat): ApplyOutcome {
   return { ok: true, state };
 }
 
-function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
+function applyPassStock(state: ServerTruth, seat: Seat, rng: () => number): ApplyOutcome {
+  if (state.phase !== "play") return { ok: false, error: "Not in play" };
+  if (state.currentTurn !== seat) return { ok: false, error: "Not your turn" };
+  if (state.hands[seat].length !== 10) return { ok: false, error: "Expected 10 cards before passing" };
+  if (!isPlayedThroughEndTurn(state)) {
+    return { ok: false, error: "Can only pass when one card remains in the deck" };
+  }
+  recordAction(state, { seat, type: "passStock", card: null, pickup: null });
+  voidHandPlayedThrough(state, rng);
+  return { ok: true, state };
+}
+
+function applyDiscard(state: ServerTruth, intent: Intent, rng: () => number): ApplyOutcome {
   if (intent.type !== "discard") return { ok: false, error: "Internal" };
   const { seat, card, knock, gin } = intent;
   const layout = intent.layout;
@@ -521,10 +559,9 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
     if (sum !== 0) return { ok: false, error: "Gin not legal" };
   } else if (knock) {
     /**
-     * Equality knock: after discarding, the knocker's best deadwood total must equal the
-     * first upcard's deadwood value (same as knock points: A=1, 2–9 face, T/J/Q/K=10).
-     * Ace as first upcard ⇒ no knock this hand for either player (`upcardKnockValue` is null),
-     * including when unmelded would be 1.
+     * Threshold knock: after discarding, the knocker's best unmelded total must be
+     * greater than 0 and at most the down card's knock value (2–9 face, T/J/Q/K=10).
+     * Ace as down card ⇒ no knock this hand for either player (`upcardKnockValue` is null).
      */
     if (knockVal === null) {
       return {
@@ -539,10 +576,10 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
       }
       const supplied = deadwoodTotal(layout.deadwood);
       if (supplied === 0) return { ok: false, error: "Must declare gin with deadwood 0" };
-      if (supplied !== knockVal) {
+      if (supplied > knockVal) {
         return {
           ok: false,
-          error: `Knock requires deadwood exactly ${knockVal} (first upcard); supplied layout has ${supplied}.`,
+          error: `Knock requires unmelded points at most ${knockVal} (down card); supplied layout has ${supplied}.`,
         };
       }
       resolvedKnockMelds = layout.melds;
@@ -550,10 +587,10 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
     } else {
       const best = bestDeadwood(hand10);
       if (best.sum === 0) return { ok: false, error: "Must declare gin with deadwood 0" };
-      if (best.sum !== knockVal) {
+      if (best.sum > knockVal) {
         return {
           ok: false,
-          error: `Knock requires deadwood exactly ${knockVal} (first upcard); best layout from this discard is ${best.sum}.`,
+          error: `Knock requires unmelded points at most ${knockVal} (down card); best layout from this discard is ${best.sum}.`,
         };
       }
       resolvedKnockMelds = best.partition.melds;
@@ -606,6 +643,12 @@ function applyDiscard(state: ServerTruth, intent: Intent): ApplyOutcome {
       for (const c of m.cards) markSeen(state, c, [0, 1]);
     }
     for (const c of state.knock.knockerDeadwood) markSeen(state, c, [0, 1]);
+    return { ok: true, state };
+  }
+
+  /* End-of-deck: after taking the discard with one stock card left, a plain discard ends the hand with no points. */
+  if (isPlayedThroughEndTurn(state) && pickup?.type === "takeDiscard") {
+    voidHandPlayedThrough(state, rng);
     return { ok: true, state };
   }
 

@@ -1324,6 +1324,7 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
     case "upcardPass":
     case "drawStock":
     case "takeDiscard":
+    case "passStock":
     case "discard":
     case "declareBigGin":
     case "layoffDone":
