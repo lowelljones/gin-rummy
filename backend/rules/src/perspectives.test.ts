@@ -89,4 +89,12 @@ describe("buildPerspectives", () => {
     expect(both["0"].seat).toBe(0);
     expect(both["1"].seat).toBe(1);
   });
+
+  it("exposes redeal proposals identically to both seats", () => {
+    const s = makeState();
+    s.redeal = { fromSeat: 1, status: "pending" };
+    const views = buildPerspectives(s);
+    expect(views["0"].redeal).toEqual({ fromSeat: 1, status: "pending" });
+    expect(views["1"].redeal).toEqual({ fromSeat: 1, status: "pending" });
+  });
 });

@@ -206,6 +206,18 @@ function applyRespondRedeal(state: ServerTruth, seat: Seat, accept: boolean, rng
   return { ok: true, state };
 }
 
+function applyCancelRedeal(state: ServerTruth, seat: Seat): ApplyOutcome {
+  const cur = state.redeal;
+  if (!cur || cur.status !== "pending") {
+    return { ok: false, error: "No pending redeal proposal" };
+  }
+  if (cur.fromSeat !== seat) {
+    return { ok: false, error: "Only the player who proposed the redeal can cancel it" };
+  }
+  state.redeal = null;
+  return { ok: true, state };
+}
+
 function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
   state.lastAction = null;
   state.turnPickup = null;
@@ -310,6 +322,7 @@ function maybeStartNextHand(state: ServerTruth, rng: () => number) {
   state.lastHandPoints = null;
   state.lastHandResult = null;
   state.handOverAcks = null;
+  state.redeal = null;
   beginHand(state, rng);
 }
 
@@ -344,6 +357,9 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
     if (intent.type === "respondRedeal") {
       return applyRespondRedeal(s, intent.seat, intent.accept, rng);
     }
+    if (intent.type === "cancelRedeal") {
+      return applyCancelRedeal(s, intent.seat);
+    }
     if (intent.type === "proposeRedeal") {
       return { ok: false, error: "A redeal is already pending — wait for your opponent’s response" };
     }
@@ -354,6 +370,9 @@ export function applyIntent(state: ServerTruth, intent: Intent, rng: () => numbe
     return applyProposeRedeal(s, intent.seat);
   }
   if (intent.type === "respondRedeal") {
+    return { ok: false, error: "No pending redeal proposal" };
+  }
+  if (intent.type === "cancelRedeal") {
     return { ok: false, error: "No pending redeal proposal" };
   }
 

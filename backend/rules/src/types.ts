@@ -212,7 +212,8 @@ export type Intent =
   /** Seat-scoped acks ready-up (both required); legacy seatless ack advances immediately. */
   | { type: "ackHandOver"; seat?: Seat }
   | { type: "proposeRedeal"; seat: Seat }
-  | { type: "respondRedeal"; seat: Seat; accept: boolean };
+  | { type: "respondRedeal"; seat: Seat; accept: boolean }
+  | { type: "cancelRedeal"; seat: Seat };
 
 export interface ApplyResult {
   ok: true;

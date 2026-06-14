@@ -1020,6 +1020,28 @@ describe("mutual redeal", () => {
     if (!again.ok) return;
     expect(again.state.redeal).toBeNull();
   });
+
+  it("lets the proposer cancel a pending proposal", () => {
+    const s = buildKnockReadyState("5S");
+    const prop = applyIntent(s, { type: "proposeRedeal", seat: 0 }, () => 0.5);
+    expect(prop.ok).toBe(true);
+    if (!prop.ok) return;
+    const cancel = applyIntent(prop.state, { type: "cancelRedeal", seat: 0 }, () => 0.5);
+    expect(cancel.ok).toBe(true);
+    if (!cancel.ok) return;
+    expect(cancel.state.redeal).toBeNull();
+    const play = applyIntent(cancel.state, { type: "discard", seat: 0, card: "6C", knock: false, gin: false }, () => 0.5);
+    expect(play.ok).toBe(true);
+  });
+
+  it("rejects cancel from the non-proposer", () => {
+    const s = buildKnockReadyState("5S");
+    const prop = applyIntent(s, { type: "proposeRedeal", seat: 0 }, () => 0.5);
+    expect(prop.ok).toBe(true);
+    if (!prop.ok) return;
+    const bad = applyIntent(prop.state, { type: "cancelRedeal", seat: 1 }, () => 0.5);
+    expect(bad.ok).toBe(false);
+  });
 });
 
 describe("deck played through (last stock card reserved)", () => {

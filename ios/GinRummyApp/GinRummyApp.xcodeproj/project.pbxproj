@@ -31,10 +31,12 @@
 		E90100000000000000000018 /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000018 /* ScorecardView.swift */; };
 		E90100000000000000000019 /* ManualScoreStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000019 /* ManualScoreStore.swift */; };
 		E9010000000000000000001A /* ManualScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001A /* ManualScorecardView.swift */; };
+		E9010000000000000000001B /* GameTablePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001B /* GameTablePolicy.swift */; };
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
 		EA0100000000000000000003 /* MeldSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000003 /* MeldSolverTests.swift */; };
 		EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */; };
+		EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,11 +77,13 @@
 		E80100000000000000000018 /* ScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardView.swift; sourceTree = "<group>"; };
 		E80100000000000000000019 /* ManualScoreStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualScoreStore.swift; sourceTree = "<group>"; };
 		E8010000000000000000001A /* ManualScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualScorecardView.swift; sourceTree = "<group>"; };
+		E8010000000000000000001B /* GameTablePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameTablePolicy.swift; sourceTree = "<group>"; };
 		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000003 /* MeldSolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeldSolverTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BettingSettlementBreakdownTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedealAndAbandonmentTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +120,7 @@
 				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
 				EA0200000000000000000003 /* MeldSolverTests.swift */,
 				EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */,
+				EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -141,6 +146,7 @@
 				E80100000000000000000018 /* ScorecardView.swift */,
 				E80100000000000000000019 /* ManualScoreStore.swift */,
 				E8010000000000000000001A /* ManualScorecardView.swift */,
+				E8010000000000000000001B /* GameTablePolicy.swift */,
 				E8010000000000000000000D /* PlayerFeedback.swift */,
 				E8010000000000000000000E /* CardViews.swift */,
 				E8010000000000000000000F /* GinRummyTableTheme.swift */,
@@ -271,6 +277,7 @@
 				E90100000000000000000018 /* ScorecardView.swift in Sources */,
 				E90100000000000000000019 /* ManualScoreStore.swift in Sources */,
 				E9010000000000000000001A /* ManualScorecardView.swift in Sources */,
+				E9010000000000000000001B /* GameTablePolicy.swift in Sources */,
 				E9010000000000000000000B /* PlayerFeedback.swift in Sources */,
 				E9010000000000000000000C /* CardViews.swift in Sources */,
 				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
@@ -287,6 +294,7 @@
 				EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */,
 				EA0100000000000000000003 /* MeldSolverTests.swift in Sources */,
 				EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */,
+				EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

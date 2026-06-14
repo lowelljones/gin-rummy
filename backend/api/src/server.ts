@@ -1620,6 +1620,9 @@ function parseClientIntent(body: { intent?: unknown }, seat: 0 | 1): Intent {
     if (typeof r.accept !== "boolean") throw new Error("respondRedeal requires accept (boolean)");
     return { type: "respondRedeal", seat, accept: r.accept };
   }
+  if (t === "cancelRedeal") {
+    return { type: "cancelRedeal", seat };
+  }
   if (t === "layoffResolve") {
     const r = raw as { ownMelds?: unknown; layoffs?: unknown };
     return { type: "layoffResolve", seat, ownMelds: parseMelds(r.ownMelds), layoffs: parseLayoffs(r.layoffs) };
@@ -1673,6 +1676,7 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
       return { ...intent, seat };
     case "proposeRedeal":
     case "respondRedeal":
+    case "cancelRedeal":
       return { ...intent, seat };
     case "ackHandOver":
       /* Seat-scoped ready-up: both players must Continue before the next deal. */

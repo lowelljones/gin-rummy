@@ -332,6 +332,32 @@ struct GameView: View {
 
     /// Same duration as `HandRevealView`'s flash stage.
     private static let redealFlashDurationNs: UInt64 = 2_400_000_000
+    private static let pollIntervalNs: UInt64 = 1_000_000_000
+
+    private func proposeRedealAllowed(for p: PlayerPerspective) -> Bool {
+        GameTablePolicy.proposeRedealAllowed(phase: p.phase)
+    }
+
+    private func isPendingRedeal(_ p: PlayerPerspective) -> Bool {
+        GameTablePolicy.isPendingRedeal(p.redeal)
+    }
+
+    @MainActor
+    private func applyAbandonmentIfNeeded(_ s: GameStateResponse, gameId: String) -> Bool {
+        guard app.activeGameId == gameId else { return true }
+        guard s.status == "abandoned" else { return false }
+        pollTask?.cancel()
+        switch exitState {
+        case nil, .leavingInProgress:
+            exitState = exitStateForAbandonment(
+                leftBySeat: s.leftBySeat,
+                mySeat: s.perspective.seat
+            )
+        case .youLeft, .opponentLeft:
+            break
+        }
+        return true
+    }
 
     private func handleAfterPerspectiveUpdate(before: PlayerPerspective?, after: PlayerPerspective) {
         /* Server cleared the one-shot void flag — don't keep the local flash overlay blocking play. */
@@ -1013,6 +1039,17 @@ struct GameView: View {
                     }
                 }
             }
+
+            if exitState == nil, voidFlashKind == nil, isPendingRedeal(p) {
+                pendingRedealOverlay(
+                    gameId: gameId,
+                    p: p,
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
+                .zIndex(250)
+                .transition(.opacity)
+            }
         }
         .animation(.easeInOut(duration: 0.28), value: voidFlashKind)
         .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
@@ -1050,6 +1087,23 @@ struct GameView: View {
                     .transition(.opacity)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if exitState == nil,
+               voidFlashKind == nil,
+               !isPendingRedeal(p),
+               proposeRedealAllowed(for: p)
+            {
+                proposeRedealFooter(
+                    gameId: gameId,
+                    p: p,
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(GinRummyPalette.bgDeep.opacity(0.96))
+            }
+        }
         .onAppear {
             mergeHandOrder(with: p.hands[p.seat])
             chatMessages = []
@@ -1077,10 +1131,18 @@ struct GameView: View {
                 showPostCutInterstitial = false
                 pendingDealerDeclineAfterCutSequence = false
             }
-            if old.phase != new.phase, new.phase != "matchOver" {
-                showMatchSummaryAfterReveal = false
-                rematchStatus = nil
-                rematchLocalReady = false
+            if old.phase != new.phase {
+                if old.phase == "handOver", new.phase == "upcardOffer" {
+                    postCutTask?.cancel()
+                    cutHold = nil
+                    showPostCutInterstitial = false
+                    pendingDealerDeclineAfterCutSequence = false
+                }
+                if new.phase != "matchOver" {
+                    showMatchSummaryAfterReveal = false
+                    rematchStatus = nil
+                    rematchLocalReady = false
+                }
             }
         }
     }
@@ -1692,10 +1754,10 @@ struct GameView: View {
     }
 
     private func exitStateForAbandonment(leftBySeat: Int?, mySeat: Int) -> GameExitState {
-        if let leftBy = leftBySeat, leftBy == mySeat {
-            return .youLeft
+        switch GameTablePolicy.exitStateForAbandonment(leftBySeat: leftBySeat, mySeat: mySeat) {
+        case "youLeft": return .youLeft
+        default: return .opponentLeft
         }
-        return .opponentLeft
     }
 
     private func toggleRematchReady(code: String) async {
@@ -1777,19 +1839,8 @@ struct GameView: View {
             guard await MainActor.run(body: { app.activeGameId == gameId }) else { return }
             do {
                 let s = try await app.api.gameState(gameId: gameId, token: token)
-                let gameWasAbandoned = await MainActor.run { () -> Bool in
-                    guard app.activeGameId == gameId else { return true }
-                    guard s.status == "abandoned" else { return false }
-                    switch exitState {
-                    case nil, .leavingInProgress:
-                        exitState = exitStateForAbandonment(
-                            leftBySeat: s.leftBySeat,
-                            mySeat: s.perspective.seat
-                        )
-                    case .youLeft, .opponentLeft:
-                        break
-                    }
-                    return true
+                let gameWasAbandoned = await MainActor.run {
+                    applyAbandonmentIfNeeded(s, gameId: gameId)
                 }
                 if gameWasAbandoned { return }
                 await MainActor.run {
@@ -1858,9 +1909,17 @@ struct GameView: View {
                 }
                 await fetchAndMergeChatFromPoll(gameId: gameId, token: token)
             } catch {
+                if let recoveryToken = app.accessToken,
+                   let s = try? await app.api.gameState(gameId: gameId, token: recoveryToken)
+                {
+                    let abandoned = await MainActor.run {
+                        applyAbandonmentIfNeeded(s, gameId: gameId)
+                    }
+                    if abandoned { return }
+                }
                 await MainActor.run { setFeedback(UserFeedback.from(error), error: true) }
             }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: Self.pollIntervalNs)
         }
     }
 
@@ -1974,21 +2033,6 @@ struct GameView: View {
                     .tint(GinRummyPalette.navy)
                 }
             }
-            if proposeRedealSurface(surface) {
-                proposeRedealFooter(
-                    gameId: gameId,
-                    p: p,
-                    feedbackText: feedbackText,
-                    feedbackIsError: feedbackIsError
-                )
-            }
-        }
-    }
-
-    private func proposeRedealSurface(_ surface: GamePlaySurface) -> Bool {
-        switch surface {
-        case .downCard, .play, .knockLayoff: true
-        default: false
         }
     }
 
@@ -1999,54 +2043,72 @@ struct GameView: View {
         feedbackText: Binding<String>,
         feedbackIsError: Binding<Bool>
     ) -> some View {
-        let pending = p.redeal?.status == "pending"
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().opacity(0.35)
-            Button("Propose redeal") {
-                Task {
-                    await send(
-                        gameId: gameId,
-                        token: app.accessToken,
-                        intent: ["type": "proposeRedeal"],
-                        success: "Redeal proposed — waiting on opponent.",
-                        feedbackText: feedbackText,
-                        feedbackIsError: feedbackIsError
-                    )
-                }
-            }
-            .buttonStyle(.bordered)
-            .tint(GinRummyPalette.gold)
-            .disabled(pending)
-            if pending, p.redeal?.fromSeat == p.seat {
-                Text("Waiting on \(app.opponentDisplayName)…")
-                    .font(.caption)
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+        Button("Propose redeal") {
+            Task {
+                await send(
+                    gameId: gameId,
+                    token: app.accessToken,
+                    intent: ["type": "proposeRedeal"],
+                    success: "Redeal proposed — waiting on opponent.",
+                    feedbackText: feedbackText,
+                    feedbackIsError: feedbackIsError
+                )
             }
         }
+        .buttonStyle(.bordered)
+        .tint(GinRummyPalette.gold)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
-    private func redealProposalBanner(
+    private func pendingRedealOverlay(
         gameId: String,
         p: PlayerPerspective,
         feedbackText: Binding<String>,
         feedbackIsError: Binding<Bool>
     ) -> some View {
-        if let r = p.redeal {
+        if let r = p.redeal, r.status == "pending" {
             let opp = app.opponentDisplayName
-            VStack(alignment: .leading, spacing: 10) {
-                if r.status == "pending", r.fromSeat == p.seat {
-                    Label("Redeal proposed", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(GinRummyPalette.cream)
-                    Text("Waiting for \(opp) to confirm…")
-                        .font(.caption)
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                } else if r.status == "pending" {
-                    Text("\(opp) proposed a redeal")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(GinRummyPalette.cream)
-                    HStack(spacing: 14) {
+            let youProposed = r.fromSeat == p.seat
+            ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+            VStack(spacing: 18) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 44))
+                    .foregroundStyle(GinRummyPalette.gold)
+                Text(youProposed ? "Redeal proposed" : "\(opp) proposed a redeal")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .multilineTextAlignment(.center)
+                Text(
+                    youProposed
+                        ? "Waiting for \(opp) to accept or decline. You can cancel if you changed your mind."
+                        : "Accept to shuffle and re-deal this hand with the same score, or decline to keep playing."
+                )
+                .font(.subheadline)
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+
+                if youProposed {
+                    Button("Cancel proposal") {
+                        Task {
+                            await send(
+                                gameId: gameId,
+                                token: app.accessToken,
+                                intent: ["type": "cancelRedeal"],
+                                success: "Redeal proposal withdrawn.",
+                                feedbackText: feedbackText,
+                                feedbackIsError: feedbackIsError
+                            )
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(GinRummyPalette.burgundy)
+                    .controlSize(.large)
+                } else {
+                    HStack(spacing: 16) {
                         Button {
                             Task {
                                 await send(
@@ -2059,12 +2121,11 @@ struct GameView: View {
                                 )
                             }
                         } label: {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.green.opacity(0.95))
+                            Label("Accept", systemImage: "checkmark.circle.fill")
+                                .font(.headline)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Accept redeal")
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green.opacity(0.85))
 
                         Button {
                             Task {
@@ -2078,23 +2139,48 @@ struct GameView: View {
                                 )
                             }
                         } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.red.opacity(0.92))
+                            Label("Decline", systemImage: "xmark.circle.fill")
+                                .font(.headline)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Decline redeal")
-
-                        Spacer(minLength: 0)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red.opacity(0.85))
                     }
-                } else if r.status == "declined", r.fromSeat == p.seat {
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 360)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(GinRummyPalette.navy.opacity(0.96))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(GinRummyPalette.gold.opacity(0.45), lineWidth: 1.2)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
+            .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func redealProposalBanner(
+        gameId: String,
+        p: PlayerPerspective,
+        feedbackText: Binding<String>,
+        feedbackIsError: Binding<Bool>
+    ) -> some View {
+        if let r = p.redeal, r.status == "declined" {
+            let opp = app.opponentDisplayName
+            VStack(alignment: .leading, spacing: 10) {
+                if r.fromSeat == p.seat {
                     Label("\(opp) declined the redeal", systemImage: "xmark.circle")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(GinRummyPalette.cream)
                     Text("Keep playing — or propose again after your next move.")
                         .font(.caption2)
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
-                } else if r.status == "declined" {
+                } else {
                     Label("You declined the redeal", systemImage: "hand.thumbsdown.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(GinRummyPalette.cream)
@@ -2295,32 +2381,39 @@ struct GameView: View {
             Text(turnLine(p))
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(GinRummyPalette.gold.opacity(0.95))
-            if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
-                Text("Take or pass the up-card.")
+
+            if p.currentTurn == p.seat {
+                if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
+                    Text("Take or pass the up-card.")
+                        .font(.caption)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                }
+
+                HStack(spacing: 10) {
+                    Button("Take") {
+                        performUpcardTake(gameId: gameId)
+                    }
+                    Button("Pass") {
+                        downCardStatusMessage = "You Declined Down Card"
+                        Task {
+                            await send(
+                                gameId: gameId,
+                                token: token,
+                                intent: ["type": "upcardPass"],
+                                success: "You Declined Down Card",
+                                feedbackText: feedbackText,
+                                feedbackIsError: feedbackIsError
+                            )
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(GinRummyPalette.gold)
+            } else {
+                Text("Waiting for \(app.opponentDisplayName) to take or pass the up-card.")
                     .font(.caption)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
-
-            HStack(spacing: 10) {
-                Button("Take") {
-                    performUpcardTake(gameId: gameId)
-                }
-                Button("Pass") {
-                    downCardStatusMessage = "You Declined Down Card"
-                    Task {
-                        await send(
-                            gameId: gameId,
-                            token: token,
-                            intent: ["type": "upcardPass"],
-                            success: "You Declined Down Card",
-                            feedbackText: feedbackText,
-                            feedbackIsError: feedbackIsError
-                        )
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .tint(GinRummyPalette.gold)
         }
     }
 
@@ -2408,15 +2501,8 @@ struct GameView: View {
         } catch {
             if let recoveryToken = app.accessToken,
                let s = try? await app.api.gameState(gameId: gameId, token: recoveryToken),
-               s.status == "abandoned"
+               await MainActor.run(body: { applyAbandonmentIfNeeded(s, gameId: gameId) })
             {
-                await MainActor.run {
-                    pollTask?.cancel()
-                    exitState = exitStateForAbandonment(
-                        leftBySeat: s.leftBySeat,
-                        mySeat: s.perspective.seat
-                    )
-                }
                 return
             }
             await MainActor.run {
