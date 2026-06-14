@@ -14,6 +14,7 @@ import {
 import { computeTestBotIntent, fallbackTestBotIntent, hasTestBotWork } from "./bot.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
 import { detectHandEpisodeClose, moveAnalyticsFields, stampDealStartMoveSeq } from "./handEpisode.js";
+import { buildSessionRecapFromGames, type SessionRecapPayload } from "./sessionRecap.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
 /* Railway's internal healthcheck and service-to-service network is IPv6, so when running
@@ -191,7 +192,7 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
         .update({ status: "completed", server_truth: state })
         .eq("id", gameId);
       if (lobbyId) {
-        await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
+        await prepareLobbyForRematch(lobbyId);
       }
       return;
     }
@@ -248,7 +249,7 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
       return;
     }
     if (lobbyId && state.phase === "matchOver") {
-      await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
+      await prepareLobbyForRematch(lobbyId);
     }
     if (state.phase === "matchOver") return;
   }
@@ -562,6 +563,236 @@ async function findLatestGameId(lobbyId: string): Promise<string | null> {
   return (game?.id as string | undefined) ?? null;
 }
 
+async function findLatestActiveGameId(lobbyId: string): Promise<string | null> {
+  const { data: game } = await admin
+    .from("games")
+    .select("id")
+    .eq("lobby_id", lobbyId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (game?.id as string | undefined) ?? null;
+}
+
+/** After match end, reopen the lobby and clear ready flags so both players can rematch. */
+async function prepareLobbyForRematch(lobbyId: string): Promise<void> {
+  await admin.from("lobbies").update({ status: "open" }).eq("id", lobbyId);
+  await admin.from("lobby_players").update({ ready: false }).eq("lobby_id", lobbyId);
+}
+
+type RematchStatusPayload = {
+  lobby_invite_code: string;
+  players: LobbyPlayerPublic[];
+  both_ready: boolean;
+  is_bot_game: boolean;
+  next_game_id: string | null;
+};
+
+async function buildRematchStatus(
+  lobbyId: string,
+  currentGameId: string,
+  selfId: string,
+  isBotGame: boolean,
+): Promise<RematchStatusPayload | null> {
+  const { data: lobby } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status")
+    .eq("id", lobbyId)
+    .maybeSingle();
+  if (!lobby || lobby.status === "closed") return null;
+
+  const players = await fetchLobbyPlayersWithNames(lobbyId, selfId);
+  const seat0 = players.find((p) => p.seat === 0);
+  const seat1 = players.find((p) => p.seat === 1);
+  const bothReady = isBotGame
+    ? Boolean(seat0?.ready)
+    : Boolean(seat0?.ready && seat1?.ready);
+
+  let nextGameId: string | null = null;
+  if (lobby.status === "in_game") {
+    const activeId = await findLatestActiveGameId(lobbyId);
+    if (activeId && activeId !== currentGameId) nextGameId = activeId;
+  }
+
+  return {
+    lobby_invite_code: lobby.invite_code as string,
+    players,
+    both_ready: bothReady,
+    is_bot_game: isBotGame,
+    next_game_id: nextGameId,
+  };
+}
+
+/** Insert a solo bot game for the host and flip the lobby to in_game. */
+async function createBotGameInLobby(lobbyId: string, hostUserId: string): Promise<StartAttempt> {
+  const { data: claimed, error: claimErr } = await admin
+    .from("lobbies")
+    .update({ status: "in_game" })
+    .eq("id", lobbyId)
+    .eq("status", "open")
+    .select("id")
+    .maybeSingle();
+  if (claimErr) {
+    app.log.error({ err: claimErr.message, lobbyId }, "bot start: lobby claim failed");
+    return { gameId: await findLatestGameId(lobbyId), error: `lobby claim failed: ${claimErr.message}` };
+  }
+  if (!claimed) {
+    return { gameId: await findLatestGameId(lobbyId) };
+  }
+
+  const truth = createNewMatch(`lobby-${lobbyId}`, rng());
+  const handId = crypto.randomUUID();
+  const { data: game, error: gErr } = await admin
+    .from("games")
+    .insert({
+      lobby_id: lobbyId,
+      status: "active",
+      race_target: truth.raceTarget,
+      player_ids: [hostUserId, BOT_USER_ID] as [string, string],
+      is_bot_game: true,
+      seat_for_user: { [hostUserId]: 0, [BOT_USER_ID]: 1 },
+      server_truth: truth,
+      move_seq: 0,
+      current_hand_id: handId,
+    })
+    .select("id")
+    .single();
+
+  if (gErr || !game) {
+    const msg = gErr?.message ?? "no row";
+    app.log.error({ err: msg, lobbyId, hostUserId }, "bot start: game insert failed");
+    await admin.from("lobbies").update({ status: "open" }).eq("id", lobbyId).eq("status", "in_game");
+    return { gameId: null, error: `game insert failed: ${msg}` };
+  }
+
+  const { error: handErr } = await admin.from("hands").insert({
+    id: handId,
+    game_id: game.id,
+    index: truth.handIndex,
+    dealer_seat: truth.dealer,
+  });
+  if (handErr) {
+    app.log.error({ err: handErr.message, gameId: game.id }, "bot start: hand insert failed");
+  }
+
+  await processTestBotIfNeeded(game.id as string);
+  return { gameId: game.id as string };
+}
+
+/** Solo bot rematch: host taps Play again after a completed bot match. */
+async function tryStartBotRematchIfReady(lobbyId: string): Promise<StartAttempt> {
+  const { data: lobby } = await admin
+    .from("lobbies")
+    .select("id, status")
+    .eq("id", lobbyId)
+    .maybeSingle();
+  if (!lobby || lobby.status !== "open") return { gameId: null };
+
+  const { data: playersData } = await admin
+    .from("lobby_players")
+    .select("user_id, seat, ready")
+    .eq("lobby_id", lobbyId)
+    .order("seat", { ascending: true });
+  const seats = (playersData ?? []) as LobbyPlayerRow[];
+  if (seats.length !== 1) return { gameId: null };
+  const p0 = seats.find((p) => Number(p.seat) === 0);
+  if (!p0?.ready) return { gameId: null };
+
+  const { data: lastGame } = await admin
+    .from("games")
+    .select("id, status, is_bot_game")
+    .eq("lobby_id", lobbyId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!lastGame?.is_bot_game || lastGame.status !== "completed") return { gameId: null };
+
+  return createBotGameInLobby(lobbyId, p0.user_id);
+}
+
+async function findLobbyInviteCode(lobbyId: string): Promise<string | null> {
+  const { data: lobby } = await admin
+    .from("lobbies")
+    .select("invite_code")
+    .eq("id", lobbyId)
+    .maybeSingle();
+  return (lobby?.invite_code as string | undefined) ?? null;
+}
+
+async function fetchSessionRecapForLobby(
+  lobby: { id: string; invite_code: string; status: string },
+  selfId: string,
+  currentGameId: string | null,
+): Promise<SessionRecapPayload> {
+  const { data: games, error } = await admin
+    .from("games")
+    .select("id, status, server_truth, created_at, updated_at")
+    .eq("lobby_id", lobby.id)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const gameRows = (games ?? []) as Array<{
+    id: string;
+    status: string;
+    server_truth: ServerTruth;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  const gameIds = gameRows.map((g) => g.id);
+  let episodes: Array<{
+    game_id: string;
+    hand_index: number;
+    deal_index: number;
+    winner_seat: 0 | 1 | null;
+    points_awarded: number;
+    scores_after: [number, number];
+  }> = [];
+
+  if (gameIds.length > 0) {
+    const { data: epRows, error: epErr } = await admin
+      .from("hand_episodes")
+      .select("game_id, hand_index, deal_index, winner_seat, points_awarded, scores_after")
+      .in("game_id", gameIds)
+      .order("hand_index", { ascending: true })
+      .order("deal_index", { ascending: true });
+    if (epErr) throw new Error(epErr.message);
+    episodes = (epRows ?? []).map((row) => ({
+      game_id: row.game_id as string,
+      hand_index: row.hand_index as number,
+      deal_index: row.deal_index as number,
+      winner_seat: row.winner_seat as 0 | 1 | null,
+      points_awarded: row.points_awarded as number,
+      scores_after: row.scores_after as [number, number],
+    }));
+  }
+
+  const players = await fetchLobbyPlayersWithNames(lobby.id, selfId);
+  const { matches, totals } = buildSessionRecapFromGames(gameRows, currentGameId, episodes);
+
+  return {
+    lobby: { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+    players,
+    matches,
+    totals,
+  };
+}
+
+async function authorizeLobbyAccess(
+  lobby: { id: string; created_by: string },
+  userId: string,
+): Promise<boolean> {
+  if (lobby.created_by === userId) return true;
+  const { data: membership } = await admin
+    .from("lobby_players")
+    .select("seat")
+    .eq("lobby_id", lobby.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return Boolean(membership);
+}
+
 type LobbyStatusPayload = {
   lobby: { id: string; invite_code: string; status: string };
   gameId: string | null;
@@ -596,7 +827,7 @@ async function buildLobbyStatusPayload(
     const s0 = probe.find((p) => p.seat === 0);
     const s1 = probe.find((p) => p.seat === 1);
     if (s0?.ready && s1?.ready) {
-      const start = await tryStartHumanGameIfReady(currentLobby.id);
+      const start = await tryStartRematchIfReady(currentLobby.id);
       if (start.error) startError = start.error;
       if (start.gameId || start.error) {
         const { data: refreshed } = await admin
@@ -734,6 +965,12 @@ async function tryStartHumanGameIfReady(lobbyId: string): Promise<StartAttempt> 
   return { gameId: game.id as string };
 }
 
+async function tryStartRematchIfReady(lobbyId: string): Promise<StartAttempt> {
+  const human = await tryStartHumanGameIfReady(lobbyId);
+  if (human.gameId || human.error) return human;
+  return tryStartBotRematchIfReady(lobbyId);
+}
+
 /**
  * Lobby status / latest game lookup. Both the host and the joiner poll this
  * while sitting in the waiting room — they see each other's display name,
@@ -765,6 +1002,36 @@ app.get("/lobbies/:code", async (req, reply) => {
     user.id,
     { selfHeal: true }
   );
+});
+
+/**
+ * Chronological recap of every match played in this lobby (scores, boxes/buckets,
+ * winners). Used by the iOS session-results screen after rematches.
+ */
+app.get("/lobbies/:code/session", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const code = (req.params as { code: string }).code.toUpperCase();
+  const { data: lobby, error: lErr } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status, created_by")
+    .eq("invite_code", code)
+    .maybeSingle();
+  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+  if (!(await authorizeLobbyAccess(lobby, user.id))) {
+    return reply.code(403).send({ error: "Not a member" });
+  }
+
+  const currentGameId = await findLatestActiveGameId(lobby.id);
+  try {
+    return await fetchSessionRecapForLobby(
+      { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+      user.id,
+      currentGameId,
+    );
+  } catch (e) {
+    return reply.code(500).send({ error: e instanceof Error ? e.message : "Session recap failed" });
+  }
 });
 
 /**
@@ -819,7 +1086,7 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
 
   let startError: string | undefined;
   if (ready) {
-    const attempt = await tryStartHumanGameIfReady(lobby.id);
+    const attempt = await tryStartRematchIfReady(lobby.id);
     if (attempt.error) startError = attempt.error;
   }
 
@@ -907,54 +1174,23 @@ app.post("/lobbies/:code/start", async (req, reply) => {
   }
 
   const p0 = players[0] as { user_id: string; seat: number };
-  const p1 = { user_id: BOT_USER_ID, seat: 1 } as { user_id: string; seat: number };
-
-  const truth = createNewMatch(`lobby-${lobby.id}`, rng());
-  const handId = crypto.randomUUID();
-
-  const { data: game, error: gErr } = await admin
-    .from("games")
-    .insert({
-      lobby_id: lobby.id,
-      status: "active",
-      race_target: truth.raceTarget,
-      player_ids: [p0.user_id, p1.user_id] as [string, string],
-      is_bot_game: true,
-      seat_for_user: { [p0.user_id]: 0, [p1.user_id]: 1 },
-      server_truth: truth,
-      move_seq: 0,
-      current_hand_id: handId,
-    })
-    .select("id, server_truth, seat_for_user, is_bot_game")
-    .single();
-
-  if (gErr || !game) return reply.code(500).send({ error: gErr?.message ?? "game insert failed" });
-
-  await admin.from("hands").insert({
-    id: handId,
-    game_id: game.id,
-    index: truth.handIndex,
-    dealer_seat: truth.dealer,
-  });
-
-  await admin.from("lobbies").update({ status: "in_game" }).eq("id", lobby.id);
-
-  await processTestBotIfNeeded(game.id);
+  const start = await createBotGameInLobby(lobby.id, p0.user_id);
+  if (start.error || !start.gameId) {
+    return reply.code(500).send({ error: start.error ?? "game insert failed" });
+  }
 
   const { data: gameAfter } = await admin
     .from("games")
     .select("server_truth, seat_for_user")
-    .eq("id", game.id)
+    .eq("id", start.gameId)
     .single();
 
-  const finalTruth = (gameAfter?.server_truth as ServerTruth) ?? (game.server_truth as ServerTruth);
-  const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id)!;
-  const oppName = await opponentDisplayNameForGame(
-    (game as { seat_for_user: Record<string, number> }).seat_for_user,
-    user.id,
-  );
+  const finalTruth = (gameAfter?.server_truth as ServerTruth) ?? createNewMatch(`lobby-${lobby.id}`, rng());
+  const seatMap = (gameAfter?.seat_for_user ?? { [p0.user_id]: 0, [BOT_USER_ID]: 1 }) as Record<string, number>;
+  const seat = seatForUser({ seat_for_user: seatMap }, user.id)!;
+  const oppName = await opponentDisplayNameForGame(seatMap, user.id);
   return {
-    gameId: game.id,
+    gameId: start.gameId,
     perspective: buildPerspective(finalTruth, seat),
     testBot: true,
     opponentDisplayName: oppName,
@@ -970,7 +1206,7 @@ app.get("/games/:id/state", async (req, reply) => {
 
   const { data: game, error } = await admin
     .from("games")
-    .select("id, server_truth, seat_for_user, move_seq, status, abandoned_by")
+    .select("id, server_truth, seat_for_user, move_seq, status, abandoned_by, lobby_id, is_bot_game")
     .eq("id", id)
     .maybeSingle();
 
@@ -987,6 +1223,17 @@ app.get("/games/:id/state", async (req, reply) => {
     game.status === "abandoned" && abandonedBy !== null
       ? seatMap[abandonedBy] ?? null
       : null;
+  const lobbyId = (game as { lobby_id?: string | null }).lobby_id ?? null;
+  const isBotGame = Boolean((game as { is_bot_game?: boolean }).is_bot_game);
+  const lobbyInviteCode = lobbyId ? await findLobbyInviteCode(lobbyId) : null;
+  let rematch: RematchStatusPayload | null = null;
+  if (truth.phase === "matchOver" && lobbyId) {
+    const probe = await buildRematchStatus(lobbyId, id, user.id, isBotGame);
+    if (probe?.both_ready && !probe.next_game_id) {
+      await tryStartRematchIfReady(lobbyId);
+    }
+    rematch = await buildRematchStatus(lobbyId, id, user.id, isBotGame);
+  }
   return {
     perspective: buildPerspective(truth, seat),
     moveSeq: game.move_seq,
@@ -998,7 +1245,53 @@ app.get("/games/:id/state", async (req, reply) => {
       truth.phase === "matchOver"
         ? { raw: truth.bettingRaw, bucket: truth.bettingBucket }
         : null,
+    rematch,
+    lobbyInviteCode,
   };
+});
+
+/**
+ * Session recap for the lobby linked to a game the caller is in.
+ */
+app.get("/games/:id/session", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const id = (req.params as { id: string }).id;
+  const { data: game, error } = await admin
+    .from("games")
+    .select("id, lobby_id, seat_for_user, status")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !game) return reply.code(404).send({ error: "Game not found" });
+
+  const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id);
+  if (seat === null) return reply.code(403).send({ error: "Not a participant" });
+
+  const lobbyId = (game as { lobby_id?: string | null }).lobby_id;
+  if (!lobbyId) return reply.code(404).send({ error: "Game has no lobby session" });
+
+  const { data: lobby, error: lErr } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status, created_by")
+    .eq("id", lobbyId)
+    .maybeSingle();
+  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+  if (!(await authorizeLobbyAccess(lobby, user.id))) {
+    return reply.code(403).send({ error: "Not a member" });
+  }
+
+  const currentGameId =
+    game.status === "active" ? (game.id as string) : await findLatestActiveGameId(lobby.id);
+  try {
+    return await fetchSessionRecapForLobby(
+      { id: lobby.id, invite_code: lobby.invite_code, status: lobby.status },
+      user.id,
+      currentGameId,
+    );
+  } catch (e) {
+    return reply.code(500).send({ error: e instanceof Error ? e.message : "Session recap failed" });
+  }
 });
 
 /**
@@ -1278,7 +1571,7 @@ app.post("/games/:id/move", async (req, reply) => {
   if (newTruth.phase === "matchOver") {
     const lobbyId = (game as { lobby_id?: string }).lobby_id;
     if (lobbyId) {
-      await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
+      await prepareLobbyForRematch(lobbyId);
     }
   } else if ((game as { is_bot_game?: boolean }).is_bot_game) {
     await processTestBotIfNeeded(id);
@@ -1290,7 +1583,7 @@ app.post("/games/:id/move", async (req, reply) => {
     .eq("id", id)
     .single();
 
-  const finalTruth = (after?.server_truth as ServerTruth) ?? newTruth;
+  const responseTruth = (after?.server_truth as ServerTruth) ?? finalTruth;
   const finalSeq = after ? Number(after.move_seq) : nextSeq;
 
   const oppName = await opponentDisplayNameForGame(
@@ -1299,10 +1592,10 @@ app.post("/games/:id/move", async (req, reply) => {
   );
 
   return {
-    perspective: buildPerspective(finalTruth, seat),
+    perspective: buildPerspective(responseTruth, seat),
     moveSeq: finalSeq,
     opponentDisplayName: oppName,
-    betting: finalTruth.phase === "matchOver" ? { raw: finalTruth.bettingRaw, bucket: finalTruth.bettingBucket } : null,
+    betting: responseTruth.phase === "matchOver" ? { raw: responseTruth.bettingRaw, bucket: responseTruth.bettingBucket } : null,
   };
 });
 

@@ -226,7 +226,7 @@ extension LobbyStatusResponse {
     /// paths can never disagree about when to enter the game.
     var gameIdToEnter: String? {
         guard let gid = gameId else { return nil }
-        guard lobby.status == "in_game" || lobby.status == "closed" else { return nil }
+        guard lobby.status == "in_game" else { return nil }
         return gid
     }
 }
@@ -313,6 +313,50 @@ struct GameStateResponse: Codable {
     let leftBySeat: Int?
     let betting: BettingDTO?
     let opponentDisplayName: String?
+    /// Populated at match end when the game belongs to a lobby — drives Play again ready-up.
+    let rematch: RematchStatusDTO?
+    /// Invite code for the linked lobby (enables session recap during multi-match sittings).
+    let lobbyInviteCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case perspective
+        case moveSeq
+        case status
+        case leftBySeat
+        case betting
+        case opponentDisplayName
+        case rematch
+        case lobbyInviteCode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        perspective = try container.decode(PlayerPerspective.self, forKey: .perspective)
+        moveSeq = try container.decode(Int.self, forKey: .moveSeq)
+        status = try container.decode(String.self, forKey: .status)
+        leftBySeat = try container.decodeIfPresent(Int.self, forKey: .leftBySeat)
+        betting = try container.decodeIfPresent(BettingDTO.self, forKey: .betting)
+        opponentDisplayName = try container.decodeIfPresent(String.self, forKey: .opponentDisplayName)
+        rematch = try container.decodeIfPresent(RematchStatusDTO.self, forKey: .rematch)
+        lobbyInviteCode = try container.decodeIfPresent(String.self, forKey: .lobbyInviteCode)
+    }
+}
+
+/// Lobby ready-up state surfaced on the match summary screen for rematches.
+struct RematchStatusDTO: Codable, Equatable {
+    let lobbyInviteCode: String
+    let players: [LobbyPlayerDTO]
+    let bothReady: Bool
+    let isBotGame: Bool
+    let nextGameId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case lobbyInviteCode = "lobby_invite_code"
+        case players
+        case bothReady = "both_ready"
+        case isBotGame = "is_bot_game"
+        case nextGameId = "next_game_id"
+    }
 }
 
 struct GameLeaveResponse: Codable {
@@ -326,6 +370,104 @@ struct MoveResponse: Codable {
     let moveSeq: Int
     let betting: BettingDTO?
     let opponentDisplayName: String?
+}
+
+struct SessionRecapResponse: Codable {
+    let lobby: LobbyStatusResponse.LobbyDTO
+    let players: [LobbyPlayerDTO]
+    let matches: [SessionMatchRecapDTO]
+    let totals: SessionTotalsDTO
+
+    enum CodingKeys: String, CodingKey {
+        case lobby
+        case players
+        case matches
+        case totals
+    }
+}
+
+struct SessionMatchRecapDTO: Codable, Identifiable, Equatable {
+    let matchNumber: Int
+    let gameId: String
+    let status: String
+    let phase: String
+    let createdAt: String
+    let updatedAt: String
+    let raceTarget: Int
+    let scores: [Int]
+    let handsWon: [Int]
+    let winnerSeat: Int?
+    let bettingRaw: Int?
+    let bettingBucket: Int?
+    let isCurrent: Bool
+    let handScores: [HandScoreRecapDTO]
+
+    var id: String { gameId }
+
+    enum CodingKeys: String, CodingKey {
+        case matchNumber = "match_number"
+        case gameId = "game_id"
+        case status
+        case phase
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case raceTarget = "race_target"
+        case scores
+        case handsWon = "hands_won"
+        case winnerSeat = "winner_seat"
+        case bettingRaw = "betting_raw"
+        case bettingBucket = "betting_bucket"
+        case isCurrent = "is_current"
+        case handScores = "hand_scores"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        matchNumber = try container.decode(Int.self, forKey: .matchNumber)
+        gameId = try container.decode(String.self, forKey: .gameId)
+        status = try container.decode(String.self, forKey: .status)
+        phase = try container.decode(String.self, forKey: .phase)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        raceTarget = try container.decode(Int.self, forKey: .raceTarget)
+        scores = try container.decode([Int].self, forKey: .scores)
+        handsWon = try container.decode([Int].self, forKey: .handsWon)
+        winnerSeat = try container.decodeIfPresent(Int.self, forKey: .winnerSeat)
+        bettingRaw = try container.decodeIfPresent(Int.self, forKey: .bettingRaw)
+        bettingBucket = try container.decodeIfPresent(Int.self, forKey: .bettingBucket)
+        isCurrent = try container.decode(Bool.self, forKey: .isCurrent)
+        handScores = try container.decodeIfPresent([HandScoreRecapDTO].self, forKey: .handScores) ?? []
+    }
+}
+
+struct HandScoreRecapDTO: Codable, Equatable, Identifiable {
+    let handIndex: Int
+    let winnerSeat: Int
+    let pointsAwarded: Int
+    let scoresAfter: [Int]
+
+    var id: Int { handIndex }
+
+    enum CodingKeys: String, CodingKey {
+        case handIndex = "hand_index"
+        case winnerSeat = "winner_seat"
+        case pointsAwarded = "points_awarded"
+        case scoresAfter = "scores_after"
+    }
+}
+
+struct SessionTotalsDTO: Codable, Equatable {
+    let completedMatches: Int
+    let matchWins: [Int]
+    let totalBettingRaw: Int
+    let totalBuckets: Int
+
+    enum CodingKeys: String, CodingKey {
+        case completedMatches = "completed_matches"
+        case matchWins = "match_wins"
+        case totalBettingRaw = "total_betting_raw"
+        case totalBuckets = "total_buckets"
+    }
 }
 
 struct GameChatMessageDTO: Codable, Equatable, Identifiable {

@@ -435,6 +435,100 @@ struct HandRevealView: View {
     }
 }
 
+// MARK: - Match-end rematch ready-up
+
+/// Dual ready-up on the match summary screen — mirrors the hand-over Continue flow.
+struct RematchReadyFooter: View {
+    let rematch: RematchStatusDTO
+    let opponentName: String
+    let youTappedPlayAgain: Bool
+    let busy: Bool
+    var onPlayAgain: () -> Void
+
+    private var mySeat: Int? { rematch.players.first(where: { $0.isSelf })?.seat }
+    private var youReady: Bool {
+        youTappedPlayAgain || (rematch.players.first(where: { $0.isSelf })?.ready ?? false)
+    }
+    private var oppReady: Bool {
+        if rematch.isBotGame { return true }
+        guard let seat = mySeat else { return false }
+        return rematch.players.first(where: { $0.seat == 1 - seat })?.ready ?? false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Play again")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.cream)
+
+            if rematch.isBotGame {
+                if !youReady {
+                    Button(busy ? "Starting…" : "Play again") {
+                        onPlayAgain()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(GinRummyPalette.navy)
+                    .controlSize(.large)
+                    .disabled(busy)
+                } else {
+                    rematchBanner(
+                        symbol: "hourglass",
+                        text: "Starting a new match…"
+                    )
+                }
+            } else if oppReady, !youReady {
+                rematchBanner(
+                    symbol: "checkmark.circle.fill",
+                    text: "\(opponentName) is ready for a rematch — they're waiting on you."
+                )
+                Button("Play again") {
+                    onPlayAgain()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.navy)
+                .controlSize(.large)
+                .disabled(busy)
+            } else if !youReady {
+                Button("Play again") {
+                    onPlayAgain()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(GinRummyPalette.navy)
+                .controlSize(.large)
+                .disabled(busy)
+            } else if !oppReady {
+                rematchBanner(
+                    symbol: "hourglass",
+                    text: "You're ready. \(opponentName) may still be reviewing the match…"
+                )
+            } else {
+                rematchBanner(symbol: "checkmark.circle.fill", text: "Both ready — dealing…")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(HandEndStyle.readyBlue.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(HandEndStyle.readyBlue.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func rematchBanner(symbol: String, text: String) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(GinRummyPalette.navy)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(HandEndStyle.readyBlue.opacity(0.85)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(HandEndStyle.readyBlue, lineWidth: 1))
+    }
+}
+
 // MARK: - Mid-hand void flash (redeal / deck played through)
 
 enum HandVoidFlashKind: Equatable {

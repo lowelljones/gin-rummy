@@ -46,6 +46,15 @@ struct GameView: View {
     /// taps through to the final match summary.
     @State private var showMatchSummaryAfterReveal = false
 
+    /// Lobby rematch ready-up on the match summary screen (from `/state` rematch payload).
+    @State private var rematchStatus: RematchStatusDTO?
+    @State private var rematchLocalReady = false
+    @State private var rematchBusy = false
+
+    /// Linked lobby invite code — used for session recap across rematches.
+    @State private var sessionLobbyCode: String?
+    @State private var showScorecard = false
+
     @State private var showChatSheet = false
     @State private var chatMessages: [GameChatMessageDTO] = []
     @State private var chatWatermarkIso: String?
@@ -205,6 +214,13 @@ struct GameView: View {
             }
         }
         .navigationTitle("Table")
+        .sheet(isPresented: $showScorecard) {
+            ScorecardView(
+                inviteCode: sessionLobbyCode,
+                gameId: app.activeGameId
+            )
+            .environmentObject(app)
+        }
         .toolbar {
             if app.activeGameId != nil {
                 ToolbarItem(placement: .topBarLeading) {
@@ -217,6 +233,18 @@ struct GameView: View {
                     }
                     .disabled(exitState != nil || app.lastPerspective?.phase == "matchOver")
                     .accessibilityLabel("Leave game")
+                }
+                if sessionLobbyCode != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showScorecard = true
+                        } label: {
+                            Label("Scorecard", systemImage: "tablecells")
+                                .labelStyle(.iconOnly)
+                                .foregroundStyle(GinRummyPalette.gold)
+                        }
+                        .accessibilityLabel("Scorecard")
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -1051,6 +1079,8 @@ struct GameView: View {
             }
             if old.phase != new.phase, new.phase != "matchOver" {
                 showMatchSummaryAfterReveal = false
+                rematchStatus = nil
+                rematchLocalReady = false
             }
         }
     }
@@ -1668,6 +1698,72 @@ struct GameView: View {
         return .opponentLeft
     }
 
+    private func toggleRematchReady(code: String) async {
+        guard let token = app.accessToken else { return }
+        await MainActor.run {
+            rematchBusy = true
+            rematchLocalReady = true
+        }
+        defer { Task { @MainActor in rematchBusy = false } }
+        do {
+            let status = try await app.api.setLobbyReady(code: code.uppercased(), token: token, ready: true)
+            await MainActor.run {
+                if let me = status.players.first(where: { $0.isSelf }) {
+                    rematchLocalReady = me.ready
+                }
+            }
+            if let nextId = status.gameIdToEnter {
+                await transitionToRematchGame(gameId: nextId, token: token)
+            }
+        } catch {
+            await MainActor.run {
+                rematchLocalReady = false
+                setFeedback(UserFeedback.from(error), error: true)
+            }
+        }
+    }
+
+    private func transitionToRematchGame(gameId: String, token: String) async {
+        let stillOnCompleted = await MainActor.run { app.activeGameId != nil }
+        guard stillOnCompleted else { return }
+        do {
+            let st = try await app.api.gameState(gameId: gameId, token: token)
+            await MainActor.run {
+                pollTask?.cancel()
+                postCutTask?.cancel()
+                cardFlightClearTask?.cancel()
+                messageTask?.cancel()
+                showMatchSummaryAfterReveal = false
+                rematchStatus = nil
+                rematchLocalReady = false
+                rematchBusy = false
+                sessionLobbyCode = nil
+                selectedHandCard = nil
+                handDisplayOrder = []
+                chatMessages = []
+                chatWatermarkIso = nil
+                chatBaselineLoaded = false
+                chatToasts = []
+                chatUnreadCount = 0
+                app.applyGameTableState(
+                    perspective: st.perspective,
+                    betting: st.betting,
+                    opponentDisplayName: st.opponentDisplayName
+                )
+                app.activeGameId = gameId
+            }
+            await MainActor.run {
+                pollTask = Task { await pollLoop(gameId: gameId) }
+            }
+        } catch {
+            await MainActor.run {
+                app.activeGameId = gameId
+                pollTask?.cancel()
+                pollTask = Task { await pollLoop(gameId: gameId) }
+            }
+        }
+    }
+
     private func pollLoop(gameId: String) async {
         while !Task.isCancelled {
             /* Re-read the token each iteration so a background refresh's new access_token
@@ -1701,6 +1797,28 @@ struct GameView: View {
                     /* While the player is leaving or viewing the exit screen, ignore
                      * live snapshots so the table can't flash back underneath. */
                     guard exitState == nil else { return }
+
+                    if let rematch = s.rematch {
+                        rematchStatus = rematch
+                        sessionLobbyCode = rematch.lobbyInviteCode
+                        if let me = rematch.players.first(where: { $0.isSelf }) {
+                            rematchLocalReady = me.ready
+                        }
+                        if let nextId = rematch.nextGameId, nextId != gameId {
+                            Task { await transitionToRematchGame(gameId: nextId, token: token) }
+                        }
+                    } else if let code = s.lobbyInviteCode {
+                        sessionLobbyCode = code
+                        if s.perspective.phase != "matchOver" {
+                            rematchStatus = nil
+                            rematchLocalReady = false
+                        }
+                    } else if s.perspective.phase != "matchOver" {
+                        rematchStatus = nil
+                        rematchLocalReady = false
+                        sessionLobbyCode = nil
+                    }
+
                     scheduleChatBaselineLoadOnce(gameId: gameId)
 
                     let before = app.lastPerspective
@@ -1783,6 +1901,25 @@ struct GameView: View {
                 case .postCutReveal:
                     EmptyView()
                 case .matchOver:
+                    if showMatchSummaryAfterReveal, let rematch = rematchStatus {
+                        RematchReadyFooter(
+                            rematch: rematch,
+                            opponentName: app.opponentDisplayName,
+                            youTappedPlayAgain: rematchLocalReady,
+                            busy: rematchBusy,
+                            onPlayAgain: {
+                                Task { await toggleRematchReady(code: rematch.lobbyInviteCode) }
+                            }
+                        )
+                    }
+                    if sessionLobbyCode != nil {
+                        Button("Scorecard") {
+                            showScorecard = true
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(GinRummyPalette.gold)
+                        .controlSize(.large)
+                    }
                     Button("Return to lobby") {
                         pollTask?.cancel()
                         postCutTask?.cancel()

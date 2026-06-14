@@ -55,11 +55,12 @@ final class LobbyToGameTransitionTests: XCTestCase {
                        "Once both seats are ready and the server created the game, the waiting room must transition immediately.")
     }
 
-    func testClosedLobbyWithGameStillEntersGame() throws {
+    func testClosedLobbyWithGameDoesNotEnterGame() throws {
         let status = try decodeStatus(
             lobbyStatusJSON(status: "closed", gameId: "game-42", hostReady: true, guestReady: true)
         )
-        XCTAssertEqual(status.gameIdToEnter, "game-42")
+        XCTAssertNil(status.gameIdToEnter,
+                       "A closed lobby must not bounce players onto a completed table.")
     }
 
     func testOpenLobbyWithoutGameDoesNotEnterGame() throws {

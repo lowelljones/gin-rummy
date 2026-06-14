@@ -153,6 +153,17 @@ final class APIClient {
         try await request(path: "/games/\(gameId)/state", method: "GET", token: token)
     }
 
+    /// Chronological list of every match in the lobby sitting (scores, boxes, winners).
+    func sessionRecap(inviteCode: String, token: String) async throws -> SessionRecapResponse {
+        let code = inviteCode.uppercased()
+        return try await request(path: "/lobbies/\(code)/session", method: "GET", token: token)
+    }
+
+    /// Same payload as `sessionRecap`, keyed from the active game id.
+    func sessionRecapForGame(gameId: String, token: String) async throws -> SessionRecapResponse {
+        try await request(path: "/games/\(gameId)/session", method: "GET", token: token)
+    }
+
     /// Leave (forfeit) an active game before it concludes. Idempotent on the server,
     /// so retries are safe.
     func leaveGame(gameId: String, token: String) async throws -> GameLeaveResponse {
