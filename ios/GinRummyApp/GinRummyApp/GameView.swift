@@ -306,6 +306,11 @@ struct GameView: View {
     private static let redealFlashDurationNs: UInt64 = 2_400_000_000
 
     private func handleAfterPerspectiveUpdate(before: PlayerPerspective?, after: PlayerPerspective) {
+        /* Server cleared the one-shot void flag — don't keep the local flash overlay blocking play. */
+        if voidFlashKind != nil, after.voidFlash == nil {
+            redealFlashTask?.cancel()
+            voidFlashKind = nil
+        }
         if willStartPostCutSequence(before: before, after: after) {
             detectCutCompletion(before: before, after: after)
             return
@@ -1026,6 +1031,10 @@ struct GameView: View {
             chatUnreadCount = 0
             chatBaselineTask?.cancel()
             chatBaselineTask = nil
+            /* Don't restart polling while leaving or on the post-leave screen — a
+             * perspective refresh during that window was dropping the overlay and
+             * letting the player keep acting on a game they had already forfeited. */
+            guard exitState == nil else { return }
             pollTask?.cancel()
             pollTask = Task { await pollLoop(gameId: gameId) }
         }
@@ -1652,6 +1661,13 @@ struct GameView: View {
         }
     }
 
+    private func exitStateForAbandonment(leftBySeat: Int?, mySeat: Int) -> GameExitState {
+        if let leftBy = leftBySeat, leftBy == mySeat {
+            return .youLeft
+        }
+        return .opponentLeft
+    }
+
     private func pollLoop(gameId: String) async {
         while !Task.isCancelled {
             /* Re-read the token each iteration so a background refresh's new access_token
@@ -1668,19 +1684,23 @@ struct GameView: View {
                 let gameWasAbandoned = await MainActor.run { () -> Bool in
                     guard app.activeGameId == gameId else { return true }
                     guard s.status == "abandoned" else { return false }
-                    if exitState == nil {
-                        if let leftBy = s.leftBySeat, leftBy == s.perspective.seat {
-                            /* Our own leave (e.g. from another device / a retried request). */
-                            exitState = .youLeft
-                        } else {
-                            exitState = .opponentLeft
-                        }
+                    switch exitState {
+                    case nil, .leavingInProgress:
+                        exitState = exitStateForAbandonment(
+                            leftBySeat: s.leftBySeat,
+                            mySeat: s.perspective.seat
+                        )
+                    case .youLeft, .opponentLeft:
+                        break
                     }
                     return true
                 }
                 if gameWasAbandoned { return }
                 await MainActor.run {
                     guard app.activeGameId == gameId else { return }
+                    /* While the player is leaving or viewing the exit screen, ignore
+                     * live snapshots so the table can't flash back underneath. */
+                    guard exitState == nil else { return }
                     scheduleChatBaselineLoadOnce(gameId: gameId)
 
                     let before = app.lastPerspective
@@ -2075,6 +2095,18 @@ struct GameView: View {
         .background(GinRummyPalette.bgDeep.opacity(0.97))
     }
 
+    private func finishLeaveSuccess(acceptingInvite invite: InGameInvite?) async {
+        /* Brief pause so the "leaving the table" visual registers instead of flashing. */
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        await MainActor.run {
+            if invite != nil {
+                app.finishInGameInviteAccepted()
+            } else {
+                exitState = .youLeft
+            }
+        }
+    }
+
     /// Forfeit the current game. When `acceptingInvite` is non-nil, the new lobby is
     /// joined *first* (so a full/closed lobby never costs you your game), then the
     /// current game is abandoned and the player is handed off to the new waiting room.
@@ -2089,16 +2121,18 @@ struct GameView: View {
                 try await app.api.joinLobby(code: invite.inviteCode, token: token)
             }
             _ = try await app.api.leaveGame(gameId: gid, token: token)
-            /* Brief pause so the "leaving the table" visual registers instead of flashing. */
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            await MainActor.run {
-                if invite != nil {
-                    app.finishInGameInviteAccepted()
-                } else {
-                    exitState = .youLeft
-                }
-            }
+            await finishLeaveSuccess(acceptingInvite: invite)
         } catch {
+            if Task.isCancelled { return }
+            /* The leave call is idempotent — a flaky connection may fail after the
+             * server already marked the game abandoned. Confirm before reopening play. */
+            if let recoveryToken = app.accessToken,
+               let s = try? await app.api.gameState(gameId: gid, token: recoveryToken),
+               s.status == "abandoned"
+            {
+                await finishLeaveSuccess(acceptingInvite: invite)
+                return
+            }
             await MainActor.run {
                 exitState = nil
                 setFeedback(UserFeedback.from(error), error: true)
@@ -2218,6 +2252,8 @@ struct GameView: View {
         feedbackIsError: Binding<Bool>
     ) async {
         guard let token else { return }
+        let stillInGame = await MainActor.run { exitState == nil }
+        guard stillInGame else { return }
         do {
             let r = try await app.api.submitMove(gameId: gameId, token: token, intent: intent)
             await MainActor.run {
@@ -2233,6 +2269,19 @@ struct GameView: View {
                 feedbackIsError.wrappedValue = false
             }
         } catch {
+            if let recoveryToken = app.accessToken,
+               let s = try? await app.api.gameState(gameId: gameId, token: recoveryToken),
+               s.status == "abandoned"
+            {
+                await MainActor.run {
+                    pollTask?.cancel()
+                    exitState = exitStateForAbandonment(
+                        leftBySeat: s.leftBySeat,
+                        mySeat: s.perspective.seat
+                    )
+                }
+                return
+            }
             await MainActor.run {
                 feedbackText.wrappedValue = UserFeedback.from(error)
                 feedbackIsError.wrappedValue = true

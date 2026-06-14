@@ -143,7 +143,9 @@ function voidAndRedeal(state: ServerTruth, rng: () => number): void {
   state.dealIndex += 1;
   state.seenBy = {};
   state.knock = null;
-  state.upcardOffer = null;
+  state.turnPickup = null;
+  state.lastAction = null;
+  state.voidFlash = null;
   state.knockCheckCard = null;
   state.stock = [];
   state.discard = [];
@@ -311,8 +313,16 @@ function maybeStartNextHand(state: ServerTruth, rng: () => number) {
   beginHand(state, rng);
 }
 
+/** `upcardOffer` phase must carry an offer object; if missing (legacy/partial row), treat as play. */
+function repairPhase(state: ServerTruth): void {
+  if (state.phase === "upcardOffer" && !state.upcardOffer) {
+    state.phase = "play";
+  }
+}
+
 export function applyIntent(state: ServerTruth, intent: Intent, rng: () => number): ApplyOutcome {
   const s = cloneState(state);
+  repairPhase(s);
 
   if (s.phase === "matchOver") {
     return { ok: false, error: "Match is over" };

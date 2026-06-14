@@ -11,7 +11,7 @@ import {
   type Intent,
   type ServerTruth,
 } from "../../rules/src/index.js";
-import { computeTestBotIntent, hasTestBotWork } from "./bot.js";
+import { computeTestBotIntent, fallbackTestBotIntent, hasTestBotWork } from "./bot.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
 import { detectHandEpisodeClose, moveAnalyticsFields, stampDealStartMoveSeq } from "./handEpisode.js";
 
@@ -199,13 +199,24 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
 
     const intent = computeTestBotIntent(state);
     if (!intent) {
-      app.log.warn({ gameId, phase: state.phase, turn: state.currentTurn }, "Test bot: no intent");
+      app.log.warn(
+        { gameId, phase: state.phase, turn: state.currentTurn, botHand: state.hands[1]?.length },
+        "Test bot: no intent",
+      );
       return;
     }
     const prevState = state;
-    const outcome = applyIntent(state, intent, rng());
+    let activeIntent = intent;
+    let outcome = applyIntent(state, activeIntent, rng());
     if (!outcome.ok) {
-      app.log.warn({ gameId, err: outcome.error, intent: intent.type }, "Test bot: illegal intent");
+      const fallback = fallbackTestBotIntent(state, activeIntent);
+      if (fallback) {
+        activeIntent = fallback;
+        outcome = applyIntent(state, activeIntent, rng());
+      }
+    }
+    if (!outcome.ok) {
+      app.log.warn({ gameId, err: outcome.error, intent: activeIntent.type }, "Test bot: illegal intent");
       return;
     }
     state = outcome.state;
@@ -214,16 +225,28 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
 
     const nextStatus: "active" | "completed" = state.phase === "matchOver" ? "completed" : "active";
     try {
-      state = await recordMoveAndEpisode(gameId, prevState, state, intent, seq, handId, null);
+      state = await recordMoveAndEpisode(gameId, prevState, state, activeIntent, seq, handId, null);
     } catch (e) {
       app.log.error({ gameId, err: e instanceof Error ? e.message : e }, "Test bot: move log failed");
       return;
     }
 
-    const { error: uErr } = await admin
+    const expectedPrevSeq = seq - 1;
+    const { data: updated, error: uErr } = await admin
       .from("games")
       .update({ server_truth: state, move_seq: seq, current_hand_id: handId, status: nextStatus })
-      .eq("id", gameId);
+      .eq("id", gameId)
+      .eq("move_seq", expectedPrevSeq)
+      .select("id")
+      .maybeSingle();
+    if (uErr) {
+      app.log.error({ gameId, err: uErr.message }, "Test bot: state update failed");
+      return;
+    }
+    if (!updated) {
+      app.log.warn({ gameId, seq: expectedPrevSeq }, "Test bot: move_seq conflict — will retry on next poll");
+      return;
+    }
     if (lobbyId && state.phase === "matchOver") {
       await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
     }

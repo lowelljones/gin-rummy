@@ -1,4 +1,4 @@
-import { isBigGin11, type Intent, type ServerTruth, type Seat } from "../../rules/src/index.js";
+import { isBigGin11, type CardId, type Intent, type ServerTruth, type Seat } from "../../rules/src/index.js";
 
 const TEST_BOT_SEAT: Seat = 1;
 
@@ -21,6 +21,16 @@ function cutActivePicker(cut: NonNullable<ServerTruth["cut"]>): Seat {
   if (p0 === null) return 0;
   if (p1 === null) return 1;
   return first;
+}
+
+/** Match engine repair: down-card phase without an offer object is treated as play. */
+function botPlayPhase(state: ServerTruth): boolean {
+  return state.phase === "play" || (state.phase === "upcardOffer" && !state.upcardOffer);
+}
+
+function plainDiscardIntent(hand: CardId[]): Intent {
+  const card = hand[hand.length - 1]!;
+  return { type: "discard", seat: TEST_BOT_SEAT, card, knock: false, gin: false };
 }
 
 export function computeTestBotIntent(state: ServerTruth): Intent | null {
@@ -48,7 +58,7 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
     return { type: "upcardPass", seat: TEST_BOT_SEAT };
   }
 
-  if (state.phase === "play") {
+  if (botPlayPhase(state)) {
     const hand = state.hands[TEST_BOT_SEAT];
     if (hand.length === 10) {
       if (state.stock.length <= 1) {
@@ -60,8 +70,7 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
       if (isBigGin11(hand)) {
         return { type: "declareBigGin", seat: TEST_BOT_SEAT };
       }
-      const drawn = hand[hand.length - 1]!;
-      return { type: "discard", seat: TEST_BOT_SEAT, card: drawn, knock: false, gin: false };
+      return plainDiscardIntent(hand);
     }
   }
 
@@ -74,18 +83,14 @@ export function computeTestBotIntent(state: ServerTruth): Intent | null {
 }
 
 export function hasTestBotWork(state: ServerTruth): boolean {
-  if (state.phase === "matchOver") return false;
-  /* Ack the bot's own seat once; the human's Continue still gates the next deal. */
-  if (state.phase === "handOver") {
-    const acks = state.handOverAcks;
-    return !!acks && !acks[TEST_BOT_SEAT];
-  }
-  if (state.redeal?.status === "pending" && state.redeal.fromSeat !== TEST_BOT_SEAT) return true;
-  if (state.phase === "cutForDeal" && state.cut) {
-    if (state.cut.picks[TEST_BOT_SEAT] !== null) return false;
-    return cutActivePicker(state.cut) === TEST_BOT_SEAT;
-  }
-  if (state.currentTurn === TEST_BOT_SEAT) return true;
-  return false;
+  return computeTestBotIntent(state) !== null;
 }
 
+/** If EO declaration fails, fall back to a plain discard so the bot never stalls at 11. */
+export function fallbackTestBotIntent(state: ServerTruth, failed: Intent): Intent | null {
+  if (failed.type !== "declareBigGin") return null;
+  if (!botPlayPhase(state) || state.currentTurn !== TEST_BOT_SEAT) return null;
+  const hand = state.hands[TEST_BOT_SEAT];
+  if (hand.length !== 11) return null;
+  return plainDiscardIntent(hand);
+}

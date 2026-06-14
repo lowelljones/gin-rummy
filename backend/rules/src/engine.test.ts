@@ -1207,3 +1207,19 @@ describe("deck played through (last stock card reserved)", () => {
     expect(next.state.voidFlash).toBeNull();
   });
 });
+
+describe("phase repair after void/redeal", () => {
+  it("treats upcardOffer phase without an offer object as play so turns can continue", () => {
+    const s = makeUpcardOfferState();
+    s.upcardOffer = null;
+    s.hands[1].push("3D");
+    s.currentTurn = 1;
+
+    const out = applyIntent(s, { type: "discard", seat: 1, card: "3D", knock: false, gin: false }, () => 0.5);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.phase).toBe("play");
+    expect(out.state.hands[1]).toHaveLength(10);
+    expect(out.state.currentTurn).toBe(0);
+  });
+});
