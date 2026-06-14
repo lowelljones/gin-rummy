@@ -38,6 +38,8 @@ function makePlayState(opts: {
     scores: opts.scores ?? [0, 0],
     handsWon: opts.handsWon ?? [0, 0],
     raceTarget: 125,
+    dealIndex: 0,
+    currentDeal: null,
     stock: [...opts.stock],
     discard: [...opts.discard],
     hands: [[...opts.hand0], [...opts.hand1]],
@@ -1155,6 +1157,34 @@ describe("deck played through (last stock card reserved)", () => {
     expect(disc.state.lastHandWinner).toBe(1);
     expect(disc.state.lastHandPoints).toBeGreaterThan(0);
     expect(disc.state.voidFlash ?? null).toBeNull();
+  });
+
+  it("increments dealIndex when the deck is played through", () => {
+    const s = makePlayState({
+      hand0: ["2S", "3S", "4S", "5H", "6H", "7H", "8C", "8D", "8H", "8S"],
+      hand1: ["9S", "TS", "JS", "QC", "QD", "QH", "2D", "3D", "4C", "5C"],
+      stock: ["6D"],
+      discard: ["KS", "KD"],
+      knockCheckCard: "KS",
+    });
+    s.dealIndex = 0;
+    s.currentDeal = {
+      dealIndex: 0,
+      handIndex: s.handIndex,
+      dealer: s.dealer,
+      nonDealer: s.nonDealer,
+      knockCheckCard: "KS",
+      openingHands: [[...s.hands[0]], [...s.hands[1]]],
+      scoresAtStart: [0, 0],
+    };
+    s.currentTurn = 1;
+    const out = applyIntent(s, { type: "passStock", seat: 1 }, () => 0.99);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.state.dealIndex).toBe(1);
+    expect(out.state.handIndex).toBe(0);
+    expect(out.state.currentDeal?.dealIndex).toBe(1);
+    expect(out.state.currentDeal?.openingHands[0]).toHaveLength(10);
   });
 
   it("clears voidFlash on the next intent", () => {

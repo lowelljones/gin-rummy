@@ -13,6 +13,7 @@ import {
 } from "../../rules/src/index.js";
 import { computeTestBotIntent, hasTestBotWork } from "./bot.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
+import { detectHandEpisodeClose, moveAnalyticsFields, stampDealStartMoveSeq } from "./handEpisode.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
 /* Railway's internal healthcheck and service-to-service network is IPv6, so when running
@@ -124,6 +125,48 @@ async function ensureHand(gameId: string, truth: ServerTruth): Promise<string> {
   return inserted!.id as string;
 }
 
+async function recordMoveAndEpisode(
+  gameId: string,
+  prevTruth: ServerTruth,
+  newTruth: ServerTruth,
+  intent: Intent,
+  moveSeq: number,
+  handId: string,
+  actorUserId: string | null,
+): Promise<ServerTruth> {
+  let truth = stampDealStartMoveSeq(newTruth, moveSeq);
+  const analytics = moveAnalyticsFields(prevTruth, intent);
+  const perspectives = buildPerspectives(truth);
+  const { error: mErr } = await admin.from("game_moves").insert({
+    game_id: gameId,
+    hand_id: handId,
+    seq: moveSeq,
+    actor_user_id: actorUserId,
+    intent_type: intent.type,
+    intent_payload: intent as unknown as Record<string, unknown>,
+    server_truth: truth as unknown as Record<string, unknown>,
+    perspectives: perspectives as unknown as Record<string, unknown>,
+    actor_seat: analytics.actor_seat,
+    deal_index: analytics.deal_index,
+    hand_index: analytics.hand_index,
+    phase: analytics.phase,
+    stock_count: analytics.stock_count,
+  });
+  if (mErr) throw new Error(mErr.message);
+
+  const episode = detectHandEpisodeClose(gameId, prevTruth, truth, intent, moveSeq);
+  if (!episode) return truth;
+
+  const { error: eErr } = await admin.from("hand_episodes").insert(episode);
+  if (eErr) {
+    app.log.warn(
+      { gameId, err: eErr.message, outcome: episode.outcome, dealIndex: episode.deal_index },
+      "hand_episodes insert failed",
+    );
+  }
+  return truth;
+}
+
 async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number }) {
   const { data: row, error } = await admin
     .from("games")
@@ -159,6 +202,7 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
       app.log.warn({ gameId, phase: state.phase, turn: state.currentTurn }, "Test bot: no intent");
       return;
     }
+    const prevState = state;
     const outcome = applyIntent(state, intent, rng());
     if (!outcome.ok) {
       app.log.warn({ gameId, err: outcome.error, intent: intent.type }, "Test bot: illegal intent");
@@ -169,30 +213,17 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
     const handId = await ensureHand(gameId, state);
 
     const nextStatus: "active" | "completed" = state.phase === "matchOver" ? "completed" : "active";
+    try {
+      state = await recordMoveAndEpisode(gameId, prevState, state, intent, seq, handId, null);
+    } catch (e) {
+      app.log.error({ gameId, err: e instanceof Error ? e.message : e }, "Test bot: move log failed");
+      return;
+    }
+
     const { error: uErr } = await admin
       .from("games")
       .update({ server_truth: state, move_seq: seq, current_hand_id: handId, status: nextStatus })
       .eq("id", gameId);
-    if (uErr) {
-      app.log.error(uErr);
-      return;
-    }
-
-    const perspectives = buildPerspectives(state);
-    const { error: mErr } = await admin.from("game_moves").insert({
-      game_id: gameId,
-      hand_id: handId,
-      seq,
-      actor_user_id: null,
-      intent_type: intent.type,
-      intent_payload: intent as unknown as Record<string, unknown>,
-      server_truth: state as unknown as Record<string, unknown>,
-      perspectives: perspectives as unknown as Record<string, unknown>,
-    });
-    if (mErr) {
-      app.log.error(mErr);
-      return;
-    }
     if (lobbyId && state.phase === "matchOver") {
       await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
     }
@@ -1194,6 +1225,7 @@ app.post("/games/:id/move", async (req, reply) => {
     return reply.code(400).send({ error: e instanceof Error ? e.message : "Bad intent" });
   }
   const truth = game.server_truth as ServerTruth;
+  const prevTruth = truth;
   const outcome = applyIntent(truth, scoped, rng());
 
   if (!outcome.ok) return reply.code(400).send({ error: outcome.error });
@@ -1203,30 +1235,22 @@ app.post("/games/:id/move", async (req, reply) => {
   const handId = await ensureHand(id, newTruth);
 
   const humanStatus: "active" | "completed" = newTruth.phase === "matchOver" ? "completed" : "active";
+  let finalTruth: ServerTruth;
+  try {
+    finalTruth = await recordMoveAndEpisode(id, prevTruth, newTruth, scoped, nextSeq, handId, user.id);
+  } catch (e) {
+    return reply.code(500).send({ error: e instanceof Error ? e.message : "Move log failed" });
+  }
+
   await admin
     .from("games")
     .update({
-      server_truth: newTruth,
+      server_truth: finalTruth,
       move_seq: nextSeq,
       current_hand_id: handId,
       status: humanStatus,
     })
     .eq("id", id);
-
-  const perspectives = buildPerspectives(newTruth);
-
-  const { error: mErr } = await admin.from("game_moves").insert({
-    game_id: id,
-    hand_id: handId,
-    seq: nextSeq,
-    actor_user_id: user.id,
-    intent_type: scoped.type,
-    intent_payload: scoped as unknown as Record<string, unknown>,
-    server_truth: newTruth as unknown as Record<string, unknown>,
-    perspectives: perspectives as unknown as Record<string, unknown>,
-  });
-
-  if (mErr) return reply.code(500).send({ error: mErr.message });
 
   if (newTruth.phase === "matchOver") {
     const lobbyId = (game as { lobby_id?: string }).lobby_id;

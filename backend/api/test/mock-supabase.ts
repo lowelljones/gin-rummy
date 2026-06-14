@@ -28,6 +28,7 @@ const tables: Record<string, Row[]> = {
   lobby_players: [],
   games: [],
   hands: [],
+  hand_episodes: [],
   game_moves: [],
   game_chat_messages: [],
 };

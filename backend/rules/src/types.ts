@@ -44,6 +44,25 @@ export interface HandResult {
 /** How a seat picked up the card that brought them to 11 (attached to their discard). */
 export type PickupKind = "drawStock" | "takeDiscard" | "takeDownCard";
 
+/** Snapshot of the deal currently in progress (for analytics / hand_episodes). */
+export interface CurrentDealSnapshot {
+  dealIndex: number;
+  handIndex: number;
+  dealer: Seat;
+  nonDealer: Seat;
+  knockCheckCard: CardId | null;
+  openingHands: [CardId[], CardId[]];
+  scoresAtStart: [number, number];
+  /** First game_moves.seq of this deal; set by the API on the deal's first move. */
+  startedAtMoveSeq?: number | null;
+}
+
+/** Terminal outcome for a single deal attempt (hand_episodes.outcome). */
+export type HandEpisodeOutcome =
+  | HandResult["kind"]
+  | "playedThrough"
+  | "mutualRedeal";
+
 /**
  * Server-authoritative record of the most recent draw/take/pass/discard. Both
  * clients build their activity log from this instead of diffing polled
@@ -81,6 +100,10 @@ export interface ServerTruth {
   version: 1;
   phase: Phase;
   handIndex: number;
+  /** Monotonic deal counter within the match; increments on every new shuffle. */
+  dealIndex: number;
+  /** Opening layout for the active deal; set when cards are dealt. */
+  currentDeal?: CurrentDealSnapshot | null;
   /** Winner of previous hand deals; for hand 0 set after cut. */
   dealer: Seat;
   /** Non-dealer; first to act on upcard / leads play. */

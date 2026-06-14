@@ -21,7 +21,15 @@ import {
   scoreGin,
   validateKnockerLayout,
 } from "./scoring.js";
-import type { ApplyOutcome, HandResult, Intent, LastAction, Seat, ServerTruth } from "./types.js";
+import type {
+  ApplyOutcome,
+  CurrentDealSnapshot,
+  HandResult,
+  Intent,
+  LastAction,
+  Seat,
+  ServerTruth,
+} from "./types.js";
 import type { Partition } from "./melds.js";
 
 function cloneState(s: ServerTruth): ServerTruth {
@@ -60,6 +68,8 @@ export function createNewMatch(_seed: string, rng: () => number): ServerTruth {
     version: 1,
     phase: "cutForDeal",
     handIndex: 0,
+    dealIndex: 0,
+    currentDeal: null,
     dealer: 0,
     nonDealer: 1,
     scores: [0, 0],
@@ -115,8 +125,22 @@ function makeHandResult(
   return { kind, closer, sides, layoffs: layoffs.map((l) => ({ ...l })) };
 }
 
+function snapshotCurrentDeal(state: ServerTruth): CurrentDealSnapshot {
+  return {
+    dealIndex: state.dealIndex,
+    handIndex: state.handIndex,
+    dealer: state.dealer,
+    nonDealer: state.nonDealer,
+    knockCheckCard: state.knockCheckCard,
+    openingHands: [[...state.hands[0]], [...state.hands[1]]],
+    scoresAtStart: [...state.scores] as [number, number],
+    startedAtMoveSeq: null,
+  };
+}
+
 /** Same hand number and dealer; fresh shuffle and back to down-card (upcard) phase. */
 function voidAndRedeal(state: ServerTruth, rng: () => number): void {
+  state.dealIndex += 1;
   state.seenBy = {};
   state.knock = null;
   state.upcardOffer = null;
@@ -197,6 +221,7 @@ function dealHandFromPile(state: ServerTruth, pile: CardId[]): CardId {
   }
   /* Knock limit for the whole hand: the first / only upcard to the table (fixed even if later taken into a hand). */
   state.knockCheckCard = up;
+  state.currentDeal = snapshotCurrentDeal(state);
   return up;
 }
 
@@ -274,6 +299,7 @@ function maybeStartNextHand(state: ServerTruth, rng: () => number) {
   if (matchWinnerSeat(state.scores, state.raceTarget) !== null) return;
 
   state.handIndex += 1;
+  state.dealIndex += 1;
   state.dealer = winner;
   state.upcardOffer = null;
   state.knockCheckCard = null;
