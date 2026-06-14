@@ -386,7 +386,7 @@ struct SessionRecapResponse: Codable {
     }
 }
 
-struct SessionMatchRecapDTO: Codable, Identifiable, Equatable {
+struct SessionMatchRecapDTO: Codable, Identifiable {
     let matchNumber: Int
     let gameId: String
     let status: String

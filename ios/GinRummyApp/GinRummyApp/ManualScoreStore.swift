@@ -1,0 +1,137 @@
+import Foundation
+
+/// Locally persisted in-person score sheet (no server).
+struct ManualScoreSession: Codable, Equatable {
+    var id: UUID
+    var weName: String
+    var theyName: String
+    var games: [ManualScoreGame]
+    var updatedAt: Date
+
+    static func fresh() -> ManualScoreSession {
+        ManualScoreSession(
+            id: UUID(),
+            weName: "You",
+            theyName: "Opponent",
+            games: [ManualScoreGame.fresh(number: 1)],
+            updatedAt: Date()
+        )
+    }
+}
+
+struct ManualScoreGame: Codable, Equatable, Identifiable {
+    var id: UUID
+    var number: Int
+    var hands: [ManualScoreHand]
+    /// Signed box result for the We player (+3, -2, …). Nil until entered.
+    var weBox: Int?
+    var theyBox: Int?
+    var isLive: Bool
+
+    static func fresh(number: Int, live: Bool = true) -> ManualScoreGame {
+        ManualScoreGame(
+            id: UUID(),
+            number: number,
+            hands: [ManualScoreHand.fresh()],
+            weBox: nil,
+            theyBox: nil,
+            isLive: live
+        )
+    }
+
+    func totalWe() -> Int {
+        hands.compactMap(\.wePoints).reduce(0, +)
+    }
+
+    func totalThey() -> Int {
+        hands.compactMap(\.theyPoints).reduce(0, +)
+    }
+}
+
+struct ManualScoreHand: Codable, Equatable, Identifiable {
+    var id: UUID
+    var wePoints: Int?
+    var theyPoints: Int?
+
+    static func fresh() -> ManualScoreHand {
+        ManualScoreHand(id: UUID(), wePoints: nil, theyPoints: nil)
+    }
+}
+
+@MainActor
+final class ManualScoreStore: ObservableObject {
+    @Published private(set) var session: ManualScoreSession
+
+    private static let storageKey = "gin.manualScoreSession.v1"
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.storageKey),
+           let loaded = try? JSONDecoder().decode(ManualScoreSession.self, from: data) {
+            session = loaded
+        } else {
+            session = .fresh()
+            persist()
+        }
+    }
+
+    func resetSession() {
+        session = .fresh()
+        persist()
+    }
+
+    func updateNames(we: String, they: String) {
+        session.weName = we.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "You" : we
+        session.theyName = they.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Opponent" : they
+        touch()
+    }
+
+    func addHand(to gameId: UUID) {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }) else { return }
+        session.games[gi].hands.append(.fresh())
+        touch()
+    }
+
+    func addGame() {
+        for i in session.games.indices {
+            session.games[i].isLive = false
+        }
+        let n = (session.games.map(\.number).max() ?? 0) + 1
+        session.games.append(.fresh(number: n, live: true))
+        touch()
+    }
+
+    func setHandPoints(gameId: UUID, handId: UUID, we: Int?, they: Int?) {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }),
+              let hi = session.games[gi].hands.firstIndex(where: { $0.id == handId }) else { return }
+        session.games[gi].hands[hi].wePoints = we
+        session.games[gi].hands[hi].theyPoints = they
+        touch()
+    }
+
+    func setBox(gameId: UUID, we: Int?, they: Int?) {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }) else { return }
+        session.games[gi].weBox = we
+        session.games[gi].theyBox = they
+        touch()
+    }
+
+    func netBox(forWePlayer: Bool) -> Int {
+        session.games.reduce(0) { sum, game in
+            sum + (forWePlayer ? (game.weBox ?? 0) : (game.theyBox ?? 0))
+        }
+    }
+
+    func maxHandRows() -> Int {
+        max(session.games.map(\.hands.count).max() ?? 1, 1)
+    }
+
+    private func touch() {
+        session.updatedAt = Date()
+        persist()
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        UserDefaults.standard.set(data, forKey: Self.storageKey)
+    }
+}

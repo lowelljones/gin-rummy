@@ -16,6 +16,8 @@ struct LobbyView: View {
                     switch route {
                     case .instructions:
                         InstructionsView()
+                    case .manualScore:
+                        ManualScorecardView()
                     case .joinEnter:
                         JoinLobbyEnterCodeView(path: $path)
                             .environmentObject(app)
@@ -64,6 +66,11 @@ struct LobbyView: View {
                     }
                     .buttonStyle(GinGhostButtonStyle())
                     .disabled(busy || app.accessToken == nil)
+
+                    Button("Score a game") {
+                        path.append(LobbyRoute.manualScore)
+                    }
+                    .buttonStyle(GinGhostButtonStyle())
 
                     Button("How to play") {
                         path.append(LobbyRoute.instructions)

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Session scorecard styled like a paper gin-rummy sheet: player box rows, per-game We/They
-/// hand columns, and totals — for every match played in the same lobby sitting.
+/// Session scorecard: white grid on felt, cells sized so text sits inside the lines.
 struct ScorecardView: View {
     @EnvironmentObject private var app: AppModel
     let inviteCode: String?
@@ -12,8 +11,9 @@ struct ScorecardView: View {
     @State private var loadError: String?
     @State private var busy = false
 
-    private let cellMinWidth: CGFloat = 44
-    private let labelWidth: CGFloat = 72
+    private let contentInset: CGFloat = 16
+    private let minDisplayGameColumns = 4
+    private let cellPaddingH: CGFloat = 6
 
     var body: some View {
         NavigationStack {
@@ -35,7 +35,6 @@ struct ScorecardView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(GinRummyPalette.bgDeep.opacity(0.98))
             .navigationTitle("Scorecard")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -43,32 +42,95 @@ struct ScorecardView: View {
                     Button("Done") { dismiss() }
                         .foregroundStyle(GinRummyPalette.gold)
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Task { await loadRecap() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(busy)
-                    .accessibilityLabel("Refresh scorecard")
-                }
             }
-            .task { await loadRecap() }
+            .onAppear { Task { await loadRecap() } }
+            .onDisappear {
+                recap = nil
+                loadError = nil
+                busy = false
+            }
         }
         .ginFeltChrome()
     }
+
+    // MARK: - Layout model
+
+    private struct DisplayColumn: Identifiable {
+        let id: Int
+        let match: SessionMatchRecapDTO?
+        var isPlaceholder: Bool { match == nil }
+        var title: String { "Game \((match?.matchNumber ?? id + 1))" }
+        var isLive: Bool { match?.isCurrent ?? false }
+    }
+
+    private struct GridMetrics {
+        let gridWidth: CGFloat
+        let gridHeight: CGFloat
+        let labelWidth: CGFloat
+        let gamesWidth: CGFloat
+        let gameColumnWidth: CGFloat
+        let halfColumnWidth: CGFloat
+        let rowHeight: CGFloat
+
+        init(contentWidth: CGFloat, gridHeight: CGFloat, columnCount: Int, sectionRows: CGFloat) {
+            let safeWidth = max(0, contentWidth)
+            let safeHeight = max(0, gridHeight)
+            gridWidth = safeWidth
+            self.gridHeight = safeHeight
+            labelWidth = max(0, floor(safeWidth * 0.26))
+            gamesWidth = max(0, safeWidth - labelWidth)
+            gameColumnWidth = max(0, floor(gamesWidth / CGFloat(max(columnCount, 1))))
+            halfColumnWidth = max(0, floor(gameColumnWidth / 2))
+            rowHeight = max(36, floor(safeHeight / max(sectionRows, 1)))
+        }
+    }
+
+    private func displayColumns(from matches: [SessionMatchRecapDTO]) -> [DisplayColumn] {
+        let count = max(matches.count, minDisplayGameColumns)
+        return (0 ..< count).map { i in
+            DisplayColumn(id: i, match: i < matches.count ? matches[i] : nil)
+        }
+    }
+
+    // MARK: - Content
 
     @ViewBuilder
     private func scorecardContent(_ recap: SessionRecapResponse) -> some View {
         let mySeat = recap.players.first(where: { $0.isSelf })?.seat ?? 0
         let matches = recap.matches
+        let columns = displayColumns(from: matches)
 
-        ScrollView([.horizontal, .vertical]) {
+        GeometryReader { geo in
+            let contentWidth = max(0, geo.size.width - contentInset * 2)
+            let realMaxHands = matches.map(\.handScores.count).max() ?? 0
+            let handRows = max(realMaxHands, 1)
+            // box header + 2 players + game row + we/they row + hands + 3 footer rows
+            let sectionRows: CGFloat = 3 + 2 + 1 + CGFloat(handRows) + 3
+            let metrics = GridMetrics(
+                contentWidth: contentWidth,
+                gridHeight: max(0, geo.size.height - 96),
+                columnCount: columns.count,
+                sectionRows: sectionRows
+            )
+
             VStack(spacing: 0) {
                 scorecardHeader()
-                scorecardSheet(recap: recap, mySeat: mySeat, matches: matches)
+                    .padding(.horizontal, contentInset)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+
+                scorecardGrid(
+                    recap: recap,
+                    mySeat: mySeat,
+                    matches: matches,
+                    columns: columns,
+                    metrics: metrics,
+                    realMaxHands: realMaxHands,
+                    handRows: handRows
+                )
+                .padding(.horizontal, contentInset)
             }
-            .padding(16)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
     }
 
@@ -77,7 +139,7 @@ struct ScorecardView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("GIN RUMMY")
-                    .font(GinRummyPalette.titleFont(size: 22))
+                    .font(GinRummyPalette.titleFont(size: 24))
                     .foregroundStyle(GinRummyPalette.cream)
                     .tracking(2.5)
                 Text("Score sheet")
@@ -87,257 +149,528 @@ struct ScorecardView: View {
             }
             Spacer(minLength: 8)
             Image(systemName: "suit.spade.fill")
-                .font(.system(size: 32, weight: .medium))
+                .font(.system(size: 34, weight: .medium))
                 .foregroundStyle(GinRummyPalette.gold)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
-    private func scorecardSheet(
+    private func scorecardGrid(
         recap: SessionRecapResponse,
         mySeat: Int,
-        matches: [SessionMatchRecapDTO]
+        matches: [SessionMatchRecapDTO],
+        columns: [DisplayColumn],
+        metrics: GridMetrics,
+        realMaxHands: Int,
+        handRows: Int
     ) -> some View {
         let playerRows = playerLabels(recap: recap, mySeat: mySeat)
-        let maxHands = matches.map(\.handScores.count).max() ?? 0
 
         VStack(spacing: 0) {
-            // Player box rows (betting +/- per game)
             boxBettingSection(
                 matches: matches,
                 playerRows: playerRows,
-                mySeat: mySeat
+                metrics: metrics
             )
 
-            gridDivider(thick: true)
+            sectionDivider
 
-            // Hand-by-hand We / They grid
             handGridSection(
+                columns: columns,
                 matches: matches,
-                maxHands: maxHands,
-                mySeat: mySeat
+                handRows: handRows,
+                realMaxHands: realMaxHands,
+                mySeat: mySeat,
+                metrics: metrics
             )
 
-            gridDivider(thick: true)
+            Spacer(minLength: 0)
 
-            // Totals footer
+            sectionDivider
+
             totalsSection(
+                columns: columns,
                 matches: matches,
                 playerRows: playerRows,
                 mySeat: mySeat,
-                totals: recap.totals
+                totals: recap.totals,
+                metrics: metrics
             )
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(GinRummyPalette.cream.opacity(0.97))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(GinRummyPalette.burgundy.opacity(0.72), lineWidth: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(GinRummyPalette.burgundy.opacity(0.45), lineWidth: 1)
-                .padding(3)
-        )
-        .colorScheme(.light)
+        .frame(width: metrics.gridWidth, height: metrics.gridHeight, alignment: .top)
+        .overlay(gridOuterBorder)
     }
 
-    // MARK: - Box betting rows
+    // MARK: - Box betting
 
     @ViewBuilder
     private func boxBettingSection(
         matches: [SessionMatchRecapDTO],
         playerRows: [(seat: Int, label: String)],
-        mySeat: Int
+        metrics: GridMetrics
     ) -> some View {
-        HStack(spacing: 0) {
-            cornerCell("Players")
-            ForEach(matches) { match in
-                gameHeaderCell(match: match)
-            }
+        let h = metrics.rowHeight
+
+        gridRow(height: h) {
+            labelCell("Players", width: metrics.labelWidth, height: h, bold: true)
+            valueCell(
+                "Game Totals",
+                width: metrics.gamesWidth,
+                height: h,
+                alignment: .leading,
+                style: .muted,
+                uppercase: true
+            )
         }
 
         ForEach(playerRows, id: \.seat) { row in
-            HStack(spacing: 0) {
-                labelCell(row.label, bold: true)
-                ForEach(matches) { match in
-                    boxCell(for: match, seat: row.seat)
-                }
+            gridRow(height: h) {
+                labelCell(row.label, width: metrics.labelWidth, height: h, bold: true)
+                boxTotalsCell(matches: matches, seat: row.seat, width: metrics.gamesWidth, height: h)
             }
-            .overlay(gridDivider(), alignment: .bottom)
         }
     }
 
     @ViewBuilder
-    private func boxCell(for match: SessionMatchRecapDTO, seat: Int) -> some View {
-        let text: String
-        if let bucket = match.bettingBucket, let winner = match.winnerSeat {
-            if winner == seat {
-                text = "+\(bucket)"
+    private func boxTotalsCell(
+        matches: [SessionMatchRecapDTO],
+        seat: Int,
+        width: CGFloat,
+        height: CGFloat
+    ) -> some View {
+        HStack(spacing: 0) {
+            if matches.isEmpty {
+                numericText("…", style: .muted)
+                    .frame(width: width, height: height)
             } else {
-                text = "-\(bucket)"
+                ForEach(Array(matches.enumerated()), id: \.element.id) { idx, match in
+                    let slotW = slotWidth(index: idx, count: matches.count, totalWidth: width)
+                    let text = boxCellText(for: match, seat: seat)
+                    numericText(text, style: scoreStyle(for: text))
+                        .frame(width: slotW, height: height, alignment: .center)
+                }
             }
-        } else if match.isCurrent {
-            text = "…"
-        } else {
-            text = "—"
         }
-        dataCell(text, emphasized: match.bettingBucket != nil, compact: true)
-            .frame(minWidth: cellMinWidth * 2)
-            .overlay(gridDividerVertical(), alignment: .trailing)
+        .frame(width: width, height: height)
+        .overlay(cellBorder(right: true))
+    }
+
+    private func slotWidth(index: Int, count: Int, totalWidth: CGFloat) -> CGFloat {
+        guard count > 0 else { return totalWidth }
+        let base = floor(totalWidth / CGFloat(count))
+        let remainder = totalWidth - base * CGFloat(count)
+        return index == count - 1 ? base + remainder : base
+    }
+
+    private func boxCellText(for match: SessionMatchRecapDTO, seat: Int) -> String {
+        if let bucket = match.bettingBucket, let winner = match.winnerSeat {
+            return winner == seat ? "+\(bucket)" : "-\(bucket)"
+        }
+        if match.isCurrent { return "…" }
+        return "—"
     }
 
     // MARK: - Hand grid
 
     @ViewBuilder
     private func handGridSection(
+        columns: [DisplayColumn],
         matches: [SessionMatchRecapDTO],
-        maxHands: Int,
-        mySeat: Int
+        handRows: Int,
+        realMaxHands: Int,
+        mySeat: Int,
+        metrics: GridMetrics
     ) -> some View {
-        HStack(spacing: 0) {
-            cornerCell("")
-            ForEach(matches) { match in
-                weTheyHeader(match: match)
+        let h = metrics.rowHeight
+        let gcw = metrics.gameColumnWidth
+        let hcw = metrics.halfColumnWidth
+
+        gridRow(height: h) {
+            labelCell("", width: metrics.labelWidth, height: h)
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                gameHeaderCell(
+                    column: col,
+                    width: columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth),
+                    height: h
+                )
             }
         }
 
-        if maxHands == 0 {
-            HStack(spacing: 0) {
-                labelCell("No scored hands yet", bold: false)
-                ForEach(matches) { _ in
-                    weTheyEmptyCell()
-                }
+        gridRow(height: h) {
+            labelCell("", width: metrics.labelWidth, height: h)
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                weTheyPairHeader(
+                    column: col,
+                    width: columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth),
+                    halfWidth: hcw,
+                    height: h
+                )
             }
-        } else {
-            ForEach(0 ..< maxHands, id: \.self) { row in
-                HStack(spacing: 0) {
-                    let anyHand = matches.compactMap { $0.handScores.indices.contains(row) ? $0.handScores[row] : nil }.first
-                    let handLabel = anyHand.map { "Hand \($0.handIndex + 1)" } ?? "Hand \(row + 1)"
-                    labelCell(handLabel, bold: false)
-                    ForEach(matches) { match in
-                        handRowCell(match: match, row: row, mySeat: mySeat)
+        }
+
+        ForEach(0 ..< handRows, id: \.self) { row in
+            gridRow(height: h) {
+                labelCell(
+                    handRowLabel(matches: matches, row: row, realMaxHands: realMaxHands),
+                    width: metrics.labelWidth,
+                    height: h
+                )
+                ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                    let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
+                    if let match = col.match {
+                        weTheyDataPair(
+                            we: handWePoints(match: match, row: row, mySeat: mySeat),
+                            they: handTheyPoints(match: match, row: row, mySeat: mySeat),
+                            width: colW,
+                            halfWidth: hcw,
+                            height: h,
+                            empty: row >= match.handScores.count,
+                            live: col.isLive
+                        )
+                    } else {
+                        emptyWeTheyPair(width: colW, halfWidth: hcw, height: h, placeholder: true)
                     }
                 }
-                .overlay(gridDivider(), alignment: .bottom)
             }
         }
     }
 
-    @ViewBuilder
-    private func weTheyEmptyCell() -> some View {
-        HStack(spacing: 0) {
-            dataCell("—", compact: true)
-            dataCell("—", compact: true, trailing: true)
-        }
-        .overlay(Rectangle().frame(width: 1).foregroundStyle(gridLineColor), alignment: .leading)
+    private func columnWidth(index: Int, count: Int, columnWidth: CGFloat, gamesWidth: CGFloat) -> CGFloat {
+        let base = columnWidth
+        let remainder = gamesWidth - base * CGFloat(count)
+        return index == count - 1 ? base + remainder : base
     }
 
-    @ViewBuilder
-    private func weTheyHeader(match: SessionMatchRecapDTO) -> some View {
-        HStack(spacing: 0) {
-            subHeaderCell("We")
-            subHeaderCell("They", trailing: true)
-        }
-        .overlay(Rectangle().frame(width: 1).foregroundStyle(gridLineColor), alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func handRowCell(
-        match: SessionMatchRecapDTO,
-        row: Int,
-        mySeat: Int
-    ) -> some View {
-        let hand = row < match.handScores.count ? match.handScores[row] : nil
-        let wePoints = hand.flatMap { pointsForSelf(hand: $0, mySeat: mySeat) }
-        let theyPoints = hand.flatMap { pointsForOpponent(hand: $0, mySeat: mySeat) }
-
-        HStack(spacing: 0) {
-            dataCell(wePoints.map(String.init) ?? "", compact: true)
-            dataCell(theyPoints.map(String.init) ?? "", compact: true, trailing: true)
-        }
-        .overlay(Rectangle().frame(width: 1).foregroundStyle(gridLineColor), alignment: .leading)
-    }
-
-    private func pointsForSelf(hand: HandScoreRecapDTO, mySeat: Int) -> Int? {
-        guard hand.winnerSeat == mySeat else { return nil }
-        return hand.pointsAwarded
-    }
-
-    private func pointsForOpponent(hand: HandScoreRecapDTO, mySeat: Int) -> Int? {
-        guard hand.winnerSeat != mySeat else { return nil }
-        return hand.pointsAwarded
+    private func handRowLabel(matches: [SessionMatchRecapDTO], row: Int, realMaxHands: Int) -> String {
+        if realMaxHands == 0 && row == 0 { return "Hands" }
+        guard row < realMaxHands else { return "" }
+        let anyHand = matches.compactMap { m in
+            m.handScores.indices.contains(row) ? m.handScores[row] : nil
+        }.first
+        if let anyHand { return "Hand \(anyHand.handIndex + 1)" }
+        return "Hand \(row + 1)"
     }
 
     // MARK: - Totals
 
     @ViewBuilder
     private func totalsSection(
+        columns: [DisplayColumn],
         matches: [SessionMatchRecapDTO],
         playerRows: [(seat: Int, label: String)],
         mySeat: Int,
-        totals: SessionTotalsDTO
+        totals: SessionTotalsDTO,
+        metrics: GridMetrics
     ) -> some View {
-        HStack(spacing: 0) {
-            labelCell("Total", bold: true)
-            ForEach(matches) { match in
-                totalCell(match: match, mySeat: mySeat)
-            }
-        }
-        .overlay(gridDivider(), alignment: .bottom)
-
-        HStack(spacing: 0) {
-            labelCell("Box", bold: true)
-            ForEach(matches) { match in
-                let bucketText = match.bettingBucket.map(String.init) ?? (match.isCurrent ? "…" : "—")
-                dataCell(bucketText, emphasized: match.bettingBucket != nil, compact: true)
-                    .frame(minWidth: cellMinWidth * 2)
-                    .overlay(gridDividerVertical(), alignment: .trailing)
-            }
-        }
-        .overlay(gridDivider(thick: true), alignment: .bottom)
-
-        // Net boxes row spanning full width
+        let h = metrics.rowHeight
+        let gcw = metrics.gameColumnWidth
+        let hcw = metrics.halfColumnWidth
         let myNet = netBoxes(for: mySeat, matches: matches)
-        let oppSeat = 1 - mySeat
-        let oppNet = netBoxes(for: oppSeat, matches: matches)
+        let oppNet = netBoxes(for: 1 - mySeat, matches: matches)
 
-        HStack(spacing: 0) {
-            labelCell("Net boxes", bold: true)
-            VStack(alignment: .leading, spacing: 2) {
+        gridRow(height: h) {
+            labelCell("Total", width: metrics.labelWidth, height: h, bold: true)
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
+                if let match = col.match {
+                    weTheyDataPair(
+                        we: String(myScore(in: match, seat: mySeat)),
+                        they: String(myScore(in: match, seat: 1 - mySeat)),
+                        width: colW,
+                        halfWidth: hcw,
+                        height: h,
+                        empty: false,
+                        live: col.isLive,
+                        emphasized: true
+                    )
+                } else {
+                    emptyWeTheyPair(width: colW, halfWidth: hcw, height: h, placeholder: true)
+                }
+            }
+        }
+
+        gridRow(height: h) {
+            labelCell("Box", width: metrics.labelWidth, height: h, bold: true)
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
+                if let match = col.match {
+                    valueCell(
+                        boxBucketLabel(for: match),
+                        width: colW,
+                        height: h,
+                        style: match.bettingBucket != nil ? .score : .muted,
+                        live: col.isLive
+                    )
+                } else {
+                    valueCell("", width: colW, height: h, style: .placeholder, placeholder: true)
+                }
+            }
+        }
+
+        gridRow(height: h) {
+            labelCell("Net", width: metrics.labelWidth, height: h, bold: true)
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(playerRows, id: \.seat) { row in
                     let net = row.seat == mySeat ? myNet : oppNet
-                    Text("\(row.label) · \(signed(net))")
+                    Text("\(row.label)  \(signed(net))")
                         .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(scoreInk)
+                        .foregroundStyle(scoreColor(for: signed(net)))
                 }
                 if totals.completedMatches > 0 {
-                    Text("Session · \(totals.totalBuckets) boxes · \(totals.totalBettingRaw) raw")
+                    Text("\(totals.completedMatches) games · \(totals.totalBuckets) boxes")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(scoreInk.opacity(0.75))
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, cellPaddingH + 2)
+            .frame(width: metrics.gamesWidth, height: h, alignment: .leading)
+            .overlay(cellBorder(right: true))
         }
-        .background(GinRummyPalette.gold.opacity(0.22))
+    }
+
+    // MARK: - Cell primitives
+
+    private enum CellTextStyle {
+        case label, muted, score, placeholder
+
+        var color: Color {
+            switch self {
+            case .label: GinRummyPalette.cream.opacity(0.95)
+            case .muted: GinRummyPalette.sage.opacity(0.9)
+            case .score: GinRummyPalette.cream.opacity(0.95)
+            case .placeholder: GinRummyPalette.sage.opacity(0.25)
+            }
+        }
+    }
+
+    private func scoreStyle(for text: String) -> CellTextStyle {
+        if text.hasPrefix("+") { return .score }
+        if text.hasPrefix("-") { return .score }
+        if text == "…" || text == "—" { return .muted }
+        return .score
+    }
+
+    private func scoreColor(for text: String) -> Color {
+        if text.hasPrefix("+") { return GinRummyPalette.gold }
+        if text.hasPrefix("-") { return Color(red: 0.95, green: 0.55, blue: 0.52) }
+        return GinRummyPalette.cream.opacity(0.95)
     }
 
     @ViewBuilder
-    private func totalCell(match: SessionMatchRecapDTO, mySeat: Int) -> some View {
-        let myScore = match.scores.count > mySeat ? match.scores[mySeat] : 0
-        let theirScore = match.scores.count > (1 - mySeat) ? match.scores[1 - mySeat] : 0
+    private func gridRow(height: CGFloat, @ViewBuilder content: () -> some View) -> some View {
         HStack(spacing: 0) {
-            dataCell("\(myScore)", emphasized: true, compact: true)
-            dataCell("\(theirScore)", emphasized: true, compact: true, trailing: true)
+            content()
         }
-        .overlay(Rectangle().frame(width: 1).foregroundStyle(gridLineColor), alignment: .leading)
+        .frame(height: height)
+        .overlay(rowDivider, alignment: .bottom)
+    }
+
+    @ViewBuilder
+    private func labelCell(_ text: String, width: CGFloat, height: CGFloat, bold: Bool = false) -> some View {
+        Text(text)
+            .font(bold ? .caption.weight(.semibold) : .caption2)
+            .foregroundStyle(bold ? CellTextStyle.label.color : CellTextStyle.muted.color)
+            .lineLimit(2)
+            .minimumScaleFactor(0.75)
+            .padding(.horizontal, cellPaddingH)
+            .frame(width: width, height: height, alignment: .leading)
+            .overlay(cellBorder(right: true))
+    }
+
+    @ViewBuilder
+    private func valueCell(
+        _ text: String,
+        width: CGFloat,
+        height: CGFloat,
+        alignment: Alignment = .center,
+        style: CellTextStyle = .score,
+        uppercase: Bool = false,
+        live: Bool = false,
+        placeholder: Bool = false
+    ) -> some View {
+        ZStack {
+            if live { liveColumnTint }
+            Text(uppercase ? text.uppercased() : (text.isEmpty ? " " : text))
+                .font(.caption2.weight(style == .muted ? .bold : .regular))
+                .foregroundStyle(placeholder ? CellTextStyle.placeholder.color : style.color)
+                .multilineTextAlignment(alignment == .leading ? .leading : .center)
+                .padding(.horizontal, cellPaddingH)
+                .frame(width: width, height: height, alignment: alignment)
+        }
+        .frame(width: width, height: height)
+        .overlay(cellBorder(right: true))
+    }
+
+    @ViewBuilder
+    private func numericText(_ text: String, style: CellTextStyle) -> some View {
+        Text(text.isEmpty ? " " : text)
+            .font(.caption.weight(.semibold).monospacedDigit())
+            .foregroundStyle(style == .score ? scoreColor(for: text) : style.color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+
+    @ViewBuilder
+    private func gameHeaderCell(column: DisplayColumn, width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            if column.isLive, !column.isPlaceholder { liveColumnTint }
+            VStack(spacing: 2) {
+                Text(column.title)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(column.isPlaceholder ? CellTextStyle.placeholder.color : CellTextStyle.label.color)
+                if column.isLive, !column.isPlaceholder {
+                    Text("LIVE")
+                        .font(.system(size: 8, weight: .heavy))
+                        .tracking(0.5)
+                        .foregroundStyle(GinRummyPalette.gold)
+                }
+            }
+            .frame(width: width, height: height)
+        }
+        .frame(width: width, height: height)
+        .overlay(cellBorder(right: true))
+    }
+
+    @ViewBuilder
+    private func weTheyPairHeader(column: DisplayColumn, width: CGFloat, halfWidth: CGFloat, height: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            subHeaderCell("We", width: halfWidth, height: height, muted: column.isPlaceholder)
+            subHeaderCell("They", width: max(0, width - halfWidth), height: height, muted: column.isPlaceholder)
+        }
+        .frame(width: width, height: height)
+        .overlay(cellBorder(right: true))
+        .background(column.isLive && !column.isPlaceholder ? liveColumnTint : nil)
+    }
+
+    @ViewBuilder
+    private func subHeaderCell(_ title: String, width: CGFloat, height: CGFloat, muted: Bool) -> some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(muted ? CellTextStyle.placeholder.color : CellTextStyle.muted.color)
+            .frame(width: width, height: height)
+            .overlay(cellBorder(right: true))
+    }
+
+    @ViewBuilder
+    private func weTheyDataPair(
+        we: String,
+        they: String,
+        width: CGFloat,
+        halfWidth: CGFloat,
+        height: CGFloat,
+        empty: Bool,
+        live: Bool,
+        emphasized: Bool = false
+    ) -> some View {
+        HStack(spacing: 0) {
+            dataCell(
+                empty ? "" : we,
+                width: halfWidth,
+                height: height,
+                emphasized: emphasized,
+                placeholder: empty && we.isEmpty
+            )
+            dataCell(
+                empty ? "" : they,
+                width: max(0, width - halfWidth),
+                height: height,
+                emphasized: emphasized,
+                placeholder: empty && they.isEmpty
+            )
+        }
+        .frame(width: width, height: height)
+        .overlay(cellBorder(right: true))
+        .background(live ? liveColumnTint : nil)
+    }
+
+    @ViewBuilder
+    private func emptyWeTheyPair(width: CGFloat, halfWidth: CGFloat, height: CGFloat, placeholder: Bool) -> some View {
+        weTheyDataPair(
+            we: "",
+            they: "",
+            width: width,
+            halfWidth: halfWidth,
+            height: height,
+            empty: true,
+            live: false
+        )
+        .opacity(placeholder ? 0.55 : 1)
+    }
+
+    @ViewBuilder
+    private func dataCell(
+        _ text: String,
+        width: CGFloat,
+        height: CGFloat,
+        emphasized: Bool = false,
+        placeholder: Bool = false
+    ) -> some View {
+        Text(text.isEmpty ? " " : text)
+            .font(emphasized ? .caption.weight(.bold).monospacedDigit() : .caption.monospacedDigit())
+            .foregroundStyle(placeholder ? CellTextStyle.placeholder.color : scoreColor(for: text))
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(width: width, height: height, alignment: .center)
+            .overlay(cellBorder(right: true))
+    }
+
+    private var liveColumnTint: Color {
+        GinRummyPalette.gold.opacity(0.06)
+    }
+
+    @ViewBuilder
+    private func cellBorder(right: Bool) -> some View {
+        if right {
+            Rectangle()
+                .fill(lineColor.opacity(0.32))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private var rowDivider: some View {
+        Rectangle()
+            .fill(lineColor.opacity(0.28))
+            .frame(height: 1)
+    }
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(lineColor.opacity(0.42))
+            .frame(height: 1.5)
+    }
+
+    private var gridOuterBorder: some View {
+        Rectangle()
+            .strokeBorder(lineColor.opacity(0.5), lineWidth: 1.5)
+    }
+
+    private var lineColor: Color { GinRummyPalette.cream }
+
+    // MARK: - Helpers
+
+    private func handWePoints(match: SessionMatchRecapDTO, row: Int, mySeat: Int) -> String {
+        guard row < match.handScores.count else { return "" }
+        let hand = match.handScores[row]
+        guard hand.winnerSeat == mySeat else { return "" }
+        return String(hand.pointsAwarded)
+    }
+
+    private func handTheyPoints(match: SessionMatchRecapDTO, row: Int, mySeat: Int) -> String {
+        guard row < match.handScores.count else { return "" }
+        let hand = match.handScores[row]
+        guard hand.winnerSeat != mySeat else { return "" }
+        return String(hand.pointsAwarded)
+    }
+
+    private func myScore(in match: SessionMatchRecapDTO, seat: Int) -> Int {
+        guard match.scores.indices.contains(seat) else { return 0 }
+        return match.scores[seat]
+    }
+
+    private func boxBucketLabel(for match: SessionMatchRecapDTO) -> String {
+        match.bettingBucket.map(String.init) ?? (match.isCurrent ? "…" : "—")
     }
 
     private func netBoxes(for seat: Int, matches: [SessionMatchRecapDTO]) -> Int {
@@ -346,103 +679,6 @@ struct ScorecardView: View {
             return sum + (winner == seat ? bucket : -bucket)
         }
     }
-
-    // MARK: - Grid cells
-
-    private var scoreInk: Color { GinRummyPalette.navy.opacity(0.92) }
-    private var gridLineColor: Color { GinRummyPalette.navy.opacity(0.18) }
-    private var headerFill: Color { GinRummyPalette.bgPanel.opacity(0.12) }
-
-    @ViewBuilder
-    private func cornerCell(_ text: String) -> some View {
-        Text(text)
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(scoreInk.opacity(0.8))
-            .textCase(.uppercase)
-            .frame(width: labelWidth, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-            .background(headerFill)
-            .overlay(gridDividerVertical(), alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private func gameHeaderCell(match: SessionMatchRecapDTO) -> some View {
-        VStack(spacing: 2) {
-            Text("Game \(match.matchNumber)")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(scoreInk)
-            if match.isCurrent {
-                Text("live")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(GinRummyPalette.burgundy)
-            }
-        }
-        .frame(minWidth: cellMinWidth * 2)
-        .padding(.vertical, 6)
-        .background(headerFill)
-        .overlay(gridDividerVertical(), alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private func subHeaderCell(_ title: String, trailing: Bool = false) -> some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(scoreInk.opacity(0.85))
-            .frame(minWidth: cellMinWidth)
-            .padding(.vertical, 5)
-            .background(headerFill.opacity(0.85))
-            .overlay(gridDividerVertical(), alignment: trailing ? .trailing : .leading)
-    }
-
-    @ViewBuilder
-    private func labelCell(_ text: String, bold: Bool) -> some View {
-        Text(text)
-            .font(bold ? .caption.weight(.bold) : .caption2)
-            .foregroundStyle(scoreInk.opacity(bold ? 0.95 : 0.8))
-            .lineLimit(2)
-            .minimumScaleFactor(0.75)
-            .frame(width: labelWidth, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(bold ? headerFill.opacity(0.5) : Color.clear)
-            .overlay(gridDividerVertical(), alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private func dataCell(
-        _ text: String,
-        emphasized: Bool = false,
-        compact: Bool = false,
-        trailing: Bool = false
-    ) -> some View {
-        Text(text.isEmpty ? " " : text)
-            .font(emphasized ? .caption.weight(.semibold).monospacedDigit() : .caption.monospacedDigit())
-            .foregroundStyle(
-                text.hasPrefix("+") ? GinRummyPalette.bgDeep :
-                text.hasPrefix("-") ? GinRummyPalette.burgundy :
-                scoreInk
-            )
-            .frame(minWidth: compact ? cellMinWidth : cellMinWidth * 2)
-            .padding(.vertical, 5)
-            .overlay(gridDividerVertical(), alignment: trailing ? .trailing : .leading)
-    }
-
-    @ViewBuilder
-    private func gridDivider(thick: Bool = false) -> some View {
-        Rectangle()
-            .fill(GinRummyPalette.navy.opacity(thick ? 0.28 : 0.15))
-            .frame(height: thick ? 1.5 : 1)
-    }
-
-    @ViewBuilder
-    private func gridDividerVertical() -> some View {
-        Rectangle()
-            .fill(gridLineColor)
-            .frame(width: 1)
-    }
-
-    // MARK: - Helpers
 
     private func playerLabels(recap: SessionRecapResponse, mySeat: Int) -> [(seat: Int, label: String)] {
         let seat0Name = recap.players.first(where: { $0.seat == 0 })?.displayName ?? "Player 1"
@@ -463,6 +699,7 @@ struct ScorecardView: View {
         await MainActor.run {
             busy = true
             loadError = nil
+            recap = nil
         }
         defer { Task { @MainActor in busy = false } }
         do {

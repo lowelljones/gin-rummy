@@ -79,12 +79,8 @@ struct SessionRecapView: View {
 
     @ViewBuilder
     private func sessionHeader(_ recap: SessionRecapResponse) -> some View {
-        let seat0 = recap.players.first(where: { $0.seat == 0 })?.displayName ?? "Seat 0"
-        let seat1 = recap.players.first(where: { $0.seat == 1 })?.displayName
-            ?? (recap.players.count == 1 ? app.opponentDisplayName : "Seat 1")
-
         VStack(alignment: .leading, spacing: 8) {
-            Text("\(seat0) vs \(seat1)")
+            Text("\(playerName(recap: recap, seat: 0)) vs \(playerName(recap: recap, seat: 1))")
                 .font(.title3.bold())
                 .foregroundStyle(GinRummyPalette.cream)
             Text("Match wins · \(recap.totals.matchWins[0]) – \(recap.totals.matchWins[1])")
@@ -104,7 +100,6 @@ struct SessionRecapView: View {
 
     @ViewBuilder
     private func matchCard(_ match: SessionMatchRecapDTO, players: [LobbyPlayerDTO]) -> some View {
-        let mySeat = players.first(where: { $0.isSelf })?.seat
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Match \(match.matchNumber)")
@@ -122,7 +117,7 @@ struct SessionRecapView: View {
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
 
             if let winner = match.winnerSeat {
-                Text(winnerLabel(winner: winner, mySeat: mySeat, players: players))
+                Text(winnerLabel(winner: winner, mySeat: players.first(where: { $0.isSelf })?.seat, players: players))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(GinRummyPalette.gold)
             }
@@ -182,27 +177,26 @@ struct SessionRecapView: View {
         )
     }
 
-    @ViewBuilder
-    private func statusBadge(_ match: SessionMatchRecapDTO) -> some View {
-        let label: String
-        let color: Color
+    private func statusBadgeInfo(for match: SessionMatchRecapDTO) -> (label: String, color: Color) {
         switch match.status {
         case "active":
-            label = match.isCurrent ? "In progress" : "Active"
-            color = GinRummyPalette.sage
+            return (match.isCurrent ? "In progress" : "Active", GinRummyPalette.sage)
         case "abandoned":
-            label = "Abandoned"
-            color = GinRummyPalette.burgundy.opacity(0.9)
+            return ("Abandoned", GinRummyPalette.burgundy.opacity(0.9))
         default:
-            label = "Complete"
-            color = GinRummyPalette.gold
+            return ("Complete", GinRummyPalette.gold)
         }
-        Text(label)
+    }
+
+    @ViewBuilder
+    private func statusBadge(_ match: SessionMatchRecapDTO) -> some View {
+        let info = statusBadgeInfo(for: match)
+        Text(info.label)
             .font(.caption2.weight(.bold))
             .foregroundStyle(GinRummyPalette.navy)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.92)))
+            .background(Capsule().fill(info.color.opacity(0.92)))
     }
 
     @ViewBuilder
@@ -234,6 +228,16 @@ struct SessionRecapView: View {
                 .font(emphasized ? .caption.weight(.semibold).monospacedDigit() : .caption.monospacedDigit())
         }
         .foregroundStyle(GinRummyPalette.cream.opacity(emphasized ? 1 : 0.92))
+    }
+
+    private func playerName(recap: SessionRecapResponse, seat: Int) -> String {
+        if let name = recap.players.first(where: { $0.seat == seat })?.displayName {
+            return name
+        }
+        if seat == 1, recap.players.count == 1 {
+            return app.opponentDisplayName
+        }
+        return "Seat \(seat)"
     }
 
     private func winnerLabel(winner: Int, mySeat: Int?, players: [LobbyPlayerDTO]) -> String {

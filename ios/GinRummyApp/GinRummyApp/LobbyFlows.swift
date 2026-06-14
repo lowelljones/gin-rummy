@@ -16,6 +16,7 @@ enum LobbyRoute: Hashable {
     /// polling caught up — and a guest never saw whose lobby they were in.
     case wait(code: String, isHost: Bool)
     case instructions
+    case manualScore
 }
 
 struct InstructionsView: View {
