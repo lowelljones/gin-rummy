@@ -198,7 +198,14 @@ final class AppModel: ObservableObject {
             let resp = try await api.refreshSession(refreshToken: rt)
             adoptSession(resp)
         } catch {
-            /* Refresh failed (token revoked / network down) — drop the session so AuthView can show. */
+            if error is URLError {
+                /* Transient connectivity — keep the session and retry later instead
+                 * of dumping the user back to the sign-in screen while offline. */
+                lastError = UserFeedback.from(error)
+                return
+            }
+            /* Token revoked / invalid — drop the session and tell the user why. */
+            lastError = "Your session expired, so you’ve been signed out. Please sign in again."
             signOut()
         }
     }

@@ -50,21 +50,106 @@ enum CardIdValidation {
 
 enum UserFeedback {
     static func from(_ error: Error) -> String {
-        if case APIError.badStatus(let code, let body) = error {
-            if let s = parseErrorField(from: body) { return s }
-            if code == 400 { return "The server couldn’t do that. \(body.count > 200 ? String(body.prefix(200)) + "…" : body)" }
+        if let urlError = error as? URLError {
+            return message(for: urlError)
         }
-        if case APIError.decoding(let e) = error { return "Couldn’t read response: \(e.localizedDescription)" }
-        if case APIError.invalidURL = error { return "Invalid server URL. Check GIN_API_BASE_URL." }
-        return String(describing: error)
+        if case APIError.badStatus(let code, let body) = error {
+            // Prefer a specific message the server (or Supabase) gave us.
+            if let s = parseErrorField(from: body) { return s }
+            return statusMessage(code: code, body: body)
+        }
+        if case APIError.decoding = error {
+            return "We couldn’t read the server’s response. Please try again."
+        }
+        if case APIError.invalidURL = error {
+            return "The app is pointed at an invalid server address. Check GIN_API_BASE_URL."
+        }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            return "Network problem. Check your connection and try again."
+        }
+        return "Something went wrong. Please try again."
+    }
+
+    /// Friendly, actionable copy for connectivity failures.
+    private static func message(for error: URLError) -> String {
+        switch error.code {
+        case .notConnectedToInternet:
+            return "You’re offline. Check your internet connection and try again."
+        case .timedOut:
+            return "The server took too long to respond. Check your connection and try again."
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost:
+            return "Can’t reach the game server right now. Try again in a moment."
+        case .secureConnectionFailed, .serverCertificateUntrusted:
+            return "Secure connection to the server failed. Try again."
+        default:
+            return "Network problem. Check your connection and try again."
+        }
+    }
+
+    /// Maps HTTP status codes to plain-language guidance when the body has no
+    /// usable message.
+    private static func statusMessage(code: Int, body: String) -> String {
+        switch code {
+        case 400:
+            let trimmed = body.count > 200 ? String(body.prefix(200)) + "…" : body
+            return trimmed.isEmpty
+                ? "That request couldn’t be completed. Please try again."
+                : "The server couldn’t do that. \(trimmed)"
+        case 401:
+            return "Your session has expired. Please sign in again."
+        case 403:
+            return "You’re not allowed to do that here."
+        case 404:
+            return "We couldn’t find that — it may have ended or expired."
+        case 408:
+            return "The request timed out. Please try again."
+        case 409:
+            return "That conflicts with the current game state. Refresh and try again."
+        case 429:
+            return "You’re going a bit fast — wait a moment and try again."
+        case 500...599:
+            return "The server hit a problem. Please try again in a moment."
+        default:
+            return "Something went wrong (error \(code)). Please try again."
+        }
     }
 
     private static func parseErrorField(from body: String) -> String? {
         guard let data = body.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        if let e = obj["error"] as? String, !e.isEmpty { return e }
+        // Map known Supabase/auth machine codes to friendly copy first.
+        if let code = (obj["error_code"] as? String) ?? (obj["code"] as? String) ?? (obj["error"] as? String),
+           let mapped = authMessage(for: code) {
+            return mapped
+        }
+        if let d = obj["error_description"] as? String, !d.isEmpty { return d }
+        if let m = obj["msg"] as? String, !m.isEmpty { return m }
+        // Node API errors are human phrases (e.g. "Lobby not found"); show as-is.
+        if let e = obj["error"] as? String, !e.isEmpty, !e.contains("_") { return e }
         if let m = obj["message"] as? String, !m.isEmpty, !m.contains("FST_ERR_") { return m }
         return nil
+    }
+
+    private static func authMessage(for code: String) -> String? {
+        switch code.lowercased() {
+        case "invalid_grant", "invalid_credentials":
+            return "Incorrect email or password. Double-check them and try again."
+        case "email_exists", "user_already_exists":
+            return "That email already has an account. Try signing in instead."
+        case "weak_password":
+            return "That password is too weak — use at least 6 characters."
+        case "over_email_send_rate_limit", "over_request_rate_limit":
+            return "Too many attempts. Wait a minute and try again."
+        case "email_not_confirmed":
+            return "Confirm your email first — check your inbox for the link."
+        case "signup_disabled":
+            return "New sign-ups are currently disabled."
+        case "validation_failed":
+            return "Please enter a valid email and password."
+        default:
+            return nil
+        }
     }
 }
 

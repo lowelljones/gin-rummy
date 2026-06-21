@@ -1106,6 +1106,56 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
   return payload;
 });
 
+/**
+ * Leave a not-yet-started lobby from the waiting room. The host leaving closes
+ * the lobby (so the guest's next poll sees `status: "closed"` and is told it
+ * ended); a guest leaving frees seat 1 and clears ready flags so the host isn't
+ * stuck with a phantom "both ready" state. No-ops once a game has started.
+ */
+app.post("/lobbies/:code/leave", async (req, reply) => {
+  const user = await userFromAuthHeader(req.headers.authorization);
+  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+
+  const code = (req.params as { code: string }).code.toUpperCase();
+  const { data: lobby, error: lErr } = await admin
+    .from("lobbies")
+    .select("id, invite_code, status, created_by")
+    .eq("invite_code", code)
+    .maybeSingle();
+  if (lErr || !lobby) return reply.code(404).send({ error: "Lobby not found" });
+
+  // Once the game has started, leaving is handled by the in-game leave flow.
+  if (lobby.status !== "open") {
+    return { ok: true, status: lobby.status };
+  }
+
+  const isHost = lobby.created_by === user.id;
+  const { data: membership } = await admin
+    .from("lobby_players")
+    .select("seat")
+    .eq("lobby_id", lobby.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (isHost) {
+    await admin
+      .from("lobbies")
+      .update({ status: "closed" })
+      .eq("id", lobby.id)
+      .eq("status", "open");
+  } else if (membership) {
+    await admin
+      .from("lobby_players")
+      .delete()
+      .eq("lobby_id", lobby.id)
+      .eq("user_id", user.id);
+    // Clear the host's ready flag so a new guest doesn't trip an instant start.
+    await admin.from("lobby_players").update({ ready: false }).eq("lobby_id", lobby.id);
+  }
+
+  return { ok: true, status: isHost ? "closed" : "open" };
+});
+
 app.post("/lobbies/:code/join", async (req, reply) => {
   const user = await userFromAuthHeader(req.headers.authorization);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });

@@ -61,6 +61,32 @@ enum PlayingCard {
     }
 }
 
+// MARK: - Card metrics (single source of truth for card sizing)
+
+/// Central place for card dimensions so sizes scale from the screen width
+/// instead of being hardcoded in views.
+enum CardMetrics {
+    /// Standard playing-card aspect (height / width).
+    static let aspect: CGFloat = 75.0 / 51.0
+
+    /// Default compact card width (piles, table, reveals).
+    static let compactWidth: CGFloat = 58
+    /// Default full-size card width.
+    static let fullWidth: CGFloat = 86
+
+    static func height(for width: CGFloat) -> CGFloat { (width * aspect).rounded() }
+
+    /// Width of each card in the player's full-bleed fanned hand. Cards overlap
+    /// so the fan reaches both screen edges; bigger hands pack tighter.
+    static func handCardWidth(availableWidth: CGFloat, count: Int) -> CGFloat {
+        let w = max(availableWidth, 1)
+        let n = max(count, 1)
+        // Allow overlap so the fan spans edge-to-edge regardless of count.
+        let target = w / (CGFloat(n) * 0.60 + 0.40)
+        return min(104, max(64, target))
+    }
+}
+
 // MARK: - Single card
 
 struct PlayingCardView: View {
@@ -68,14 +94,16 @@ struct PlayingCardView: View {
     var selected: Bool = false
     var faceDown: Bool = false
     var compact: Bool = false
+    /// Explicit width override; height derives from the standard card aspect.
+    var width: CGFloat? = nil
     var onTap: (() -> Void)? = nil
 
-    // Scale cards up for table readability.
-    private var cw: CGFloat { compact ? 51 : 78 }
-    private var ch: CGFloat { compact ? 75 : 114 }
-    private var rankFont: Font { compact ? .caption : .headline }
-    private var suitFont: Font { compact ? .body : .title2 }
-    private var pad: CGFloat { compact ? 3 : 5 }
+    private var cw: CGFloat { width ?? (compact ? CardMetrics.compactWidth : CardMetrics.fullWidth) }
+    private var ch: CGFloat { CardMetrics.height(for: cw) }
+    private var rankFont: Font { .system(size: cw * 0.22, weight: .semibold) }
+    private var cornerSuitFont: Font { .system(size: cw * 0.20, weight: .semibold) }
+    private var centerSuitFont: Font { .system(size: cw * 0.44, weight: .regular) }
+    private var pad: CGFloat { max(3, cw * 0.06) }
 
     private var cardBackGradient: LinearGradient {
         LinearGradient(
@@ -85,13 +113,15 @@ struct PlayingCardView: View {
         )
     }
 
+    private var corner: CGFloat { max(5, cw * 0.10) }
+
     private var cardBackFiligree: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: corner * 0.8)
                 .stroke(GinRummyPalette.gold.opacity(0.22), lineWidth: 1)
-                .padding(3)
+                .padding(pad)
             Image(systemName: "suit.spade.fill")
-                .font(compact ? .caption : .title3)
+                .font(.system(size: cw * 0.34))
                 .foregroundStyle(GinRummyPalette.gold.opacity(0.22))
         }
     }
@@ -99,27 +129,27 @@ struct PlayingCardView: View {
     var body: some View {
         Group {
             if faceDown {
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: corner)
                     .fill(cardBackGradient)
                     .overlay { cardBackFiligree.opacity(0.35) }
             } else {
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: corner)
                     .fill(GinRummyPalette.cream.opacity(0.97))
                     .overlay(
                         VStack(spacing: 0) {
                             HStack {
-                                VStack(alignment: .leading, spacing: compact ? 0 : 1) {
+                                VStack(alignment: .leading, spacing: cw * 0.02) {
                                     Text(PlayingCard.displayRank(card))
                                         .font(rankFont)
                                         .fontWeight(.semibold)
                                     Text(PlayingCard.suitSymbol(card))
-                                        .font(compact ? .caption2 : .subheadline)
+                                        .font(cornerSuitFont)
                                 }
                                 Spacer()
                             }
                             Spacer()
                             Text(PlayingCard.suitSymbol(card))
-                                .font(compact ? .title2 : .largeTitle)
+                                .font(centerSuitFont)
                         }
                         .padding(pad)
                     )
@@ -128,7 +158,7 @@ struct PlayingCardView: View {
         }
         .frame(width: cw, height: ch)
         .overlay(
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: corner)
                 .stroke(
                     selected ? GinRummyPalette.burgundy : GinRummyPalette.gold.opacity(0.42),
                     lineWidth: selected ? 2.5 : 1
@@ -171,20 +201,39 @@ struct MyHandCardGrid: View {
     }
 }
 
-/// Shared fan geometry: bottom-aligned fans that open *toward* the rest of the screen (pivot at bottom of each card).
+/// Shared fan geometry: a full-bleed, bottom-aligned fan that spans the row
+/// edge-to-edge. The leftmost card hugs the left edge and the rightmost hugs
+/// the right edge; cards overlap as the hand grows. Pivot is the card bottom.
 private enum CardFanLayout {
-    static func xStepMid(n: Int, width: CGFloat) -> (CGFloat, CGFloat) {
-        let w = max(width, 1)
-        let hPad: CGFloat = 4
-        let baseW: CGFloat = 40
-        let span = w - 2 * hPad - baseW
-        let step: CGFloat = n > 1 ? min(18, span / CGFloat(n - 1)) : 0
-        let mid = (CGFloat(n - 1) * step) / 2
-        return (step, mid)
+    static let hPad: CGFloat = 2
+
+    /// Card width that fits both the available width (overlap) and height.
+    static func cardWidth(n: Int, width: CGFloat, height: CGFloat) -> CGFloat {
+        let byWidth = CardMetrics.handCardWidth(availableWidth: max(width - 2 * hPad, 1), count: n)
+        // Leave a little vertical room for the fan arc / selection lift.
+        let byHeight = max((height - 10), 1) / CardMetrics.aspect
+        return max(44, min(byWidth, byHeight))
+    }
+
+    /// Horizontal center of card `i` measured from the row's left edge.
+    /// First/last centers sit a half-card in from each edge.
+    static func centerX(index i: Int, n: Int, width: CGFloat, cardW: CGFloat) -> CGFloat {
+        guard n > 1 else { return width / 2 }
+        let first = hPad + cardW / 2
+        let last = width - hPad - cardW / 2
+        let step = (last - first) / CGFloat(n - 1)
+        return first + CGFloat(i) * step
+    }
+
+    static func step(n: Int, width: CGFloat, cardW: CGFloat) -> CGFloat {
+        guard n > 1 else { return 0 }
+        let first = hPad + cardW / 2
+        let last = width - hPad - cardW / 2
+        return (last - first) / CGFloat(n - 1)
     }
 
     static func rotation(index i: Int, count n: Int) -> Double {
-        (Double(i) - 0.5 * Double(max(n - 1, 0))) * 2.5
+        (Double(i) - 0.5 * Double(max(n - 1, 0))) * 2.2
     }
 }
 
@@ -212,23 +261,23 @@ struct FannedHandRow: View {
             if displayOrder.isEmpty {
                 Text("—")
                     .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 GeometryReader { geo in
                     let effective = liveOrder ?? displayOrder
                     let n = effective.count
-                    let hPad: CGFloat = 4
-                    let (step, mid) = CardFanLayout.xStepMid(n: n, width: geo.size.width)
+                    let cardW = CardFanLayout.cardWidth(n: n, width: geo.size.width, height: geo.size.height)
+                    let step = CardFanLayout.step(n: n, width: geo.size.width, cardW: cardW)
                     ZStack(alignment: .bottom) {
                         ForEach(Array(effective.enumerated()), id: \.element) { pair in
-                            cardCell(c: pair.element, i: pair.offset, n: n, hPad: hPad, step: step, mid: mid)
+                            cardCell(c: pair.element, i: pair.offset, n: n, width: geo.size.width, cardW: cardW, step: step)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
-                .frame(height: 88)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 96, maxHeight: .infinity)
         .onChange(of: displayOrder) { _, _ in
             if liveOrder != nil { resetDragState() }
         }
@@ -236,9 +285,10 @@ struct FannedHandRow: View {
     }
 
     @ViewBuilder
-    private func cardCell(c: String, i: Int, n: Int, hPad: CGFloat, step: CGFloat, mid: CGFloat) -> some View {
+    private func cardCell(c: String, i: Int, n: Int, width: CGFloat, cardW: CGFloat, step: CGFloat) -> some View {
         let isDragging = (c == draggingId)
-        let baseX = hPad + CGFloat(i) * step - mid
+        // Offset from the ZStack's horizontal center to this card's target center.
+        let baseX = CardFanLayout.centerX(index: i, n: n, width: width, cardW: cardW) - width / 2
         let dragX: CGFloat = {
             guard isDragging, let from = dragStartIndex else { return 0 }
             return dragTranslation.width - CGFloat(i - from) * step
@@ -250,13 +300,14 @@ struct FannedHandRow: View {
             card: c,
             selected: selected == c,
             faceDown: c == "HIDDEN",
-            compact: true,
+            width: cardW,
             onTap: {
                 if c != "HIDDEN" { selected = selected == c ? nil : c }
             }
         )
         .rotationEffect(.degrees(isDragging ? 0 : restRot), anchor: .bottom)
         .scaleEffect(isDragging ? 1.08 : 1.0, anchor: .center)
+        .offset(y: selected == c && !isDragging ? -14 : 0)
         .shadow(
             color: isDragging ? Color.black.opacity(0.28) : .clear,
             radius: isDragging ? 10 : 0,
@@ -264,6 +315,7 @@ struct FannedHandRow: View {
         )
         .offset(x: baseX + dragX, y: dragY)
         .zIndex(isDragging ? 100 : Double(i))
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected == c)
         .gesture(
             makeReorderGesture(cardId: c, step: step),
             including: (canReorder && c != "HIDDEN") ? .all : .subviews
@@ -349,20 +401,19 @@ struct FannedOpponentHandRow: View {
             if cardCount == 0 {
                 Text("—")
                     .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 GeometryReader { geo in
                     let n = cardCount
-                    let hPad: CGFloat = 4
-                    let (step, mid) = CardFanLayout.xStepMid(n: n, width: geo.size.width)
+                    let cardW = CardFanLayout.cardWidth(n: n, width: geo.size.width, height: geo.size.height)
                     ZStack(alignment: .bottom) {
                         ForEach(0 ..< n, id: \.self) { i in
-                            let x = hPad + CGFloat(i) * step - mid
+                            let x = CardFanLayout.centerX(index: i, n: n, width: geo.size.width, cardW: cardW) - geo.size.width / 2
                             let rot = CardFanLayout.rotation(index: i, count: n)
                             PlayingCardView(
                                 card: "AS",
                                 faceDown: true,
-                                compact: true,
+                                width: cardW,
                                 onTap: nil
                             )
                             .rotationEffect(.degrees(rot), anchor: .bottom)
@@ -371,9 +422,9 @@ struct FannedOpponentHandRow: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
-                .frame(height: 88)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: .infinity)
     }
 }
 
@@ -467,14 +518,17 @@ struct StockAndDiscardPiles: View {
     /// When set, tapping the stock draws (play or upcard dealer draw).
     var stockOnTap: (() -> Void)? = nil
 
+    private var pileW: CGFloat { CardMetrics.compactWidth }
+    private var pileH: CGFloat { CardMetrics.height(for: pileW) }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
+        HStack(alignment: .center, spacing: 28) {
             VStack(spacing: 6) {
                 Button {
                     stockOnTap?()
                 } label: {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 5)
+                        RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
                             .fill(
                                 LinearGradient(
                                     colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.78)],
@@ -482,12 +536,12 @@ struct StockAndDiscardPiles: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .frame(width: 42, height: 62)
+                            .frame(width: pileW, height: pileH)
                         Image(systemName: "suit.spade.fill")
-                            .font(.caption)
+                            .font(.system(size: pileW * 0.34))
                             .foregroundStyle(GinRummyPalette.gold.opacity(0.28))
                         Text("\(max(0, stockCount))")
-                            .font(.caption.weight(.bold))
+                            .font(.headline.weight(.bold))
                             .monospacedDigit()
                             .foregroundStyle(GinRummyPalette.cream)
                     }
@@ -503,13 +557,13 @@ struct StockAndDiscardPiles: View {
                 if let d = discardTop, !d.isEmpty {
                     PlayingCardView(card: d, compact: true, onTap: discardOnTap)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 5)
+                            RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
                                 .stroke(discardOnTap == nil ? Color.clear : GinRummyPalette.gold.opacity(0.72), lineWidth: discardOnTap == nil ? 0 : 2)
                         )
                 } else {
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
                         .fill(GinRummyPalette.bgPanel.opacity(0.82))
-                        .frame(width: 51, height: 75)
+                        .frame(width: pileW, height: pileH)
                         .overlay { Text("—").foregroundStyle(GinRummyPalette.sage.opacity(0.85)) }
                 }
                 Text("Discard")
@@ -815,7 +869,8 @@ struct StaggeredCutResultBanner: View {
 
 // MARK: - Draw / discard flight (table → hand or hand → discard)
 
-/// Full-screen overlay: a card moves along a curved path with spin between canonical table zones.
+/// Full-screen overlay: a card slides in a straight line between canonical
+/// table zones with a gentle ease — like dealing a card, no spin or arc.
 struct CardFlightAnimationOverlay: View {
     enum Route: Equatable {
         case drawFromStock(toOpponent: Bool)
@@ -848,11 +903,10 @@ struct CardFlightAnimationOverlay: View {
             let h = g.size.height
             let from = point(fromAnchor: fromAnchor, width: w, height: h)
             let to = point(fromAnchor: toAnchor, width: w, height: h)
-            let arcX = sin(.pi * progress) * min(w, h) * 0.05
-            let cx = from.x + (to.x - from.x) * progress + arcX
+            let cx = from.x + (to.x - from.x) * progress
             let cy = from.y + (to.y - from.y) * progress
-            let spin = Double(progress) * 420
-            let wobble = Double(1 - progress) * 22 * (routeDiscardsToRight ? 1 : -1)
+            // Subtle settle as the card lands; no spin or arc.
+            let settle = 1 + 0.05 * sin(.pi * Double(progress))
 
             PlayingCardView(
                 card: displayCard,
@@ -861,23 +915,16 @@ struct CardFlightAnimationOverlay: View {
                 onTap: nil
             )
             .position(x: cx, y: cy)
-            .rotationEffect(.degrees(wobble + spin))
-            .scaleEffect(1 + 0.1 * sin(.pi * Double(progress)))
-            .shadow(color: Color.black.opacity(0.22), radius: progress > 0.1 ? 8 : 2, y: 5)
+            .scaleEffect(settle)
+            .shadow(color: Color.black.opacity(0.22), radius: 6, y: 4)
+            .opacity(progress < 0.03 ? 0 : 1)
         }
         .allowsHitTesting(false)
         .onAppear {
             progress = 0
-            withAnimation(.timingCurve(0.33, 0.0, 0.2, 1.0, duration: 0.62)) {
+            withAnimation(.timingCurve(0.2, 0.0, 0.1, 1.0, duration: 0.5)) {
                 progress = 1
             }
-        }
-    }
-
-    private var routeDiscardsToRight: Bool {
-        switch route {
-        case .discardFromHand: return true
-        case .drawFromStock, .drawFromDiscard: return false
         }
     }
 
@@ -905,17 +952,18 @@ struct CardFlightAnimationOverlay: View {
         }
     }
 
-    /// Normalized layout tuned for portrait table: stock left-of-center, discard right-of-center, hands top/bottom.
+    /// Normalized layout tuned for the redesigned portrait table: opponent strip
+    /// up top, stock/discard piles in the center, your hand along the bottom.
     private func point(fromAnchor a: Anchor, width: CGFloat, height: CGFloat) -> CGPoint {
         switch a {
         case .stock:
-            return CGPoint(x: width * 0.36, y: height * 0.46)
+            return CGPoint(x: width * 0.36, y: height * 0.45)
         case .discardPile:
-            return CGPoint(x: width * 0.64, y: height * 0.46)
+            return CGPoint(x: width * 0.64, y: height * 0.45)
         case .myHand:
-            return CGPoint(x: width * 0.44, y: height * 0.88)
+            return CGPoint(x: width * 0.5, y: height * 0.9)
         case .opponentHand:
-            return CGPoint(x: width * 0.44, y: height * 0.23)
+            return CGPoint(x: width * 0.5, y: height * 0.12)
         }
     }
 }

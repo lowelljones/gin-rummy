@@ -212,6 +212,9 @@ struct LobbyWaitingRoomView: View {
     /// Transient "Link copied" / "Code copied" feedback next to the copy buttons.
     @State private var copyConfirmation = ""
     @State private var copyConfirmationTask: Task<Void, Never>?
+    /// Set when the other player leaves the lobby (guest frees their seat, or the
+    /// host closes the lobby) so the remaining player is told instead of waiting.
+    @State private var opponentLeftMessage: String?
 
     private var normalizedCode: String { inviteCode.uppercased() }
 
@@ -279,6 +282,10 @@ struct LobbyWaitingRoomView: View {
                         .padding(.horizontal, 8)
                 }
 
+                if let msg = opponentLeftMessage {
+                    FeedbackLine(text: msg, isError: true, privateClubStyle: true)
+                }
+
                 if let hint = pollErrorHint {
                     FeedbackLine(text: hint, isError: true, privateClubStyle: true)
                 }
@@ -313,15 +320,38 @@ struct LobbyWaitingRoomView: View {
         .onDisappear {
             pollTask?.cancel()
             pollTask = nil
+            // Backing out of the waiting room (rather than entering the game)
+            // should release our lobby seat so the other player is notified.
+            if app.activeGameId == nil, let token = app.accessToken {
+                let code = normalizedCode
+                Task { try? await app.api.leaveLobby(code: code, token: token) }
+            }
         }
         .onChange(of: guestPresent) { _, joined in
-            if joined { notify(.light) }
+            if joined {
+                notify(.light)
+                opponentLeftMessage = nil
+            } else if isHost, status != nil {
+                opponentLeftMessage = "Your opponent left the lobby. Share the code again to invite someone new."
+            }
+        }
+        .onChange(of: status?.lobby.status) { _, newStatus in
+            if newStatus == "closed", !isHost, app.activeGameId == nil {
+                opponentLeftMessage = "The host left and closed this lobby. Head back and start or join another."
+            }
         }
         .onChange(of: opponent?.ready ?? false) { _, ready in
             if ready { notify(.medium) }
         }
         .onChange(of: status?.gameId) { _, gid in
             if gid != nil { notify(.success) }
+            // Belt-and-suspenders: the moment the lobby reports a startable game,
+            // transition — even if the poll loop's inline check was mid-sleep.
+            if app.activeGameId == nil,
+               let gameId = status?.gameIdToEnter,
+               let token = app.accessToken {
+                Task { await transitionToGame(gameId: gameId, token: token) }
+            }
         }
     }
 
@@ -730,7 +760,9 @@ struct LobbyWaitingRoomView: View {
                         pollErrorHint = "Can't refresh the lobby — \(UserFeedback.from(error))"
                     }
                 }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                // Poll briskly so the non-host enters the table within ~1s of both
+                // players readying up, instead of lingering on the ready screen.
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }

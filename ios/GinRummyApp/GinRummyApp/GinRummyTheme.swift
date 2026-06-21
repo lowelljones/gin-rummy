@@ -110,6 +110,64 @@ struct GinGhostButtonStyle: ButtonStyle {
     }
 }
 
+/// Compact action-bar button: filled (primary) or gold-outlined (secondary).
+/// Dims when disabled so the action bar reads clearly.
+struct GinActionButtonStyle: ButtonStyle {
+    var filled: Bool = true
+    var tint: Color = GinRummyPalette.burgundy
+
+    func makeBody(configuration: Configuration) -> some View {
+        Inner(configuration: configuration, filled: filled, tint: tint)
+    }
+
+    private struct Inner: View {
+        let configuration: Configuration
+        let filled: Bool
+        let tint: Color
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(filled ? GinRummyPalette.cream : tint)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(filled ? tint.opacity(configuration.isPressed ? 0.82 : 1) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(tint.opacity(filled ? 0 : 0.6), lineWidth: filled ? 0 : 1.4)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .opacity(isEnabled ? (configuration.isPressed ? 0.92 : 1) : 0.4)
+        }
+    }
+}
+
+/// Small capsule status chip used in the table status row and banners.
+struct GinStatusPill: View {
+    let text: String
+    var systemImage: String? = nil
+    var tint: Color = GinRummyPalette.gold
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+            }
+            Text(text)
+        }
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(GinRummyPalette.cream)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Capsule().fill(tint.opacity(0.18)))
+        .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 1))
+    }
+}
+
 struct GinOutlinedFieldModifier: ViewModifier {
     func body(content: Content) -> some View {
         content

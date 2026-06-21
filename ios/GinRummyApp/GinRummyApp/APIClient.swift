@@ -135,6 +135,17 @@ final class APIClient {
         try await request(path: "/lobbies/\(code)", method: "GET", token: token)
     }
 
+    /// Leave a not-yet-started lobby from the waiting room. Host leaving closes the
+    /// lobby; a guest leaving frees seat 1. Best-effort and idempotent on the server.
+    func leaveLobby(code: String, token: String) async throws {
+        struct LeaveResponse: Codable {
+            let ok: Bool?
+            let status: String?
+        }
+        let body = Data("{}".utf8)
+        let _: LeaveResponse = try await request(path: "/lobbies/\(code)/leave", method: "POST", token: token, body: body)
+    }
+
     /// Flip the caller's ready flag in the lobby waiting room. When both seats are
     /// ready the server auto-creates the game; the returned payload will then carry
     /// a non-null `gameId`, so a single round-trip can drop you straight onto the table.

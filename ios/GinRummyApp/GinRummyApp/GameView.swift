@@ -134,7 +134,12 @@ struct GameView: View {
 
     private func gamePlaySurface(for p: PlayerPerspective) -> GamePlaySurface {
         if p.phase == "cutForDeal", p.cut != nil { return .cutForDeal }
-        if isPostCutSequenceActive() { return .postCutReveal }
+        // The post-cut reveal only bridges the start of a hand (cut → first
+        // draw). End-of-hand phases must never be hidden behind a stale local
+        // interstitial/cutHold flag, or the defender's knock-layoff arrangement
+        // (and the hand/match results) silently never render for that player.
+        let isEndOfHandPhase = p.phase == "knockLayoff" || p.phase == "handOver" || p.phase == "matchOver"
+        if isPostCutSequenceActive(), !isEndOfHandPhase { return .postCutReveal }
         switch p.phase {
         case "upcardOffer": return .downCard
         case "play": return .play
@@ -213,66 +218,13 @@ struct GameView: View {
                     .foregroundStyle(GinRummyPalette.cream)
             }
         }
-        .navigationTitle("Table")
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showScorecard) {
             ScorecardView(
                 inviteCode: sessionLobbyCode,
                 gameId: app.activeGameId
             )
             .environmentObject(app)
-        }
-        .toolbar {
-            if app.activeGameId != nil {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showLeaveConfirm = true
-                    } label: {
-                        Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
-                            .labelStyle(.titleAndIcon)
-                            .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
-                    }
-                    .disabled(exitState != nil || app.lastPerspective?.phase == "matchOver")
-                    .accessibilityLabel("Leave game")
-                }
-                if sessionLobbyCode != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            showScorecard = true
-                        } label: {
-                            Label("Scorecard", systemImage: "tablecells")
-                                .labelStyle(.iconOnly)
-                                .foregroundStyle(GinRummyPalette.gold)
-                        }
-                        .accessibilityLabel("Scorecard")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showChatSheet = true
-                        chatUnreadCount = 0
-                        chatComposeError = nil
-                        if let gid = app.activeGameId {
-                            scheduleChatBaselineLoadOnce(gameId: gid)
-                        }
-                    } label: {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .foregroundStyle(GinRummyPalette.gold)
-                            if chatUnreadCount > 0 {
-                                Text(chatUnreadBadgeLabel)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, chatUnreadCount > 9 ? 5 : 0)
-                                    .frame(minWidth: 17, minHeight: 17)
-                                    .background(Color.red, in: Capsule())
-                                    .offset(x: 9, y: -7)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                    }
-                    .accessibilityLabel(chatToolbarAccessibilityLabel)
-                }
-            }
         }
         .confirmationDialog(
             "Leave this game?",
@@ -761,6 +713,197 @@ struct GameView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.gold.opacity(0.22)))
     }
 
+    // MARK: - Redesigned table chrome
+
+    /// Slim top strip that replaces the navigation bar: leave, opponent name,
+    /// scorecard, and chat — consistent with the lobby/scorecard look.
+    @ViewBuilder
+    private func tableTopBar(p: PlayerPerspective) -> some View {
+        HStack(spacing: 14) {
+            Button {
+                showLeaveConfirm = true
+            } label: {
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.title3)
+                    .foregroundStyle(GinRummyPalette.cream.opacity(0.85))
+            }
+            .disabled(exitState != nil || p.phase == "matchOver")
+            .accessibilityLabel("Leave game")
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.fill")
+                    .foregroundStyle(GinRummyPalette.gold.opacity(0.9))
+                    .symbolRenderingMode(.hierarchical)
+                Text(app.opponentDisplayName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if sessionLobbyCode != nil {
+                Button {
+                    showScorecard = true
+                } label: {
+                    Image(systemName: "tablecells")
+                        .font(.title3)
+                        .foregroundStyle(GinRummyPalette.gold)
+                }
+                .accessibilityLabel("Scorecard")
+            }
+            Button {
+                showChatSheet = true
+                chatUnreadCount = 0
+                chatComposeError = nil
+                if let gid = app.activeGameId {
+                    scheduleChatBaselineLoadOnce(gameId: gid)
+                }
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.title3)
+                        .foregroundStyle(GinRummyPalette.gold)
+                    if chatUnreadCount > 0 {
+                        Text(chatUnreadBadgeLabel)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, chatUnreadCount > 9 ? 5 : 0)
+                            .frame(minWidth: 17, minHeight: 17)
+                            .background(Color.red, in: Capsule())
+                            .offset(x: 9, y: -7)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+            .accessibilityLabel(chatToolbarAccessibilityLabel)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Compact score + turn pills, replacing the tall phase ribbon + score rail
+    /// during play and the down-card offer.
+    @ViewBuilder
+    private func compactStatusRow(surface: GamePlaySurface, p: PlayerPerspective) -> some View {
+        let yourTurn = p.currentTurn == p.seat
+        HStack(spacing: 8) {
+            GinStatusPill(
+                text: "\(p.scores[0]) – \(p.scores[1])",
+                systemImage: "rosette",
+                tint: GinRummyPalette.gold
+            )
+            GinStatusPill(
+                text: p.seat == p.dealer ? "You dealt" : "Opp dealt",
+                tint: GinRummyPalette.sage
+            )
+            Spacer(minLength: 0)
+            GinStatusPill(
+                text: yourTurn ? "Your turn" : "Their turn",
+                systemImage: yourTurn ? "hand.raised.fill" : "hourglass",
+                tint: yourTurn ? GinRummyPalette.sage : GinRummyPalette.navy
+            )
+        }
+        .padding(.horizontal, 14)
+    }
+
+    /// Fixed, scroll-free single-screen layout for the play and down-card surfaces.
+    @ViewBuilder
+    private func playingTable(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
+        VStack(spacing: 8) {
+            compactStatusRow(surface: surface, p: p)
+
+            Spacer(minLength: 0)
+
+            FannedOpponentHandRow(cardCount: p.hands[1 - p.seat].count)
+                .frame(height: 74)
+                .padding(.horizontal, 4)
+
+            Spacer(minLength: 0)
+
+            centerTableForSurface(gameId: gameId, surface: surface, p: p)
+                .padding(.horizontal, 14)
+
+            if !bottomLogText.isEmpty {
+                Text(bottomLogText)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(GinRummyPalette.sage)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 14)
+            }
+
+            Spacer(minLength: 0)
+
+            // Full-bleed hand: no horizontal padding so cards reach both edges.
+            FannedHandRow(
+                displayOrder: handDisplayFor(hand: p.hands[p.seat]),
+                selected: $selectedHandCard,
+                canReorder: canReorderHand(for: surface),
+                onReorder: { handDisplayOrder = $0 }
+            )
+            .frame(height: 152)
+
+            tableActionBar(gameId: gameId, surface: surface, p: p)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Pinned bottom action bar — context buttons for the current surface, always
+    /// on screen so the player never has to scroll to act.
+    @ViewBuilder
+    private func tableActionBar(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
+        VStack(spacing: 8) {
+            if feedbackIsError, !feedbackText.isEmpty {
+                FeedbackLine(text: feedbackText, isError: true, privateClubStyle: true)
+            }
+            switch surface {
+            case .downCard:
+                upcardButtons(
+                    gameId: gameId,
+                    p: p,
+                    token: app.accessToken,
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
+            case .play:
+                if p.currentTurn == p.seat {
+                    playButtons(
+                        gameId: gameId,
+                        p: p,
+                        token: app.accessToken,
+                        feedbackText: $feedbackText,
+                        feedbackIsError: $feedbackIsError,
+                        selectedHandCard: $selectedHandCard
+                    )
+                } else {
+                    Label("Waiting for \(app.opponentDisplayName)…", systemImage: "hourglass")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(GinRummyPalette.sage)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+            default:
+                EmptyView()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background(
+            GinRummyPalette.bgDeep.opacity(0.65)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(GinRummyPalette.gold.opacity(0.18))
+                        .frame(height: 1)
+                }
+        )
+    }
+
     @ViewBuilder
     private func phaseRibbon(surface: GamePlaySurface, p: PlayerPerspective) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -952,88 +1095,92 @@ struct GameView: View {
                 GinRummyTableChrome {
                     ZStack(alignment: .top) {
                         phaseBackdrop(surface: surface)
-                        ScrollView {
+                        VStack(spacing: 0) {
+                            tableTopBar(p: p)
                             if showsHandReveal(surface, p: p), let hr = p.handResult {
-                                HandRevealView(
-                                    p: p,
-                                    result: hr,
-                                    opponentName: app.opponentDisplayName,
-                                    isMatchOver: surface == .matchOver,
-                                    onContinue: {
-                                        Task {
-                                            await send(
-                                                gameId: gameId,
-                                                token: app.accessToken,
-                                                intent: ["type": "ackHandOver"],
-                                                success: "Ready for the next hand.",
-                                                feedbackText: $feedbackText,
-                                                feedbackIsError: $feedbackIsError
-                                            )
-                                        }
-                                    },
-                                    onShowFinalResults: { showMatchSummaryAfterReveal = true }
-                                )
-                                .id(handRevealIdentity(hr))
-                                .padding(8)
-                            } else {
-                            VStack(alignment: .leading, spacing: 10) {
-                                phaseRibbon(surface: surface, p: p)
-                                cutProminentTitle(surface: surface, p: p)
-                                scoreRail(surface: surface, p: p)
-                                postCutStrip(p: p)
-                                centerTableForSurface(gameId: gameId, surface: surface, p: p)
-
-                                if surface == .matchOver {
-                                    matchSummaryPanel(p: p)
-                                }
-
-                                if surface == .handOver, p.handResult == nil {
-                                    handOverPanel(p: p)
-                                }
-
-                                if surface == .knockLayoff, let k = p.knock {
-                                    if k.layoffTurn == p.seat, k.knocker != p.seat {
-                                        LayoffArrangementView(
-                                            p: p,
-                                            knock: k,
-                                            opponentName: app.opponentDisplayName,
-                                            onSubmit: { melds, layoffs in
-                                                Task {
-                                                    await submitLayoffResolve(
-                                                        gameId: gameId,
-                                                        ownMelds: melds,
-                                                        layoffs: layoffs
-                                                    )
-                                                }
+                                ScrollView {
+                                    HandRevealView(
+                                        p: p,
+                                        result: hr,
+                                        opponentName: app.opponentDisplayName,
+                                        isMatchOver: surface == .matchOver,
+                                        onContinue: {
+                                            Task {
+                                                await send(
+                                                    gameId: gameId,
+                                                    token: app.accessToken,
+                                                    intent: ["type": "ackHandOver"],
+                                                    success: "Ready for the next hand.",
+                                                    feedbackText: $feedbackText,
+                                                    feedbackIsError: $feedbackIsError
+                                                )
                                             }
+                                        },
+                                        onShowFinalResults: { showMatchSummaryAfterReveal = true }
+                                    )
+                                    .id(handRevealIdentity(hr))
+                                    .padding(8)
+                                }
+                            } else if surface == .play || surface == .downCard {
+                                // Fixed single-screen table — never scrolls during a turn.
+                                playingTable(gameId: gameId, surface: surface, p: p)
+                            } else {
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        phaseRibbon(surface: surface, p: p)
+                                        cutProminentTitle(surface: surface, p: p)
+                                        scoreRail(surface: surface, p: p)
+                                        postCutStrip(p: p)
+                                        centerTableForSurface(gameId: gameId, surface: surface, p: p)
+
+                                        if surface == .matchOver {
+                                            matchSummaryPanel(p: p)
+                                        }
+
+                                        if surface == .handOver, p.handResult == nil {
+                                            handOverPanel(p: p)
+                                        }
+
+                                        if surface == .knockLayoff, let k = p.knock {
+                                            if k.layoffTurn == p.seat, k.knocker != p.seat {
+                                                LayoffArrangementView(
+                                                    p: p,
+                                                    knock: k,
+                                                    opponentName: app.opponentDisplayName,
+                                                    onSubmit: { melds, layoffs in
+                                                        Task {
+                                                            await submitLayoffResolve(
+                                                                gameId: gameId,
+                                                                ownMelds: melds,
+                                                                layoffs: layoffs
+                                                            )
+                                                        }
+                                                    }
+                                                )
+                                            } else {
+                                                KnockerWaitingView(knock: k, opponentName: app.opponentDisplayName)
+                                            }
+                                        }
+
+                                        if showsYouHand(surface, p: p) {
+                                            youHandBlock(surface: surface, p: p, selectedHandCard: $selectedHandCard)
+                                        }
+
+                                        if showsYouHand(surface, p: p) {
+                                            bottomActivityLog()
+                                        }
+
+                                        moveButtons(
+                                            gameId: gameId,
+                                            surface: surface,
+                                            p: p,
+                                            feedbackText: $feedbackText,
+                                            feedbackIsError: $feedbackIsError,
+                                            selectedHandCard: $selectedHandCard
                                         )
-                                    } else {
-                                        KnockerWaitingView(knock: k, opponentName: app.opponentDisplayName)
                                     }
+                                    .padding(8)
                                 }
-
-                                if showsYouHand(surface, p: p) {
-                                    youHandBlock(surface: surface, p: p, selectedHandCard: $selectedHandCard)
-                                }
-
-                                if showsTurnRibbon(surface) {
-                                    turnBanner(p: p)
-                                }
-
-                                if showsYouHand(surface, p: p) {
-                                    bottomActivityLog()
-                                }
-
-                                moveButtons(
-                                    gameId: gameId,
-                                    surface: surface,
-                                    p: p,
-                                    feedbackText: $feedbackText,
-                                    feedbackIsError: $feedbackIsError,
-                                    selectedHandCard: $selectedHandCard
-                                )
-                            }
-                            .padding(8)
                             }
                         }
                     }
@@ -1133,6 +1280,15 @@ struct GameView: View {
             }
             if old.phase != new.phase {
                 if old.phase == "handOver", new.phase == "upcardOffer" {
+                    postCutTask?.cancel()
+                    cutHold = nil
+                    showPostCutInterstitial = false
+                    pendingDealerDeclineAfterCutSequence = false
+                }
+                // Entering an end-of-hand phase: any lingering post-cut reveal
+                // state is stale and would otherwise hide the knock-layoff and
+                // result surfaces for this player.
+                if new.phase == "knockLayoff" || new.phase == "handOver" || new.phase == "matchOver" {
                     postCutTask?.cancel()
                     cutHold = nil
                     showPostCutInterstitial = false
@@ -2374,25 +2530,18 @@ struct GameView: View {
         feedbackText: Binding<String>,
         feedbackIsError: Binding<Bool>
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(downCardStageTitle(p))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(GinRummyPalette.cream)
-            Text(turnLine(p))
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(GinRummyPalette.gold.opacity(0.95))
-
+        VStack(spacing: 8) {
             if p.currentTurn == p.seat {
-                if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
-                    Text("Take or pass the up-card.")
-                        .font(.caption)
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                }
+                Text("Take the up-card, or pass.")
+                    .font(.footnote)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .frame(maxWidth: .infinity, alignment: .center)
 
                 HStack(spacing: 10) {
                     Button("Take") {
                         performUpcardTake(gameId: gameId)
                     }
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.burgundy))
                     Button("Pass") {
                         downCardStatusMessage = "You Declined Down Card"
                         Task {
@@ -2406,13 +2555,14 @@ struct GameView: View {
                             )
                         }
                     }
+                    .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                 }
-                .buttonStyle(.bordered)
-                .tint(GinRummyPalette.gold)
             } else {
-                Text("Waiting for \(app.opponentDisplayName) to take or pass the up-card.")
-                    .font(.caption)
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                Label("Waiting for \(app.opponentDisplayName) on the up-card…", systemImage: "hourglass")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(GinRummyPalette.sage)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
             }
         }
     }
@@ -2427,10 +2577,11 @@ struct GameView: View {
     ) -> some View {
         Group {
             if p.hands[p.seat].count == 10, p.stockCount == 1 {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(spacing: 8) {
                     Text("One card left in the deck — take the discard or pass.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                        .frame(maxWidth: .infinity, alignment: .center)
                     Button("Pass (deck played through)") {
                         Task {
                             await send(
@@ -2443,17 +2594,17 @@ struct GameView: View {
                             )
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.burgundy)
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.burgundy))
                 }
             } else if p.hands[p.seat].count == 11 {
                 let canEO = MeldSolver.isBigGin11(p.hands[p.seat])
-                Button("Declare EO") {
-                    Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
+                VStack(spacing: 8) {
+                if canEO {
+                    Button("Declare EO") {
+                        Task { await send(gameId: gameId, token: token, intent: ["type": "declareBigGin"], success: "Declared EO.", feedbackText: feedbackText, feedbackIsError: feedbackIsError) }
+                    }
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 }
-                .disabled(!canEO)
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.navy)
                 DiscardHelper(
                     gameId: gameId,
                     hand: p.hands[p.seat],
@@ -2469,6 +2620,7 @@ struct GameView: View {
                     },
                     onAfterSuccessfulDiscard: nil
                 )
+                }
             }
         }
     }
@@ -2637,22 +2789,29 @@ private struct DiscardHelper: View {
         let canGin = haveSelection && eligibility.ginable.contains(s!)
         let canKnock = haveSelection && eligibility.knockable.contains(s!)
 
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(spacing: 6) {
             HStack(spacing: 8) {
                 Button("Discard") { Task { await submit(plain: true) } }
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.burgundy))
                     .disabled(!canPlain)
                 Button("Gin") { Task { await submit(plain: false, gin: true) } }
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                     .disabled(!canGin)
                 Button("Knock") { Task { await submit(plain: false, knock: true) } }
+                    .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                     .disabled(!canKnock)
             }
-            .buttonStyle(.bordered)
-            .tint(GinRummyPalette.gold)
 
-            if haveSelection, let hint = inlineHint(canPlain: canPlain, canGin: canGin, canKnock: canKnock) {
-                Text(hint)
-                    .font(.caption)
+            if !haveSelection {
+                Text("Tap a card in your hand to discard, knock, or go gin.")
+                    .font(.footnote)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else if let hint = inlineHint(canPlain: canPlain, canGin: canGin, canKnock: canKnock) {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .onAppear { recomputeIfNeeded() }

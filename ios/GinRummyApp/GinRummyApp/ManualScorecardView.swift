@@ -4,8 +4,7 @@ import SwiftUI
 struct ManualScorecardView: View {
     @StateObject private var store = ManualScoreStore()
 
-    @FocusState private var keyboardShown: Bool
-    @State private var editingField: FocusField?
+    @FocusState private var focusedField: FocusField?
     @State private var editText: String = ""
     @State private var showResetConfirm = false
     @State private var showNameEditor = false
@@ -40,11 +39,6 @@ struct ManualScorecardView: View {
         scorecardLayout
             .navigationTitle("Score a game")
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if editingField != nil {
-                    scoreEntryBar
-                }
-            }
             .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -61,14 +55,17 @@ struct ManualScorecardView: View {
                 }
             }
             ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                if editingField != nil {
+                if let field = focusedField {
+                    Text(editingPrompt)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.sage)
+                    Spacer()
                     Button("Next") {
-                        if let field = editingField {
-                            advanceFrom(field)
-                        }
+                        advanceFrom(field)
                     }
                     .foregroundStyle(GinRummyPalette.gold)
+                } else {
+                    Spacer()
                 }
                 Button("Done") {
                     finishEditing()
@@ -76,20 +73,10 @@ struct ManualScorecardView: View {
                 .foregroundStyle(GinRummyPalette.gold)
             }
         }
-        .onChange(of: keyboardShown) { _, shown in
-            if !shown, editingField != nil {
-                if let field = editingField {
-                    commit(field, text: editText)
-                }
-                editingField = nil
-            }
-        }
-        .onChange(of: editingField) { _, field in
-            if field != nil {
-                Task { @MainActor in
-                    keyboardShown = true
-                }
-            }
+        .onChange(of: focusedField) { old, new in
+            // Commit the cell we just left, then load the buffer for the new one.
+            if let old { commit(old, text: editText) }
+            editText = new.map { editableText(for: $0) } ?? ""
         }
         .sheet(isPresented: $showNameEditor) {
             nameEditorSheet
@@ -133,44 +120,8 @@ struct ManualScorecardView: View {
         }
     }
 
-    /// Focused input bar — appears when a cell is selected; drives the keyboard.
-    private var scoreEntryBar: some View {
-        HStack(spacing: 12) {
-            Text(editingPrompt)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(GinRummyPalette.sage)
-                .lineLimit(1)
-            TextField("0", text: $editText)
-                .keyboardType(.numbersAndPunctuation)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .multilineTextAlignment(.trailing)
-                .font(.body.weight(.semibold).monospacedDigit())
-                .foregroundStyle(GinRummyPalette.cream)
-                .focused($keyboardShown)
-                .submitLabel(.next)
-                .onSubmit {
-                    if let field = editingField {
-                        advanceFrom(field)
-                    }
-                }
-                .ginOutlinedField()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(GinRummyPalette.bgDeep)
-        .overlay(alignment: .top) {
-            Rectangle().fill(GinRummyPalette.sage.opacity(0.25)).frame(height: 1)
-        }
-        .onAppear {
-            Task { @MainActor in
-                keyboardShown = true
-            }
-        }
-    }
-
     private var editingPrompt: String {
-        guard let field = editingField else { return "Score" }
+        guard let field = focusedField else { return "Score" }
         switch field {
         case let .hand(_, _, side):
             return side == .we ? store.session.weName : store.session.theyName
@@ -451,6 +402,9 @@ struct ManualScorecardView: View {
 
     // MARK: - Inline editing
 
+    /// Live, in-cell numeric field. Tap the cell and type immediately — no extra
+    /// step or bottom bar. The shared `editText` buffer is bound only while this
+    /// cell is focused; committing happens when focus moves away.
     @ViewBuilder
     private func inlineNumericCell(
         field: FocusField,
@@ -459,29 +413,44 @@ struct ManualScorecardView: View {
         display: String,
         placeholder: String? = nil
     ) -> some View {
-        let isEditing = editingField == field
+        let isEditing = focusedField == field
         let shown = display == "…" || display == "—" ? "" : display
-        let label: String = {
-            if isEditing { return editText.isEmpty ? (placeholder ?? "·") : editText }
-            return shown.isEmpty ? (placeholder ?? "·") : shown
+        let promptText: String = {
+            guard let placeholder else { return "·" }
+            return (placeholder == "…" || placeholder == "—") ? "·" : placeholder
         }()
+        let currentText = isEditing ? editText : shown
 
-        Button {
-            beginEditing(field)
-        } label: {
-            numericText(label, style: (isEditing ? !editText.isEmpty : !shown.isEmpty) ? .score : .muted)
-                .foregroundStyle(
-                    (isEditing ? !editText.isEmpty : !shown.isEmpty)
-                        ? scoreColor(for: isEditing ? editText : shown)
-                        : CellTextStyle.placeholder.color
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
+        TextField(
+            "",
+            text: cellBinding(field: field, committed: shown),
+            prompt: Text(promptText).foregroundColor(CellTextStyle.placeholder.color)
+        )
+        .keyboardType(field.allowsNegative ? .numbersAndPunctuation : .numberPad)
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .multilineTextAlignment(.center)
+        .font(.caption.weight(.semibold).monospacedDigit())
+        .foregroundStyle(currentText.isEmpty ? CellTextStyle.placeholder.color : scoreColor(for: currentText))
+        .tint(GinRummyPalette.gold)
+        .focused($focusedField, equals: field)
+        .submitLabel(.next)
+        .onSubmit { advanceFrom(field) }
         .frame(width: max(width, 1), height: max(height, 1))
+        .contentShape(Rectangle())
         .overlay(cellBorder(right: true))
         .background(isEditing ? GinRummyPalette.gold.opacity(0.12) : Color.clear)
+    }
+
+    /// Binding that surfaces the live edit buffer only for the focused cell, and
+    /// the committed value otherwise (so other cells keep showing their scores).
+    private func cellBinding(field: FocusField, committed: String) -> Binding<String> {
+        Binding(
+            get: { focusedField == field ? editText : committed },
+            set: { newValue in
+                if focusedField == field { editText = newValue }
+            }
+        )
     }
 
     @ViewBuilder
@@ -524,17 +493,6 @@ struct ManualScorecardView: View {
         }
     }
 
-    private func beginEditing(_ field: FocusField) {
-        if let current = editingField, current != field {
-            commit(current, text: editText)
-        }
-        editingField = field
-        editText = editableText(for: field)
-        Task { @MainActor in
-            keyboardShown = true
-        }
-    }
-
     private func editableText(for field: FocusField) -> String {
         var text = displayText(for: field)
         if text.hasPrefix("+") { text = String(text.dropFirst()) }
@@ -542,11 +500,8 @@ struct ManualScorecardView: View {
     }
 
     private func finishEditing() {
-        if let field = editingField {
-            commit(field, text: editText)
-            editingField = nil
-        }
-        keyboardShown = false
+        // Setting focus to nil triggers the commit in the focus onChange handler.
+        focusedField = nil
     }
 
     private func commit(_ field: FocusField, text: String) {
@@ -601,16 +556,15 @@ struct ManualScorecardView: View {
     }
 
     private func advanceFrom(_ field: FocusField) {
-        commit(field, text: editText)
+        // The focus onChange handler commits the current cell and loads the next.
+        // `nextField` may append a new hand row, so defer focusing until the new
+        // cell exists in the hierarchy.
         guard let next = nextField(after: field) else {
-            editingField = nil
-            keyboardShown = false
+            focusedField = nil
             return
         }
-        editingField = next
-        editText = editableText(for: next)
         Task { @MainActor in
-            keyboardShown = true
+            focusedField = next
         }
     }
 
