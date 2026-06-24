@@ -324,9 +324,7 @@ struct HandRevealView: View {
         VStack(spacing: 10) {
             if isMatchOver {
                 Button("See final result") { onShowFinalResults() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.burgundy)
-                    .controlSize(.large)
+                    .buttonStyle(GinActionButtonStyle(filled: true))
             } else {
                 if oppAcked, !youAcked {
                     readyBanner(
@@ -339,9 +337,7 @@ struct HandRevealView: View {
                         youTappedContinue = true
                         onContinue()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.navy)
-                    .controlSize(.large)
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 } else if !oppAcked {
                     readyBanner(
                         symbol: "hourglass",
@@ -466,9 +462,7 @@ struct RematchReadyFooter: View {
                     Button(busy ? "Starting…" : "Play again") {
                         onPlayAgain()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.navy)
-                    .controlSize(.large)
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                     .disabled(busy)
                 } else {
                     rematchBanner(
@@ -484,17 +478,13 @@ struct RematchReadyFooter: View {
                 Button("Play again") {
                     onPlayAgain()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.navy)
-                .controlSize(.large)
+                .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 .disabled(busy)
             } else if !youReady {
                 Button("Play again") {
                     onPlayAgain()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.navy)
-                .controlSize(.large)
+                .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 .disabled(busy)
             } else if !oppReady {
                 rematchBanner(
@@ -872,8 +862,7 @@ struct LayoffArrangementView: View {
                     submitting = true
                     onSubmit(opt.melds, stagedLayoffs.map { (card: $0.card, meldIndex: $0.meldIndex) })
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.navy)
+                .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 .disabled(submitting || chosenOption == nil)
 
                 if !stagedLayoffs.isEmpty {
@@ -881,11 +870,9 @@ struct LayoffArrangementView: View {
                         stagedLayoffs = []
                         selectedCard = nil
                     }
-                    .buttonStyle(.bordered)
-                    .tint(GinRummyPalette.gold)
+                    .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                     .disabled(submitting)
                 }
-                Spacer(minLength: 0)
             }
             Text("You'll score \(remainingPoints) unmelded vs their \(knockerDeadwoodPoints). Tie or lower undercuts the knock for a 25-point bonus.")
                 .font(.caption2)

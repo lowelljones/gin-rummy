@@ -10,8 +10,9 @@ struct LobbyView: View {
     var body: some View {
         NavigationStack(path: $path) {
             homeScreen
-                .navigationTitle("Lobby")
+                .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: LobbyRoute.self) { route in
                     switch route {
                     case .instructions:
@@ -38,17 +39,16 @@ struct LobbyView: View {
     }
 
     private var homeScreen: some View {
-        ScrollView {
-            VStack(spacing: 32) {
-                GinRummyLogoBlock()
-                    .padding(.top, 12)
+        VStack(spacing: 28) {
+            GinRummyLogoBlock()
+                .padding(.top, 12)
 
-                if !toast.isEmpty {
-                    FeedbackLine(text: toast, isError: toastIsError, privateClubStyle: true)
-                        .padding(.horizontal, 8)
-                }
+            if !toast.isEmpty {
+                FeedbackLine(text: toast, isError: toastIsError, privateClubStyle: true)
+                    .padding(.horizontal, 8)
+            }
 
-                VStack(spacing: 14) {
+            VStack(spacing: 14) {
                     Button(busy ? "Creating…" : "Create lobby") {
                         Task { await createLobbyAndWait() }
                     }
@@ -84,12 +84,12 @@ struct LobbyView: View {
                     .foregroundStyle(GinRummyPalette.sage)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 8)
-                }
-                .padding(.horizontal, 28)
-
-                Spacer(minLength: 24)
             }
+            .padding(.horizontal, 28)
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// After accepting an invite sheet, drop into the unified waiting room so the

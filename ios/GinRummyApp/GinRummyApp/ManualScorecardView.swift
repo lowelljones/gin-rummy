@@ -81,11 +81,11 @@ struct ManualScorecardView: View {
         .sheet(isPresented: $showNameEditor) {
             nameEditorSheet
         }
-        .confirmationDialog("Reset this score sheet?", isPresented: $showResetConfirm, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) { store.resetSession() }
+        .alert("Reset this score sheet?", isPresented: $showResetConfirm) {
             Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) { store.resetSession() }
         } message: {
-            Text("Clears all games, hands, and box totals.")
+            Text("Clears all games, hands, and box totals. This can't be undone.")
         }
     }
 
@@ -217,15 +217,11 @@ struct ManualScorecardView: View {
         HStack(spacing: 0) {
             ForEach(Array(store.session.games.enumerated()), id: \.element.id) { idx, game in
                 let slotW = slotWidth(index: idx, count: store.session.games.count, totalWidth: metrics.gamesWidth)
-                let field = FocusField.box(gameId: game.id, side: side)
                 let display = boxText(game: game, side: side)
-                inlineNumericCell(
-                    field: field,
-                    width: slotW,
-                    height: height,
-                    display: display,
-                    placeholder: display == "…" || display == "—" ? display : nil
-                )
+                numericText(display, style: scoreStyle(for: display))
+                    .frame(width: slotW, height: height, alignment: .center)
+                    .background(game.isLive ? liveColumnTint : nil)
+                    .overlay(cellBorder(right: true))
             }
             if store.session.games.isEmpty {
                 numericText("…", style: .muted)
@@ -236,10 +232,14 @@ struct ManualScorecardView: View {
         .overlay(cellBorder(right: true).allowsHitTesting(false))
     }
 
+    /// Running box tally (who's up): each hand won is a box; we show the signed
+    /// net so a glance tells you who leads and by how much.
     private func boxText(game: ManualScoreGame, side: FocusField.Side) -> String {
-        let v = side == .we ? game.weBox : game.theyBox
-        guard let v else { return game.isLive ? "…" : "—" }
-        return v >= 0 ? "+\(v)" : "\(v)"
+        guard game.hasScoredHand else { return game.isLive ? "…" : "—" }
+        let net = side == .we ? game.netBoxes() : -game.netBoxes()
+        if net > 0 { return "+\(net)" }
+        if net < 0 { return "\(net)" }
+        return "0"
     }
 
     @ViewBuilder
@@ -337,12 +337,12 @@ struct ManualScorecardView: View {
             ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
                 let w = colW(idx, columns, gcw, metrics.gamesWidth)
                 if let game = col.game {
-                    let bucket = game.weBox.map { abs($0) }
+                    let scored = game.hasScoredHand
                     valueCell(
-                        bucket.map(String.init) ?? (game.isLive ? "…" : "—"),
+                        scored ? signed(game.netBoxes()) : (game.isLive ? "…" : "—"),
                         width: w,
                         height: h,
-                        style: bucket != nil ? .score : .muted,
+                        style: scored ? .score : .muted,
                         live: col.isLive
                     )
                 } else {
@@ -359,9 +359,24 @@ struct ManualScorecardView: View {
                 Text("\(store.session.theyName)  \(signed(theyNet))")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(scoreColor(for: signed(theyNet)))
-                Text("\(store.session.games.count) game\(store.session.games.count == 1 ? "" : "s") · saved on device")
-                    .font(.caption2)
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+                if let bet = bettingSummary {
+                    if bet.tied {
+                        Text("Betting · even")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                    } else {
+                        let name = bet.leaderIsWe ? store.session.weName : store.session.theyName
+                        Text("Betting · \(name) +\(bet.points) · box \(bet.bucket)")
+                            .font(.caption2.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(GinRummyPalette.gold)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                    }
+                } else {
+                    Text("\(store.session.games.count) game\(store.session.games.count == 1 ? "" : "s") · saved on device")
+                        .font(.caption2)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+                }
             }
             .padding(.horizontal, cellPaddingH + 2)
             .frame(width: metrics.gamesWidth, height: h, alignment: .leading)
@@ -651,6 +666,41 @@ struct ManualScorecardView: View {
     }
 
     private func signed(_ v: Int) -> String { v >= 0 ? "+\(v)" : "\(v)" }
+
+    private struct ManualBetting {
+        let leaderIsWe: Bool
+        let points: Int
+        let bucket: Int
+        let tied: Bool
+    }
+
+    /// Quick betting settlement across the whole sheet, mirroring the in-app
+    /// betting math: point margin + 100 game bonus + 100 shutout + 25 per net box.
+    private var bettingSummary: ManualBetting? {
+        let games = store.session.games
+        guard games.contains(where: { $0.hasScoredHand }) else { return nil }
+        let weTotal = games.map { $0.totalWe() }.reduce(0, +)
+        let theyTotal = games.map { $0.totalThey() }.reduce(0, +)
+        if weTotal == theyTotal {
+            return ManualBetting(leaderIsWe: true, points: 0, bucket: 0, tied: true)
+        }
+        let weBoxes = games.map { $0.weBoxesWon() }.reduce(0, +)
+        let theyBoxes = games.map { $0.theyBoxesWon() }.reduce(0, +)
+        let leaderIsWe = weTotal > theyTotal
+        let leadPts = leaderIsWe ? weTotal : theyTotal
+        let loserPts = leaderIsWe ? theyTotal : weTotal
+        let leaderBoxes = leaderIsWe ? weBoxes : theyBoxes
+        let loserBoxes = leaderIsWe ? theyBoxes : weBoxes
+        let shutout = (loserPts == 0 && leadPts > 0) ? 100 : 0
+        let netBoxes = max(0, leaderBoxes - loserBoxes)
+        let raw = (leadPts - loserPts) + 100 + shutout + 25 * netBoxes
+        return ManualBetting(
+            leaderIsWe: leaderIsWe,
+            points: raw,
+            bucket: BettingSettlementBreakdown.bettingBucket(forRaw: raw),
+            tied: false
+        )
+    }
 
     private func scoreStyle(for text: String) -> CellTextStyle {
         if text == "…" || text == "—" || text == "·" { return .muted }

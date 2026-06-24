@@ -7,17 +7,17 @@ struct GameView: View {
     @State private var feedbackText = ""
     @State private var feedbackIsError = false
     @State private var selectedHandCard: String?
-    @State private var showPostCutInterstitial = false
     @State private var voidFlashKind: HandVoidFlashKind? = nil
-    @State private var cutHold: CutHoldState?
-    @State private var pendingDealerDeclineAfterCutSequence = false
+    @State private var cutReveal: CutRevealModel?
+    /// Identity of the cut we've already shown, so polling re-renders / reconnects don't replay it.
+    @State private var revealedCutKey: String?
     @State private var bottomLogText: String = ""
     @State private var handDisplayOrder: [String] = []
     @State private var cardFlight: CardFlightModel?
     @State private var cardFlightClearTask: Task<Void, Never>?
     @State private var messageTask: Task<Void, Never>?
     @State private var downCardStatusMessage: String?
-    @State private var postCutTask: Task<Void, Never>?
+    @State private var cutRevealTask: Task<Void, Never>?
     @State private var redealFlashTask: Task<Void, Never>?
     @State private var lastYouPickup: PickupSource? = nil
     @State private var lastOpponentPickup: PickupSource? = nil
@@ -185,13 +185,17 @@ struct GameView: View {
         surface == .play || surface == .downCard
     }
 
-    private struct CutHoldState: Equatable {
+    private struct CutRevealModel: Equatable {
         var last: PlayerPerspective.LastCutResult
-        var mode: PostCutRevealMode
         var youAreSeat: Int
+        /// Opponent's card starts hidden when the local player cut first.
+        var staged: Bool
+        /// Defer the "opponent declined the down card" hint until the reveal finishes.
+        var deferDealerDeclineHint: Bool
+    }
 
-        var yourCard: String { youAreSeat == 0 ? last.p0 : last.p1 }
-        var oppCard: String { youAreSeat == 0 ? last.p1 : last.p0 }
+    private func cutKey(_ l: PlayerPerspective.LastCutResult) -> String {
+        "\(l.p0)-\(l.p1)-\(l.nonDealer)"
     }
 
     /// Single Equatable snapshot so `gameContent` uses one `onChange` (avoids chained-modifier warnings).
@@ -265,7 +269,7 @@ struct GameView: View {
         }
         .onDisappear {
             pollTask?.cancel()
-            postCutTask?.cancel()
+            cutRevealTask?.cancel()
             redealFlashTask?.cancel()
             cardFlightClearTask?.cancel()
             messageTask?.cancel()
@@ -279,7 +283,7 @@ struct GameView: View {
     }
 
     private func isPostCutSequenceActive() -> Bool {
-        cutHold != nil || showPostCutInterstitial
+        cutReveal != nil
     }
 
     /// Same duration as `HandRevealView`'s flash stage.
@@ -317,11 +321,9 @@ struct GameView: View {
             redealFlashTask?.cancel()
             voidFlashKind = nil
         }
-        if willStartPostCutSequence(before: before, after: after) {
-            detectCutCompletion(before: before, after: after)
+        if maybeBeginCutReveal(before: before, after: after) {
             return
         }
-        detectCutCompletion(before: before, after: after)
         detectRedealCompletion(before: before, after: after)
         detectPlayedThroughVoid(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
@@ -809,8 +811,50 @@ struct GameView: View {
         .padding(.horizontal, 14)
     }
 
-    /// Fixed, scroll-free single-screen layout for the play and down-card surfaces.
+    /// Fixed, single-screen cut-for-deal layout — no scrolling, on-brand with
+    /// the rest of the table. Header, the two cut zones + face-down fan, and a
+    /// pinned action bar.
     @ViewBuilder
+    private func cutForDealScreen(gameId: String, p: PlayerPerspective) -> some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                Text("CUT FOR THE DEAL")
+                    .font(.caption.weight(.bold))
+                    .tracking(3)
+                    .foregroundStyle(GinRummyPalette.gold.opacity(0.95))
+                Text(cutStageTitle(p))
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 10) {
+                    GinStatusPill(text: "\(p.scores[0]) – \(p.scores[1])", systemImage: "rosette")
+                    GinStatusPill(text: "Race \(p.raceTarget)", tint: GinRummyPalette.sage)
+                }
+                .padding(.top, 2)
+            }
+            .padding(.top, 18)
+            .padding(.horizontal, 20)
+
+            Spacer(minLength: 0)
+
+            if p.cut != nil {
+                CutForDealView(
+                    gameId: gameId,
+                    p: p,
+                    token: app.accessToken,
+                    onAfterCutPick: handleAfterCutPick(before:after:),
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
+                .padding(.horizontal, 18)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Fixed, scroll-free single-screen layout for the play and down-card surfaces.
     private func playingTable(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
         VStack(spacing: 8) {
             compactStatusRow(surface: surface, p: p)
@@ -945,20 +989,6 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func cutProminentTitle(surface: GamePlaySurface, p: PlayerPerspective) -> some View {
-        if surface == .cutForDeal, p.cut != nil {
-            Text(cutStageTitle(p))
-                .font(.title2.bold())
-                .foregroundStyle(GinRummyPalette.cream)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .multilineTextAlignment(.center)
-                .contentTransition(.opacity)
-        } else {
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
     private func scoreRail(surface: GamePlaySurface, p: PlayerPerspective) -> some View {
         if showsScoreRail(surface) {
             HStack(alignment: .firstTextBaseline) {
@@ -980,67 +1010,11 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func postCutStrip(p: PlayerPerspective) -> some View {
-        if let hold = cutHold {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Match · Cut reveal")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .center, spacing: 6) {
-                        Text("Your Card")
-                            .font(.caption2)
-                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                        PlayingCardView(card: hold.yourCard, compact: true, onTap: nil)
-                    }
-                    .frame(maxWidth: .infinity)
-
-                    VStack(alignment: .center, spacing: 6) {
-                        Text("Opponent Card")
-                            .font(.caption2)
-                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                        if hold.mode == .both {
-                            PlayingCardView(card: hold.oppCard, compact: true, onTap: nil)
-                        } else {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.orange.opacity(0.2))
-                                .frame(width: 51, height: 75)
-                                .overlay { ProgressView() }
-                        }
-                        if hold.mode == .yourOnly {
-                            Text("Opponent drawing…")
-                                .font(.caption.italic())
-                                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 12).fill(GinRummyPalette.bgPanel.opacity(0.72)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.gold.opacity(0.2)))
-        } else {
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
     private func centerTableForSurface(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
         switch surface {
         case .cutForDeal:
-            if p.cut != nil {
-                CutForDealView(
-                    gameId: gameId,
-                    p: p,
-                    token: app.accessToken,
-                    onAfterCutPick: handleAfterCutPick(before:after:),
-                    feedbackText: $feedbackText,
-                    feedbackIsError: $feedbackIsError
-                )
-            } else {
-                EmptyView()
-            }
+            // Handled by the dedicated, non-scrolling `cutForDealScreen`.
+            EmptyView()
         case .postCutReveal:
             EmptyView()
         case .downCard, .play:
@@ -1086,11 +1060,16 @@ struct GameView: View {
                 HandVoidFlashInterstitial(kind: flash)
                     .zIndex(200)
                     .transition(.scale(scale: 0.86).combined(with: .opacity))
-            } else if showPostCutInterstitial, let lc = p.lastCut {
-                PostCutInterstitial(last: lc, youAreSeat: p.seat)
-                    .id("\(lc.p0)-\(lc.p1)-\(lc.nonDealer)-interstitial")
-                    .zIndex(200)
-                    .transition(.opacity)
+            } else if let reveal = cutReveal {
+                CutRevealView(
+                    last: reveal.last,
+                    youAreSeat: reveal.youAreSeat,
+                    staged: reveal.staged,
+                    onFinished: { finishCutReveal() }
+                )
+                .id(cutKey(reveal.last))
+                .zIndex(200)
+                .transition(.opacity)
             } else {
                 GinRummyTableChrome {
                     ZStack(alignment: .top) {
@@ -1121,6 +1100,9 @@ struct GameView: View {
                                     .id(handRevealIdentity(hr))
                                     .padding(8)
                                 }
+                            } else if surface == .cutForDeal {
+                                // Fixed single-screen cut layout — never scrolls.
+                                cutForDealScreen(gameId: gameId, p: p)
                             } else if surface == .play || surface == .downCard {
                                 // Fixed single-screen table — never scrolls during a turn.
                                 playingTable(gameId: gameId, surface: surface, p: p)
@@ -1128,9 +1110,7 @@ struct GameView: View {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 10) {
                                         phaseRibbon(surface: surface, p: p)
-                                        cutProminentTitle(surface: surface, p: p)
                                         scoreRail(surface: surface, p: p)
-                                        postCutStrip(p: p)
                                         centerTableForSurface(gameId: gameId, surface: surface, p: p)
 
                                         if surface == .matchOver {
@@ -1199,7 +1179,7 @@ struct GameView: View {
             }
         }
         .animation(.easeInOut(duration: 0.28), value: voidFlashKind)
-        .animation(.easeInOut(duration: 0.28), value: showPostCutInterstitial)
+        .animation(.easeInOut(duration: 0.28), value: cutReveal)
         .animation(.easeInOut(duration: 0.28), value: surface)
         .animation(.easeInOut(duration: 0.28), value: exitState)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: p.redeal?.status)
@@ -1237,6 +1217,8 @@ struct GameView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if exitState == nil,
                voidFlashKind == nil,
+               cutReveal == nil,
+               (surface == .play || surface == .downCard),
                !isPendingRedeal(p),
                proposeRedealAllowed(for: p)
             {
@@ -1273,26 +1255,15 @@ struct GameView: View {
                 mergeHandOrder(with: new.hand)
             }
             if old.hasLastCut, !new.hasLastCut {
-                postCutTask?.cancel()
-                cutHold = nil
-                showPostCutInterstitial = false
-                pendingDealerDeclineAfterCutSequence = false
+                cutRevealTask?.cancel()
+                cutReveal = nil
             }
             if old.phase != new.phase {
-                if old.phase == "handOver", new.phase == "upcardOffer" {
-                    postCutTask?.cancel()
-                    cutHold = nil
-                    showPostCutInterstitial = false
-                    pendingDealerDeclineAfterCutSequence = false
-                }
-                // Entering an end-of-hand phase: any lingering post-cut reveal
-                // state is stale and would otherwise hide the knock-layoff and
-                // result surfaces for this player.
+                // Entering an end-of-hand phase: any lingering cut reveal is stale
+                // and would otherwise hide the knock-layoff and result surfaces.
                 if new.phase == "knockLayoff" || new.phase == "handOver" || new.phase == "matchOver" {
-                    postCutTask?.cancel()
-                    cutHold = nil
-                    showPostCutInterstitial = false
-                    pendingDealerDeclineAfterCutSequence = false
+                    cutRevealTask?.cancel()
+                    cutReveal = nil
                 }
                 if new.phase != "matchOver" {
                     showMatchSummaryAfterReveal = false
@@ -1367,38 +1338,45 @@ struct GameView: View {
             && after.currentTurn == after.seat
     }
 
-    private func detectCutCompletion(before: PlayerPerspective?, after: PlayerPerspective) {
-        guard willStartPostCutSequence(before: before, after: after),
-              let b = before,
-              let last = after.lastCut
-        else { return }
+    /// Starts the full-screen cut reveal the moment the cut resolves. Returns
+    /// `true` if it began one (so the caller skips the per-frame flight/status
+    /// diffing). The reveal owns the screen until it finishes, so the down-card
+    /// stage can never flash underneath.
+    @discardableResult
+    private func maybeBeginCutReveal(before: PlayerPerspective?, after: PlayerPerspective) -> Bool {
+        guard let last = after.lastCut else { return false }
+        let key = cutKey(last)
+        guard revealedCutKey != key else { return false }
+        // Only fire on the transition into "cut just resolved": a prior snapshot
+        // existed and had no cut result yet. This avoids replaying the reveal
+        // when a player reconnects mid first-hand (where `before` is nil).
+        guard let b = before, b.lastCut == nil else { return false }
 
-        let userPickedFirst = b.cut?.theirCut == nil
-        postCutTask?.cancel()
-        showPostCutInterstitial = false
-        cutHold = CutHoldState(last: last, mode: userPickedFirst ? .yourOnly : .both, youAreSeat: after.seat)
-        pendingDealerDeclineAfterCutSequence = shouldDeferDealerDeclineHint(after: after)
+        let youPickedFirst = b.cut != nil && b.cut?.theirCut == nil
+        cutRevealTask?.cancel()
+        cutReveal = CutRevealModel(
+            last: last,
+            youAreSeat: after.seat,
+            staged: youPickedFirst,
+            deferDealerDeclineHint: shouldDeferDealerDeclineHint(after: after)
+        )
+        return true
+    }
 
-        postCutTask = Task { @MainActor in
-            if userPickedFirst {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if cutHold != nil { cutHold?.mode = .both }
-            }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            cutHold = nil
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            showPostCutInterstitial = true
-            try? await Task.sleep(nanoseconds: 5_500_000_000)
-            showPostCutInterstitial = false
-            if pendingDealerDeclineAfterCutSequence {
-                pendingDealerDeclineAfterCutSequence = false
-                downCardStatusMessage = Self.opponentDeclinedDownCardMessage
-                messageTask?.cancel()
-                messageTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 5_500_000_000)
-                    if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
-                        downCardStatusMessage = nil
-                    }
+    /// Called by `CutRevealView` once its staged animation completes (or the
+    /// player taps to continue). Releases the screen to the down-card stage.
+    private func finishCutReveal() {
+        guard let model = cutReveal else { return }
+        cutRevealTask?.cancel()
+        revealedCutKey = cutKey(model.last)
+        withAnimation(.easeInOut(duration: 0.3)) { cutReveal = nil }
+        if model.deferDealerDeclineHint {
+            downCardStatusMessage = Self.opponentDeclinedDownCardMessage
+            messageTask?.cancel()
+            messageTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_500_000_000)
+                if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
+                    downCardStatusMessage = nil
                 }
             }
         }
@@ -1948,7 +1926,7 @@ struct GameView: View {
             let st = try await app.api.gameState(gameId: gameId, token: token)
             await MainActor.run {
                 pollTask?.cancel()
-                postCutTask?.cancel()
+                cutRevealTask?.cancel()
                 cardFlightClearTask?.cancel()
                 messageTask?.cancel()
                 showMatchSummaryAfterReveal = false
@@ -2131,20 +2109,16 @@ struct GameView: View {
                         Button("Scorecard") {
                             showScorecard = true
                         }
-                        .buttonStyle(.bordered)
-                        .tint(GinRummyPalette.gold)
-                        .controlSize(.large)
+                        .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                     }
                     Button("Return to lobby") {
                         pollTask?.cancel()
-                        postCutTask?.cancel()
+                        cutRevealTask?.cancel()
                         cardFlightClearTask?.cancel()
                         messageTask?.cancel()
                         app.clearActiveGame()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.burgundy)
-                    .controlSize(.large)
+                    .buttonStyle(GinActionButtonStyle(filled: true))
                 case .cutForDeal:
                     // Cut actions live in CutForDealView (center table).
                     EmptyView()
@@ -2185,8 +2159,7 @@ struct GameView: View {
                             )
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.navy)
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.navy))
                 }
             }
         }
@@ -2211,9 +2184,7 @@ struct GameView: View {
                 )
             }
         }
-        .buttonStyle(.bordered)
-        .tint(GinRummyPalette.gold)
-        .frame(maxWidth: .infinity)
+        .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
     }
 
     @ViewBuilder
@@ -2260,11 +2231,9 @@ struct GameView: View {
                             )
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(GinRummyPalette.burgundy)
-                    .controlSize(.large)
+                    .buttonStyle(GinActionButtonStyle(filled: true, tint: GinRummyPalette.burgundy))
                 } else {
-                    HStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         Button {
                             Task {
                                 await send(
@@ -2278,10 +2247,8 @@ struct GameView: View {
                             }
                         } label: {
                             Label("Accept", systemImage: "checkmark.circle.fill")
-                                .font(.headline)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green.opacity(0.85))
+                        .buttonStyle(GinActionButtonStyle(filled: true, tint: Color(red: 0.18, green: 0.5, blue: 0.3)))
 
                         Button {
                             Task {
@@ -2296,10 +2263,8 @@ struct GameView: View {
                             }
                         } label: {
                             Label("Decline", systemImage: "xmark.circle.fill")
-                                .font(.headline)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red.opacity(0.85))
+                        .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                     }
                 }
             }
@@ -2442,9 +2407,8 @@ struct GameView: View {
                 Button("Back to main lobby") {
                     app.clearActiveGame()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.burgundy)
-                .controlSize(.large)
+                .buttonStyle(GinActionButtonStyle(filled: true))
+                .padding(.horizontal, 40)
                 .padding(.top, 8)
             case .opponentLeft:
                 Image(systemName: "figure.walk.departure")
@@ -2463,9 +2427,8 @@ struct GameView: View {
                 Button("Back to main lobby") {
                     app.clearActiveGame()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(GinRummyPalette.burgundy)
-                .controlSize(.large)
+                .buttonStyle(GinActionButtonStyle(filled: true))
+                .padding(.horizontal, 40)
                 .padding(.top, 8)
             }
             Spacer(minLength: 24)
@@ -2677,36 +2640,52 @@ private struct CutForDealView: View {
     @State private var busy = false
 
     var body: some View {
-        return VStack(alignment: .leading, spacing: 10) {
-            if let cut = p.cut, cut.youMustPick {
-                HStack {
-                    Spacer()
-                    if cut.faceDownRemaining > 0 {
-                        Button("Random card") {
-                            let m = cut.faceDownRemaining
-                            highlightIndex = Int.random(in: 0 ..< m)
-                        }
-                        .font(.caption)
-                    }
-                    Spacer()
-                    Button("Select") {
-                        if let h = highlightIndex { submitIndex(h) }
-                    }
-                    .font(.headline)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(highlightIndex == nil || busy)
-                    Spacer()
-                }
-            }
+        return VStack(spacing: 20) {
             CutForDealTable(
                 p: p,
                 highlightIndex: $highlightIndex,
                 busy: $busy
             )
-            .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
+
+            if let cut = p.cut, cut.youMustPick, !busy {
+                actionBar(cut: cut)
+            }
         }
+        .frame(maxWidth: .infinity)
         .onChange(of: p.cut?.youMustPick ?? false) { _, new in
             if new { highlightIndex = nil }
+        }
+    }
+
+    @ViewBuilder
+    private func actionBar(cut: PlayerPerspective.CutState) -> some View {
+        VStack(spacing: 12) {
+            Text(highlightIndex == nil
+                ? "Tap a card in the fan to choose your cut"
+                : "Card \(highlightIndex! + 1) of \(cut.faceDownRemaining) selected")
+                .font(.footnote)
+                .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                .animation(.none, value: highlightIndex)
+
+            HStack(spacing: 12) {
+                if cut.faceDownRemaining > 0 {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            highlightIndex = Int.random(in: 0 ..< cut.faceDownRemaining)
+                        }
+                    } label: {
+                        Label("Random", systemImage: "dice")
+                    }
+                    .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
+                }
+                Button {
+                    if let h = highlightIndex { submitIndex(h) }
+                } label: {
+                    Text("Cut here")
+                }
+                .buttonStyle(GinActionButtonStyle(filled: true))
+                .disabled(highlightIndex == nil || busy)
+            }
         }
     }
 

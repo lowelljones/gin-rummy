@@ -46,6 +46,14 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
     func totalThey() -> Int {
         hands.compactMap(\.theyPoints).reduce(0, +)
     }
+
+    /// A hand is "won" (a box) by whoever scored points in it.
+    func weBoxesWon() -> Int { hands.filter { ($0.wePoints ?? 0) > 0 }.count }
+    func theyBoxesWon() -> Int { hands.filter { ($0.theyPoints ?? 0) > 0 }.count }
+    /// Net boxes from the We player's perspective (+ means We are up).
+    func netBoxes() -> Int { weBoxesWon() - theyBoxesWon() }
+    /// True once at least one scored hand exists.
+    var hasScoredHand: Bool { weBoxesWon() + theyBoxesWon() > 0 }
 }
 
 struct ManualScoreHand: Codable, Equatable, Identifiable {
@@ -117,7 +125,7 @@ final class ManualScoreStore: ObservableObject {
 
     func netBox(forWePlayer: Bool) -> Int {
         session.games.reduce(0) { sum, game in
-            sum + (forWePlayer ? (game.weBox ?? 0) : (game.theyBox ?? 0))
+            sum + (forWePlayer ? game.netBoxes() : -game.netBoxes())
         }
     }
 

@@ -87,35 +87,36 @@ struct JoinLobbyEnterCodeView: View {
     @State private var messageIsError = true
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                Text("Enter your host’s lobby code.")
-                    .font(.subheadline)
-                    .foregroundStyle(GinRummyPalette.gold.opacity(0.85))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
+        VStack(spacing: 20) {
+            Text("Enter your host’s lobby code.")
+                .font(.subheadline)
+                .foregroundStyle(GinRummyPalette.gold.opacity(0.85))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
 
-                TextField("", text: $joinCode)
-                    .textInputAutocapitalization(.characters)
-                    .font(.title3.bold().monospaced())
-                    .multilineTextAlignment(.center)
-                    .ginOutlinedField()
+            TextField("", text: $joinCode)
+                .textInputAutocapitalization(.characters)
+                .font(.title3.bold().monospaced())
+                .multilineTextAlignment(.center)
+                .ginOutlinedField()
 
-                Button(busy ? "Joining…" : "Join lobby") {
-                    Task { await join() }
-                }
-                .buttonStyle(GinPrimaryButtonStyle())
-                .disabled(busy || app.accessToken == nil || joinCode.count < 4)
-
-                if !message.isEmpty {
-                    FeedbackLine(text: message, isError: messageIsError, privateClubStyle: true)
-                }
-
-                inviteHint
+            Button(busy ? "Joining…" : "Join lobby") {
+                Task { await join() }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
+            .buttonStyle(GinPrimaryButtonStyle())
+            .disabled(busy || app.accessToken == nil || joinCode.count < 4)
+
+            if !message.isEmpty {
+                FeedbackLine(text: message, isError: messageIsError, privateClubStyle: true)
+            }
+
+            inviteHint
+
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Join lobby")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

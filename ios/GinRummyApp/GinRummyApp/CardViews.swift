@@ -126,6 +126,16 @@ struct PlayingCardView: View {
         }
     }
 
+    /// Opaque ivory face with a soft top-down sheen so cards read as solid
+    /// objects on the felt rather than translucent panes.
+    private var cardFaceFill: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 1.0, green: 0.99, blue: 0.96), Color(red: 0.95, green: 0.92, blue: 0.85)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
     var body: some View {
         Group {
             if faceDown {
@@ -134,14 +144,14 @@ struct PlayingCardView: View {
                     .overlay { cardBackFiligree.opacity(0.35) }
             } else {
                 RoundedRectangle(cornerRadius: corner)
-                    .fill(GinRummyPalette.cream.opacity(0.97))
+                    .fill(cardFaceFill)
                     .overlay(
                         VStack(spacing: 0) {
                             HStack {
                                 VStack(alignment: .leading, spacing: cw * 0.02) {
                                     Text(PlayingCard.displayRank(card))
                                         .font(rankFont)
-                                        .fontWeight(.semibold)
+                                        .fontWeight(.bold)
                                     Text(PlayingCard.suitSymbol(card))
                                         .font(cornerSuitFont)
                                 }
@@ -157,13 +167,18 @@ struct PlayingCardView: View {
             }
         }
         .frame(width: cw, height: ch)
+        .background(
+            // Solid base so nothing behind the card ever shows through.
+            RoundedRectangle(cornerRadius: corner).fill(Color(red: 0.97, green: 0.95, blue: 0.9))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: corner)
                 .stroke(
-                    selected ? GinRummyPalette.burgundy : GinRummyPalette.gold.opacity(0.42),
+                    selected ? GinRummyPalette.burgundy : GinRummyPalette.navy.opacity(0.28),
                     lineWidth: selected ? 2.5 : 1
                 )
         )
+        .shadow(color: .black.opacity(0.28), radius: selected ? 6 : 3, x: 0, y: selected ? 4 : 2)
         .onTapGesture { onTap?() }
     }
 }
@@ -215,25 +230,43 @@ private enum CardFanLayout {
         return max(44, min(byWidth, byHeight))
     }
 
+    static let rotationPerCard: Double = 1.6
+
+    /// Extra horizontal room a rotated edge card needs beyond half its width, so
+    /// the tilted top corners (where the rank/suit live) never clip off-screen.
+    static func edgeInset(n: Int, cardW: CGFloat) -> CGFloat {
+        guard n > 1 else { return hPad }
+        let cardH = cardW * CardMetrics.aspect
+        let maxAngle = abs(rotation(index: 0, count: n)) * .pi / 180
+        // Outer top corner x-extent of a card rotated about its bottom center.
+        let halfExtent = (cardW / 2) * cos(maxAngle) + cardH * sin(maxAngle)
+        let overhang = max(0, halfExtent - cardW / 2)
+        return hPad + overhang
+    }
+
     /// Horizontal center of card `i` measured from the row's left edge.
-    /// First/last centers sit a half-card in from each edge.
+    /// First/last centers are inset enough that rotated corners stay on-screen.
     static func centerX(index i: Int, n: Int, width: CGFloat, cardW: CGFloat) -> CGFloat {
         guard n > 1 else { return width / 2 }
-        let first = hPad + cardW / 2
-        let last = width - hPad - cardW / 2
+        let inset = edgeInset(n: n, cardW: cardW)
+        let first = inset + cardW / 2
+        let last = width - inset - cardW / 2
+        guard last > first else { return width / 2 }
         let step = (last - first) / CGFloat(n - 1)
         return first + CGFloat(i) * step
     }
 
     static func step(n: Int, width: CGFloat, cardW: CGFloat) -> CGFloat {
         guard n > 1 else { return 0 }
-        let first = hPad + cardW / 2
-        let last = width - hPad - cardW / 2
+        let inset = edgeInset(n: n, cardW: cardW)
+        let first = inset + cardW / 2
+        let last = width - inset - cardW / 2
+        guard last > first else { return 0 }
         return (last - first) / CGFloat(n - 1)
     }
 
     static func rotation(index i: Int, count n: Int) -> Double {
-        (Double(i) - 0.5 * Double(max(n - 1, 0))) * 2.2
+        (Double(i) - 0.5 * Double(max(n - 1, 0))) * rotationPerCard
     }
 }
 
@@ -651,40 +684,76 @@ struct CutSpreadPicker: View {
     let cardCount: Int
     @Binding var highlightIndex: Int?
 
+    /// Every card in the spread is a full-size face-down card; they overlap so
+    /// only left edges show, with the rightmost card fully visible.
+    private let fullW: CGFloat = 80
+    private let cardH: CGFloat = 118
+    private let lift: CGFloat = 24
+    private let margin: CGFloat = 8
+
     var body: some View {
         GeometryReader { geo in
             let n = max(0, cardCount)
             if n == 0 {
                 Color.clear
             } else {
-                let sliverW: CGFloat = 10
-                let step: CGFloat = n > 1
-                    ? min(8, (geo.size.width - sliverW) / CGFloat(n - 1))
-                    : 0
-                ZStack(alignment: .leading) {
-                    ForEach(0..<n, id: \.self) { i in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.indigo, Color.purple],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: sliverW, height: 46)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .stroke(highlightIndex == i ? Color.yellow : Color.white.opacity(0.25), lineWidth: highlightIndex == i ? 2 : 0.5)
-                            )
-                            .offset(x: CGFloat(i) * step)
-                            .onTapGesture { highlightIndex = i }
-                            .accessibilityLabel("Card position \(i) of \(n)")
+                let avail = geo.size.width
+                let usable = max(fullW, avail - 2 * margin)
+                let rawStep = n > 1 ? (usable - fullW) / CGFloat(n - 1) : 0
+                // Keep cards overlapping (so the rightmost reads as the full card)
+                // but never thinner than a hairline sliver.
+                let step = n > 1 ? max(4, min(fullW * 0.5, rawStep)) : 0
+                let spreadW = fullW + step * CGFloat(max(0, n - 1))
+                let leading = max(margin, (avail - spreadW) / 2)
+                ZStack(alignment: .topLeading) {
+                    ForEach(0 ..< n, id: \.self) { i in
+                        let isSel = highlightIndex == i
+                        cardBack(selected: isSel)
+                            // Selected card lifts up above its own slot.
+                            .offset(x: leading + CGFloat(i) * step, y: isSel ? 0 : lift)
+                            .zIndex(isSel ? 1000 : Double(i))
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    highlightIndex = i
+                                }
+                            }
+                            .accessibilityLabel("Card position \(i + 1) of \(n)")
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .frame(height: 52)
+        .frame(height: cardH + lift + 4)
+    }
+
+    private func cardBack(selected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(
+                LinearGradient(
+                    colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.92)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: fullW, height: cardH)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(selected ? GinRummyPalette.gold : GinRummyPalette.gold.opacity(0.4),
+                            lineWidth: selected ? 2.4 : 1)
+                    .padding(3)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(selected ? GinRummyPalette.gold : GinRummyPalette.gold.opacity(0.25),
+                            lineWidth: selected ? 2 : 0.8)
+            )
+            .overlay {
+                Image(systemName: "suit.spade.fill")
+                    .font(.system(size: fullW * 0.34))
+                    .foregroundStyle(GinRummyPalette.gold.opacity(selected ? 0.9 : 0.45))
+            }
+            .shadow(color: .black.opacity(selected ? 0.4 : 0.2),
+                    radius: selected ? 10 : 3, y: selected ? 6 : 2)
     }
 }
 
@@ -696,99 +765,85 @@ struct CutForDealTable: View {
     @Binding var busy: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 18) {
             if let c = p.cut {
-                turnHeader(c: c, seat: p.seat)
-                HStack(alignment: .top, spacing: 8) {
-                    youZone(c: c)
-                    opponentZone(c: c)
+                HStack(alignment: .top, spacing: 28) {
+                    zone(title: "You", state: youZoneState(c))
+                    zone(title: "Opponent", state: opponentZoneState(c))
                 }
-                if c.opponentHasPicked, c.youMustPick {
-                    Text("Their card is out of the spread. Choose a position, then Select.")
-                        .font(.caption.italic())
-                        .foregroundStyle(.secondary)
-                }
+
                 if c.youMustPick, !busy {
                     CutSpreadPicker(cardCount: c.faceDownRemaining, highlightIndex: $highlightIndex)
-                } else if !c.youMustPick, c.yourCut != nil, !c.opponentHasPicked {
-                    HStack {
-                        Image(systemName: "hourglass")
-                        Text("Waiting for opponent to draw…")
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                } else if p.seat != c.activePicker, c.yourCut == nil, !c.youMustPick {
-                    HStack {
-                        Image(systemName: "hourglass")
-                        Text("Waiting for opponent to draw…")
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                } else if waitingForOpponent(c) {
+                    Label("Waiting for opponent to draw…", systemImage: "hourglass")
+                        .font(.subheadline)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                        .padding(.vertical, 8)
                 }
             }
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    private enum ZoneState: Equatable {
+        case card(String)
+        case drawing
+        case empty
+    }
+
+    private func youZoneState(_ c: PlayerPerspective.CutState) -> ZoneState {
+        if let y = c.yourCut, !y.isEmpty { return .card(y) }
+        return .empty
+    }
+
+    private func opponentZoneState(_ c: PlayerPerspective.CutState) -> ZoneState {
+        if let t = c.theirCut, !t.isEmpty { return .card(t) }
+        if c.yourCut != nil, !c.opponentHasPicked { return .drawing }
+        return .empty
+    }
+
+    private func waitingForOpponent(_ c: PlayerPerspective.CutState) -> Bool {
+        if c.youMustPick { return false }
+        if c.yourCut != nil, !c.opponentHasPicked { return true }
+        if p.seat != c.activePicker, c.yourCut == nil { return true }
+        return false
     }
 
     @ViewBuilder
-    private func youZone(c: PlayerPerspective.CutState) -> some View {
-        VStack(alignment: .center, spacing: 4) {
-            Text("Your Card").font(.caption2).foregroundStyle(.secondary)
-            if let y = c.yourCut, !y.isEmpty {
-                PlayingCardView(card: y, compact: true, onTap: nil)
-                    .transition(.scale.combined(with: .opacity))
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.clear)
-                    .frame(width: 51, height: 75)
-                    .overlay { Text("—").foregroundStyle(.tertiary) }
+    private func zone(title: String, state: ZoneState) -> some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.cream)
+            Group {
+                switch state {
+                case let .card(card):
+                    PlayingCardView(card: card, compact: false, onTap: nil)
+                        .transition(.scale.combined(with: .opacity))
+                case .drawing:
+                    placeholder
+                        .overlay { ProgressView().tint(GinRummyPalette.gold) }
+                case .empty:
+                    placeholder
+                        .overlay {
+                            Image(systemName: "questionmark")
+                                .font(.title2)
+                                .foregroundStyle(GinRummyPalette.sage.opacity(0.5))
+                        }
+                }
             }
-            Text(c.youMustPick ? "Pick below" : (c.yourCut == nil ? "—" : "In your zone"))
-                .font(.caption2)
         }
         .frame(maxWidth: .infinity)
     }
 
-    @ViewBuilder
-    private func opponentZone(c: PlayerPerspective.CutState) -> some View {
-        VStack(alignment: .center, spacing: 4) {
-            Text("Opponent Card")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if let t = c.theirCut, !t.isEmpty {
-                PlayingCardView(card: t, compact: true, onTap: nil)
-                    .transition(.scale.combined(with: .opacity))
-            } else if c.yourCut != nil, !c.opponentHasPicked {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.orange.opacity(0.2))
-                    .frame(width: 51, height: 75)
-                    .overlay { ProgressView() }
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.clear)
-                    .frame(width: 51, height: 75)
-                    .overlay { Text("—").foregroundStyle(.tertiary) }
-            }
-            Text(
-                (c.theirCut != nil && !(c.theirCut?.isEmpty ?? true))
-                    ? "Their draw"
-                    : (c.yourCut != nil && !c.opponentHasPicked ? "Drawing…" : "—")
+    private var placeholder: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(GinRummyPalette.bgPanel.opacity(0.5))
+            .frame(width: 86, height: 124)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(GinRummyPalette.gold.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
             )
-            .font(.caption2)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private func turnHeader(c: PlayerPerspective.CutState, seat: Int) -> some View {
-        if c.youMustPick {
-            Text("Highlight a position, tap Select, or use Random card.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        } else if seat != c.activePicker, c.yourCut == nil {
-            Text("Opponent draws first.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 
