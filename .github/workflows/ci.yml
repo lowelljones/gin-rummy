@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (rules + api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # `npm test` at the repo root installs + tests backend/rules and backend/api.
+      - name: Unit tests (rules + api)
+        run: npm test
+
+      # Hermetic invite-link flow against a mock Supabase + the real API.
+      - name: Invite-link e2e
+        run: npm run test:e2e
+
+  ios:
+    name: iOS (build + unit tests)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_16.app
+
+      - name: Build & test
+        run: |
+          xcodebuild test \
+            -project ios/GinRummyApp/GinRummyApp.xcodeproj \
+            -scheme GinRummyApp \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            CODE_SIGNING_ALLOWED=NO

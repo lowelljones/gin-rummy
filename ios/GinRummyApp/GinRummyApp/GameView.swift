@@ -28,6 +28,9 @@ struct GameView: View {
     /// `seq` of the most recent server-reported action we've already logged (0 = none yet).
     @State private var lastSeenServerActionSeq = 0
 
+    /// Realtime subscription to `player_game_snapshots` (RLS-filtered per user).
+    @State private var signalSocket: GameSignalSocket?
+
     /// Terminal/transition states for leaving an unfinished game (yours or the opponent's).
     private enum GameExitState: Equatable {
         /// The leave API call is in flight — brief "leaving the table" visual.
@@ -274,6 +277,7 @@ struct GameView: View {
             cardFlightClearTask?.cancel()
             messageTask?.cancel()
             chatBaselineTask?.cancel()
+            disconnectGameSignals()
         }
     }
 
@@ -288,7 +292,94 @@ struct GameView: View {
 
     /// Same duration as `HandRevealView`'s flash stage.
     private static let redealFlashDurationNs: UInt64 = 2_400_000_000
-    private static let pollIntervalNs: UInt64 = 1_000_000_000
+    /// Safety-poll cadence. When realtime is configured the socket delivers
+    /// opponent moves within ~tens of ms, so we poll slowly (12s) purely as a
+    /// backstop; without realtime we fall back to the old ~1s cadence.
+    private static var pollIntervalNs: UInt64 {
+        GameSignalSocket.isConfigured ? 12_000_000_000 : 1_000_000_000
+    }
+
+    @MainActor
+    private func connectGameSignals(gameId: String) {
+        signalSocket?.disconnect()
+        guard let token = app.accessToken else { return }
+        let socket = GameSignalSocket(gameId: gameId, accessToken: token) { state in
+            if applyAbandonmentIfNeeded(state, gameId: gameId) { return }
+            applyRemoteGameState(state, gameId: gameId)
+        }
+        signalSocket = socket
+        socket.connect()
+    }
+
+    @MainActor
+    private func disconnectGameSignals() {
+        signalSocket?.disconnect()
+        signalSocket = nil
+    }
+
+    @MainActor
+    private func applyRemoteGameState(_ s: GameStateResponse, gameId: String) {
+        guard app.activeGameId == gameId else { return }
+        guard exitState == nil else { return }
+
+        if let rematch = s.rematch {
+            rematchStatus = rematch
+            sessionLobbyCode = rematch.lobbyInviteCode
+            if let me = rematch.players.first(where: { $0.isSelf }) {
+                rematchLocalReady = me.ready
+            }
+            if let nextId = rematch.nextGameId, nextId != gameId, let token = app.accessToken {
+                Task { await transitionToRematchGame(gameId: nextId, token: token) }
+            }
+        } else if let code = s.lobbyInviteCode {
+            sessionLobbyCode = code
+            if s.perspective.phase != "matchOver" {
+                rematchStatus = nil
+                rematchLocalReady = false
+            }
+        } else if s.perspective.phase != "matchOver" {
+            rematchStatus = nil
+            rematchLocalReady = false
+            sessionLobbyCode = nil
+        }
+
+        scheduleChatBaselineLoadOnce(gameId: gameId)
+
+        let before = app.lastPerspective
+        let snapshotChanged =
+            before == nil
+            || before != s.perspective
+            || app.lastBetting != s.betting
+
+        if snapshotChanged {
+            app.applyGameTableState(
+                perspective: s.perspective,
+                betting: s.betting,
+                opponentDisplayName: s.opponentDisplayName
+            )
+            let a = s.perspective
+            handleAfterPerspectiveUpdate(before: before, after: a)
+            if let b = before {
+                let o = 1 - a.seat
+                let bOpp = b.hands[o], aOpp = a.hands[o]
+                if aOpp.count == bOpp.count + 1,
+                   b.phase == "upcardOffer",
+                   a.discard.count < b.discard.count
+                {
+                    downCardStatusMessage = "Opponent Drew Down Card"
+                    messageTask?.cancel()
+                    messageTask = Task {
+                        try? await Task.sleep(nanoseconds: 5_500_000_000)
+                        await MainActor.run {
+                            if downCardStatusMessage == "Opponent Drew Down Card" {
+                                downCardStatusMessage = nil
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private func proposeRedealAllowed(for p: PlayerPerspective) -> Bool {
         GameTablePolicy.proposeRedealAllowed(phase: p.phase)
@@ -555,23 +646,9 @@ struct GameView: View {
         }
     }
 
-    private func matchOutcomeSubtitle(_ p: PlayerPerspective) -> String {
-        let winner: Int?
-        if p.scores[0] >= p.raceTarget { winner = 0 }
-        else if p.scores[1] >= p.raceTarget { winner = 1 }
-        else { winner = nil }
-        guard let w = winner else { return "Race to \(p.raceTarget)" }
-        return w == p.seat ? "You reached \(p.raceTarget) first." : "Opponent reached \(p.raceTarget) first."
-    }
+    private func matchOutcomeSubtitle(_ p: PlayerPerspective) -> String { GameNarration.matchOutcomeSubtitle(p) }
 
-    private func matchWinnerHeadline(_ p: PlayerPerspective) -> String {
-        let winner: Int?
-        if p.scores[0] >= p.raceTarget { winner = 0 }
-        else if p.scores[1] >= p.raceTarget { winner = 1 }
-        else { winner = nil }
-        guard let w = winner else { return "Match complete" }
-        return w == p.seat ? "You won the match" : "Opponent won the match"
-    }
+    private func matchWinnerHeadline(_ p: PlayerPerspective) -> String { GameNarration.matchWinnerHeadline(p) }
 
     @ViewBuilder
     private func matchSummaryPanel(p: PlayerPerspective) -> some View {
@@ -1248,6 +1325,7 @@ struct GameView: View {
             guard exitState == nil else { return }
             pollTask?.cancel()
             pollTask = Task { await pollLoop(gameId: gameId) }
+            connectGameSignals(gameId: gameId)
         }
         .onChange(of: gameContentObservation(p)) { old, new in
             if old.hand != new.hand {
@@ -1300,28 +1378,7 @@ struct GameView: View {
         )
     }
 
-    private func cardName(_ raw: String) -> String {
-        let c = CardIdValidation.normalize(raw)
-        guard c.count == 2 else { return raw }
-        let r = c.first!
-        let s = c.last!
-        let rank: String = switch r {
-        case "A": "Ace"
-        case "K": "King"
-        case "Q": "Queen"
-        case "J": "Jack"
-        case "T": "10"
-        default: String(r)
-        }
-        let suit: String = switch s {
-        case "S": "Spades"
-        case "H": "Hearts"
-        case "D": "Diamonds"
-        case "C": "Clubs"
-        default: String(s)
-        }
-        return "\(rank) of \(suit)"
-    }
+    private func cardName(_ raw: String) -> String { GameNarration.cardName(raw) }
 
     private static let opponentDeclinedDownCardMessage = "Opponent declined the down card."
 
@@ -1634,10 +1691,7 @@ struct GameView: View {
 
     private func scheduleOpponentTurnBanner(text _: String, card _: String?) {}
 
-    private func turnLine(_ p: PlayerPerspective) -> String {
-        if p.currentTurn == p.seat { return "Your turn" }
-        return "Opponent’s turn"
-    }
+    private func turnLine(_ p: PlayerPerspective) -> String { GameNarration.turnLine(p) }
 
     private func downCardStageTitle(_ p: PlayerPerspective) -> String {
         if downCardStatusMessage == Self.opponentDeclinedDownCardMessage {
@@ -1650,14 +1704,10 @@ struct GameView: View {
             : "Waiting on opponent (down card)"
     }
 
-    private func cutStageTitle(_ p: PlayerPerspective) -> String {
-        guard let c = p.cut else { return "High card wins the first deal" }
-        return c.youMustPick ? "Your turn — tap the spread to cut" : "Opponent is cutting"
-    }
+    private func cutStageTitle(_ p: PlayerPerspective) -> String { GameNarration.cutStageTitle(p) }
 
     private func knockLayoffLine(_ p: PlayerPerspective, k: PlayerPerspective.KnockPerspective) -> String {
-        let whose = k.layoffTurn == p.seat ? "Your" : "Opponent’s"
-        return "Layoff · \(whose) turn"
+        GameNarration.knockLayoffLine(p, k: k)
     }
 
     /// Scoreboard strip only — opponent hand is hidden during play (count only).
@@ -1950,12 +2000,14 @@ struct GameView: View {
             }
             await MainActor.run {
                 pollTask = Task { await pollLoop(gameId: gameId) }
+                connectGameSignals(gameId: gameId)
             }
         } catch {
             await MainActor.run {
                 app.activeGameId = gameId
                 pollTask?.cancel()
                 pollTask = Task { await pollLoop(gameId: gameId) }
+                connectGameSignals(gameId: gameId)
             }
         }
     }
@@ -1978,68 +2030,7 @@ struct GameView: View {
                 }
                 if gameWasAbandoned { return }
                 await MainActor.run {
-                    guard app.activeGameId == gameId else { return }
-                    /* While the player is leaving or viewing the exit screen, ignore
-                     * live snapshots so the table can't flash back underneath. */
-                    guard exitState == nil else { return }
-
-                    if let rematch = s.rematch {
-                        rematchStatus = rematch
-                        sessionLobbyCode = rematch.lobbyInviteCode
-                        if let me = rematch.players.first(where: { $0.isSelf }) {
-                            rematchLocalReady = me.ready
-                        }
-                        if let nextId = rematch.nextGameId, nextId != gameId {
-                            Task { await transitionToRematchGame(gameId: nextId, token: token) }
-                        }
-                    } else if let code = s.lobbyInviteCode {
-                        sessionLobbyCode = code
-                        if s.perspective.phase != "matchOver" {
-                            rematchStatus = nil
-                            rematchLocalReady = false
-                        }
-                    } else if s.perspective.phase != "matchOver" {
-                        rematchStatus = nil
-                        rematchLocalReady = false
-                        sessionLobbyCode = nil
-                    }
-
-                    scheduleChatBaselineLoadOnce(gameId: gameId)
-
-                    let before = app.lastPerspective
-                    let snapshotChanged =
-                        before == nil
-                        || before != s.perspective
-                        || app.lastBetting != s.betting
-
-                    if snapshotChanged {
-                        app.applyGameTableState(
-                            perspective: s.perspective,
-                            betting: s.betting,
-                            opponentDisplayName: s.opponentDisplayName
-                        )
-                        let a = s.perspective
-                        handleAfterPerspectiveUpdate(before: before, after: a)
-                        if let b = before {
-                            let o = 1 - a.seat
-                            let bOpp = b.hands[o], aOpp = a.hands[o]
-                            if aOpp.count == bOpp.count + 1,
-                               b.phase == "upcardOffer",
-                               a.discard.count < b.discard.count
-                            {
-                                downCardStatusMessage = "Opponent Drew Down Card"
-                                messageTask?.cancel()
-                                messageTask = Task {
-                                    try? await Task.sleep(nanoseconds: 5_500_000_000)
-                                    await MainActor.run {
-                                        if downCardStatusMessage == "Opponent Drew Down Card" {
-                                            downCardStatusMessage = nil
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    applyRemoteGameState(s, gameId: gameId)
                 }
                 await fetchAndMergeChatFromPoll(gameId: gameId, token: token)
             } catch {

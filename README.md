@@ -35,6 +35,11 @@ The app reads these from `Info.plist` keys of the same name.
 
 ## Database
 
+> **Player snapshots + Realtime** (migration [`20260624000000_player_game_snapshots.sql`](supabase/migrations/20260624000000_player_game_snapshots.sql))
+> adds `player_game_snapshots` — one RLS-gated row per `(game, user)` holding the
+> filtered perspective. Apply before deploying the latest API/iOS build so
+> in-game Realtime updates work.
+
 Apply migrations in order from [`supabase/migrations`](supabase/migrations) in the Supabase SQL editor or CLI:
 
 ```bash
@@ -146,6 +151,24 @@ The landing page works without any Apple setup. To make links open the app
 3. Set **GIN_INVITE_WEB_BASE_URL** in `Info.plist` to `https://<your-domain>` (no trailing slash) so ShareLink uses HTTPS invites.
 
 For local development the app registers the custom URL scheme `ginrummy://join/<code>` (see `CFBundleURLTypes` in [`Info.plist`](ios/GinRummyApp/GinRummyApp/Info.plist)).
+
+## Realtime updates
+
+In-game state is pushed over **Supabase Realtime `postgres_changes`** on the
+`player_game_snapshots` table:
+
+- After every committed move the API upserts one row per human player with that
+  seat's filtered perspective (`syncPlayerGameSnapshots` in
+  [`backend/api/src/playerGameSnapshots.ts`](backend/api/src/playerGameSnapshots.ts)).
+- RLS (`user_id = auth.uid()`) ensures each client only receives their own row —
+  never the opponent's hidden cards.
+- The iOS client subscribes via a dependency-free WebSocket
+  ([`GameSignalSocket.swift`](ios/GinRummyApp/GinRummyApp/GameSignalSocket.swift))
+  and renders the pushed snapshot directly (no `/state` pull on every move).
+- A slow safety poll (12s when Supabase is configured, ~1s otherwise) plus
+  `/games/:id/state` on launch remain as backstops for chat sync and reconnect.
+- Rematch ready-flag changes also refresh snapshots via
+  `syncRematchSnapshotsForLobby` when lobby ready toggles.
 
 ## Security notes
 

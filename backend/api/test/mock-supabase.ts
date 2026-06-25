@@ -31,6 +31,7 @@ const tables: Record<string, Row[]> = {
   hand_episodes: [],
   game_moves: [],
   game_chat_messages: [],
+  player_game_snapshots: [],
 };
 
 type User = { id: string; email: string; password: string };

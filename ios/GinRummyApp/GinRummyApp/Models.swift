@@ -340,6 +340,67 @@ struct GameStateResponse: Codable {
         rematch = try container.decodeIfPresent(RematchStatusDTO.self, forKey: .rematch)
         lobbyInviteCode = try container.decodeIfPresent(String.self, forKey: .lobbyInviteCode)
     }
+
+    /// Build from a Realtime `player_game_snapshots` row (or API `/state` parity).
+    init(
+        perspective: PlayerPerspective,
+        moveSeq: Int,
+        status: String,
+        leftBySeat: Int? = nil,
+        betting: BettingDTO? = nil,
+        opponentDisplayName: String? = nil,
+        rematch: RematchStatusDTO? = nil,
+        lobbyInviteCode: String? = nil
+    ) {
+        self.perspective = perspective
+        self.moveSeq = moveSeq
+        self.status = status
+        self.leftBySeat = leftBySeat
+        self.betting = betting
+        self.opponentDisplayName = opponentDisplayName
+        self.rematch = rematch
+        self.lobbyInviteCode = lobbyInviteCode
+    }
+}
+
+/// One row from `player_game_snapshots` — safe for the subscribing user (RLS).
+struct PlayerGameSnapshotDTO: Codable {
+    let gameId: String
+    let userId: String
+    let moveSeq: Int
+    let perspective: PlayerPerspective
+    let status: String
+    let leftBySeat: Int?
+    let betting: BettingDTO?
+    let opponentDisplayName: String?
+    let rematch: RematchStatusDTO?
+    let lobbyInviteCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case gameId = "game_id"
+        case userId = "user_id"
+        case moveSeq = "move_seq"
+        case perspective
+        case status
+        case leftBySeat = "left_by_seat"
+        case betting
+        case opponentDisplayName = "opponent_display_name"
+        case rematch
+        case lobbyInviteCode = "lobby_invite_code"
+    }
+
+    func asGameStateResponse() -> GameStateResponse {
+        GameStateResponse(
+            perspective: perspective,
+            moveSeq: moveSeq,
+            status: status,
+            leftBySeat: leftBySeat,
+            betting: betting,
+            opponentDisplayName: opponentDisplayName,
+            rematch: rematch,
+            lobbyInviteCode: lobbyInviteCode
+        )
+    }
 }
 
 /// Lobby ready-up state surfaced on the match summary screen for rematches.

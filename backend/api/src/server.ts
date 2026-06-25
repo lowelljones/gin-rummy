@@ -1,6 +1,7 @@
 import "dotenv/config";
+import { randomInt } from "node:crypto";
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from "fastify";
 import { createClient } from "@supabase/supabase-js";
 import {
   applyIntent,
@@ -14,6 +15,12 @@ import {
 import { computeTestBotIntent, fallbackTestBotIntent, hasTestBotWork } from "./bot.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
 import { detectHandEpisodeClose, moveAnalyticsFields, stampDealStartMoveSeq } from "./handEpisode.js";
+import {
+  buildGameStatePayloadForUser,
+  syncPlayerGameSnapshots,
+  syncRematchSnapshotsForLobby,
+  type SnapshotSyncDeps,
+} from "./playerGameSnapshots.js";
 import { buildSessionRecapFromGames, type SessionRecapPayload } from "./sessionRecap.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
@@ -71,6 +78,23 @@ function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T
 
 const SUPABASE_STEP_TIMEOUT_MS = Number(process.env.SUPABASE_STEP_TIMEOUT_MS ?? "8000");
 
+/* One place that turns thrown/uncaught route errors into consistent JSON. A
+ * `TimeoutError` (a stalled Supabase await wrapped by `withTimeout`) becomes a
+ * 504 so the client can tell "upstream is slow" apart from a real 500. Routes
+ * that already send explicit error replies are unaffected — this only fires when
+ * a handler throws. */
+app.setErrorHandler((err: FastifyError, req, reply) => {
+  if (err instanceof TimeoutError) {
+    req.log.error({ step: err.label, ms: err.ms }, "route timed out");
+    return reply
+      .code(504)
+      .send({ error: `Upstream timeout at "${err.label}" (${err.ms}ms). Check Supabase reachability.` });
+  }
+  const statusCode = typeof err.statusCode === "number" ? err.statusCode : 500;
+  req.log.error({ err: err.message, statusCode }, "unhandled route error");
+  return reply.code(statusCode).send({ error: err.message });
+});
+
 function randomInvite(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "";
@@ -87,8 +111,35 @@ async function userFromAuthHeader(h: string | undefined): Promise<{ id: string; 
   return { id: data.user.id, email: data.user.email ?? undefined };
 }
 
+/* Standard bearer-token gate for authenticated routes. Resolves the Supabase user
+ * (bounded by the same upstream timeout as every other await) or sends 401 and
+ * returns null, so a handler can simply `if (!user) return;`. Centralizes the
+ * auth lookup, the timeout, and the 401 payload that used to be copy-pasted into
+ * every route. */
+async function requireUser(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): Promise<{ id: string; email?: string } | null> {
+  const user = await withTimeout(
+    userFromAuthHeader(req.headers.authorization),
+    SUPABASE_STEP_TIMEOUT_MS,
+    "auth.getUser",
+  );
+  if (!user) {
+    reply.code(401).send({ error: "Unauthorized" });
+    return null;
+  }
+  return user;
+}
+
+/* Crypto-backed uniform RNG in [0, 1) used for shuffles and the opening coin flip.
+ * `randomInt` draws unbiased integers from the OS CSPRNG; 48 bits is ample entropy
+ * for a 52-card Fisher-Yates and avoids the predictability of `Math.random`. */
 function rng(): () => number {
-  return Math.random;
+  /* `randomInt` requires the span to be < 2**48, so draw 47 bits of entropy and
+   * normalize to [0, 1) — far more than a 52-card Fisher-Yates needs. */
+  const RANGE = 2 ** 47;
+  return () => randomInt(0, RANGE) / RANGE;
 }
 
 function seatForUser(game: { seat_for_user: Record<string, number> }, userId: string): 0 | 1 | null {
@@ -194,6 +245,7 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
       if (lobbyId) {
         await prepareLobbyForRematch(lobbyId);
       }
+      await syncPlayerGameSnapshots(gameId, snapshotDeps());
       return;
     }
     if (!hasTestBotWork(state)) return;
@@ -248,6 +300,7 @@ async function processTestBotIfNeeded(gameId: string, opts?: { maxSteps?: number
       app.log.warn({ gameId, seq: expectedPrevSeq }, "Test bot: move_seq conflict — will retry on next poll");
       return;
     }
+    await syncPlayerGameSnapshots(gameId, snapshotDeps());
     if (lobbyId && state.phase === "matchOver") {
       await prepareLobbyForRematch(lobbyId);
     }
@@ -677,6 +730,7 @@ async function createBotGameInLobby(lobbyId: string, hostUserId: string): Promis
   }
 
   await processTestBotIfNeeded(game.id as string);
+  await syncPlayerGameSnapshots(game.id as string, snapshotDeps());
   return { gameId: game.id as string };
 }
 
@@ -962,6 +1016,7 @@ async function tryStartHumanGameIfReady(lobbyId: string): Promise<StartAttempt> 
   }
 
   app.log.info({ lobbyId, gameId: game.id }, "ready: human game started");
+  await syncPlayerGameSnapshots(game.id as string, snapshotDeps());
   return { gameId: game.id as string };
 }
 
@@ -978,8 +1033,8 @@ async function tryStartRematchIfReady(lobbyId: string): Promise<StartAttempt> {
  * the table.
  */
 app.get("/lobbies/:code", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
   const code = (req.params as { code: string }).code.toUpperCase();
   const { data: lobby, error: lErr } = await admin
     .from("lobbies")
@@ -1009,8 +1064,8 @@ app.get("/lobbies/:code", async (req, reply) => {
  * winners). Used by the iOS session-results screen after rematches.
  */
 app.get("/lobbies/:code/session", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
   const code = (req.params as { code: string }).code.toUpperCase();
   const { data: lobby, error: lErr } = await admin
     .from("lobbies")
@@ -1044,8 +1099,8 @@ app.get("/lobbies/:code/session", async (req, reply) => {
  * tap twice quickly don't accidentally un-ready themselves).
  */
 app.post("/lobbies/:code/ready", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const code = (req.params as { code: string }).code.toUpperCase();
   const { data: lobby, error: lErr } = await admin
@@ -1103,6 +1158,8 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
     user.id
   );
   if (startError && !payload.start_error) payload.start_error = startError;
+  /* Push rematch ready / next_game_id changes to matchOver snapshots. */
+  await syncRematchSnapshotsForLobby(lobby.id, snapshotDeps());
   return payload;
 });
 
@@ -1113,8 +1170,8 @@ app.post("/lobbies/:code/ready", async (req, reply) => {
  * stuck with a phantom "both ready" state. No-ops once a game has started.
  */
 app.post("/lobbies/:code/leave", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const code = (req.params as { code: string }).code.toUpperCase();
   const { data: lobby, error: lErr } = await admin
@@ -1157,8 +1214,8 @@ app.post("/lobbies/:code/leave", async (req, reply) => {
 });
 
 app.post("/lobbies/:code/join", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
   await ensureProfile(user.id, user.email);
 
   const code = (req.params as { code: string }).code.toUpperCase();
@@ -1193,8 +1250,8 @@ app.post("/lobbies/:code/join", async (req, reply) => {
  * double-creating a game for the same lobby.
  */
 app.post("/lobbies/:code/start", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const code = (req.params as { code: string }).code.toUpperCase();
   const { data: lobby } = await admin.from("lobbies").select("id, status, created_by").eq("invite_code", code).maybeSingle();
@@ -1248,8 +1305,8 @@ app.post("/lobbies/:code/start", async (req, reply) => {
 });
 
 app.get("/games/:id/state", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   await processTestBotIfNeeded(id, { maxSteps: 12 });
@@ -1262,50 +1319,32 @@ app.get("/games/:id/state", async (req, reply) => {
 
   if (error || !game) return reply.code(404).send({ error: "Game not found" });
 
-  const seatMap = (game as { seat_for_user: Record<string, number> }).seat_for_user;
-  const seat = seatForUser(game as { seat_for_user: Record<string, number> }, user.id);
+  const row = game as {
+    id: string;
+    server_truth: ServerTruth;
+    seat_for_user: Record<string, number>;
+    move_seq: number;
+    status: string;
+    abandoned_by?: string | null;
+    lobby_id?: string | null;
+    is_bot_game?: boolean;
+  };
+  const seat = seatForUser(row, user.id);
   if (seat === null) return reply.code(403).send({ error: "Not a participant" });
 
-  const truth = game.server_truth as ServerTruth;
-  const oppName = await opponentDisplayNameForGame(seatMap, user.id);
-  const abandonedBy = (game as { abandoned_by?: string | null }).abandoned_by ?? null;
-  const leftBySeat =
-    game.status === "abandoned" && abandonedBy !== null
-      ? seatMap[abandonedBy] ?? null
-      : null;
-  const lobbyId = (game as { lobby_id?: string | null }).lobby_id ?? null;
-  const isBotGame = Boolean((game as { is_bot_game?: boolean }).is_bot_game);
-  const lobbyInviteCode = lobbyId ? await findLobbyInviteCode(lobbyId) : null;
-  let rematch: RematchStatusPayload | null = null;
-  if (truth.phase === "matchOver" && lobbyId) {
-    const probe = await buildRematchStatus(lobbyId, id, user.id, isBotGame);
-    if (probe?.both_ready && !probe.next_game_id) {
-      await tryStartRematchIfReady(lobbyId);
-    }
-    rematch = await buildRematchStatus(lobbyId, id, user.id, isBotGame);
-  }
-  return {
-    perspective: buildPerspective(truth, seat),
-    moveSeq: game.move_seq,
-    status: game.status,
-    /** Seat (0/1) of the player who left an abandoned game; null otherwise. */
-    leftBySeat,
-    opponentDisplayName: oppName,
-    betting:
-      truth.phase === "matchOver"
-        ? { raw: truth.bettingRaw, bucket: truth.bettingBucket }
-        : null,
-    rematch,
-    lobbyInviteCode,
-  };
+  const payload = await buildGameStatePayloadForUser(row, user.id, snapshotDeps(), {
+    tryRematchStart: true,
+  });
+  if (!payload) return reply.code(403).send({ error: "Not a participant" });
+  return payload;
 });
 
 /**
  * Session recap for the lobby linked to a game the caller is in.
  */
 app.get("/games/:id/session", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   const { data: game, error } = await admin
@@ -1352,13 +1391,13 @@ app.get("/games/:id/session", async (req, reply) => {
  * a flaky connection never strands the client.
  */
 app.post("/games/:id/leave", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   const { data: game, error } = await admin
     .from("games")
-    .select("id, status, seat_for_user, lobby_id, abandoned_by")
+    .select("id, status, seat_for_user, lobby_id, abandoned_by, move_seq")
     .eq("id", id)
     .maybeSingle();
 
@@ -1418,6 +1457,9 @@ app.post("/games/:id/leave", async (req, reply) => {
     await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
   }
 
+  /* Tell the other seat to refresh so they see the forfeit without waiting on a poll. */
+  await syncPlayerGameSnapshots(id, snapshotDeps());
+
   app.log.info({ gameId: id, userId: user.id, seat }, "player left game");
   return { ok: true, status: "abandoned", leftBySeat: seat };
 });
@@ -1459,6 +1501,18 @@ async function opponentDisplayNameForGame(seatMap: Record<string, number>, selfI
   return names[oid] ?? "Opponent";
 }
 
+function snapshotDeps(): SnapshotSyncDeps {
+  return {
+    admin,
+    botUserId: BOT_USER_ID,
+    opponentDisplayNameForGame,
+    findLobbyInviteCode,
+    buildRematchStatus,
+    tryStartRematchIfReady,
+    log: app.log,
+  };
+}
+
 function formatChatRows(rows: ChatRow[], selfId: string, names: Record<string, string>) {
   return rows.map((r) => ({
     id: r.id,
@@ -1471,8 +1525,8 @@ function formatChatRows(rows: ChatRow[], selfId: string, names: Record<string, s
 }
 
 app.get("/games/:id/chat", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   const { data: game, error: gErr } = await admin
@@ -1521,8 +1575,8 @@ app.get("/games/:id/chat", async (req, reply) => {
 });
 
 app.post("/games/:id/chat", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   const { data: game, error: gErr } = await admin
@@ -1567,8 +1621,8 @@ app.post("/games/:id/chat", async (req, reply) => {
 });
 
 app.post("/games/:id/move", async (req, reply) => {
-  const user = await userFromAuthHeader(req.headers.authorization);
-  if (!user) return reply.code(401).send({ error: "Unauthorized" });
+  const user = await requireUser(req, reply);
+  if (!user) return;
 
   const id = (req.params as { id: string }).id;
   const { data: game, error } = await admin
@@ -1635,6 +1689,10 @@ app.post("/games/:id/move", async (req, reply) => {
 
   const responseTruth = (after?.server_truth as ServerTruth) ?? finalTruth;
   const finalSeq = after ? Number(after.move_seq) : nextSeq;
+
+  await syncPlayerGameSnapshots(id, snapshotDeps(), {
+    tryRematchStart: responseTruth.phase === "matchOver",
+  });
 
   const oppName = await opponentDisplayNameForGame(
     (game as { seat_for_user: Record<string, number> }).seat_for_user,
