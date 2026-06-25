@@ -34,13 +34,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Xcode_16.app (16.0) on macos-15 ships without a usable iOS Simulator
+      # runtime. 16.4 is the runner default and has pre-installed simulators.
       - name: Select Xcode
-        run: sudo xcode-select -switch /Applications/Xcode_16.app
+        run: sudo xcode-select -switch /Applications/Xcode_16.4.app
+
+      # Rebuild CoreSimulator caches before xcodebuild resolves destinations
+      # (see actions/runner-images#12862).
+      - name: Warm up simulators
+        run: xcrun simctl list > /dev/null
 
       - name: Build & test
         run: |
+          DEST=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for runtime in sorted(data['devices'].keys(), reverse=True):
+              if 'iOS' not in runtime:
+                  continue
+              for dev in data['devices'][runtime]:
+                  if dev.get('isAvailable') and dev['name'].startswith('iPhone'):
+                      print(f\"platform=iOS Simulator,id={dev['udid']}\")
+                      sys.exit(0)
+          sys.exit('No available iPhone simulator found')
+          ")
+          echo "Using destination: $DEST"
           xcodebuild test \
             -project ios/GinRummyApp/GinRummyApp.xcodeproj \
             -scheme GinRummyApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -destination "$DEST" \
             CODE_SIGNING_ALLOWED=NO
