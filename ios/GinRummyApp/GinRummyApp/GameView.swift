@@ -905,7 +905,7 @@ struct GameView: View {
                     .multilineTextAlignment(.center)
                 HStack(spacing: 10) {
                     GinStatusPill(text: "\(p.scores[0]) – \(p.scores[1])", systemImage: "rosette")
-                    GinStatusPill(text: "Race \(p.raceTarget)", tint: GinRummyPalette.sage)
+                    GinStatusPill(text: "Game to \(p.raceTarget)", tint: GinRummyPalette.sage)
                 }
                 .padding(.top, 2)
             }
@@ -1113,7 +1113,7 @@ struct GameView: View {
                     Spacer(minLength: 0)
                     StockAndDiscardPiles(
                         stockCount: p.stockCount,
-                        discardTop: p.discard.last,
+                        discard: p.discard,
                         discardOnTap: discardTapActionIfEnabled(gameId: gameId, p: p),
                         stockOnTap: drawStockActionIfEnabled(gameId: gameId, p: p)
                     )
@@ -2652,7 +2652,7 @@ private struct CutForDealView: View {
     private func actionBar(cut: PlayerPerspective.CutState) -> some View {
         VStack(spacing: 12) {
             Text(highlightIndex == nil
-                ? "Tap a card in the fan to choose your cut"
+                ? "Drag across the fan or tap to choose your cut"
                 : "Card \(highlightIndex! + 1) of \(cut.faceDownRemaining) selected")
                 .font(.footnote)
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))

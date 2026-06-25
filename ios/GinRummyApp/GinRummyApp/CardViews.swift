@@ -561,14 +561,14 @@ struct TableStateStrip: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Discard pile top")
+                Text("Discard pile")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let t = p.discard.last, !p.discard.isEmpty {
-                    PlayingCardView(card: t, compact: true, onTap: nil)
-                } else {
+                if p.discard.isEmpty {
                     Text("—")
                         .font(.title2)
+                } else {
+                    DiscardPileStackView(cards: p.discard)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -576,10 +576,114 @@ struct TableStateStrip: View {
     }
 }
 
+// MARK: - Messy discard pile (face-up cards peek through like a real toss)
+
+/// Deterministic, slightly wonky stack geometry so the pile feels tossed but stable between renders.
+private enum DiscardPileLayout {
+    /// Face-up cards drawn in the pile (deepest = earliest discard still peeking through).
+    static let maxVisibleCards = 5
+
+    struct CardTransform {
+        var offsetX: CGFloat = 0
+        var offsetY: CGFloat = 0
+        var rotation: Double = 0
+    }
+
+    static func transform(pileIndex: Int, totalCount: Int, card: String, cardWidth: CGFloat) -> CardTransform {
+        let seed = stableHash(card: card, salt: pileIndex)
+        let isTop = pileIndex == totalCount - 1
+        let layerFromTop = totalCount - 1 - pileIndex
+
+        if isTop {
+            return CardTransform(
+                offsetX: pseudo(seed, 1) * cardWidth * 0.04,
+                offsetY: pseudo(seed, 2) * cardWidth * 0.03,
+                rotation: pseudo(seed, 3) * 2.6
+            )
+        }
+
+        let spread = cardWidth * (0.07 + 0.025 * CGFloat(min(layerFromTop, 3)))
+        let wobble = pseudo(seed, 3) * 1.8
+        switch pileIndex % 4 {
+        case 0:
+            return CardTransform(offsetX: spread * 0.72, offsetY: spread * 0.58, rotation: 4.8 + wobble)
+        case 1:
+            return CardTransform(offsetX: -spread * 0.78, offsetY: spread * 0.46, rotation: -5.4 - wobble)
+        case 2:
+            return CardTransform(offsetX: spread * 0.58, offsetY: -spread * 0.38, rotation: 3.6 + wobble)
+        default:
+            return CardTransform(offsetX: -spread * 0.66, offsetY: -spread * 0.32, rotation: -4.2 - wobble)
+        }
+    }
+
+    static func stackSpread(for cardWidth: CGFloat) -> CGFloat { cardWidth * 0.16 }
+
+    private static func stableHash(card: String, salt: Int) -> UInt64 {
+        var h = UInt64(bitPattern: Int64(salt &* 0x9E37))
+        for u in card.utf8 { h = h &* 1_099_511_628_211 &+ UInt64(u) }
+        return h
+    }
+
+    /// Stable value in `[-1, 1]`.
+    private static func pseudo(_ seed: UInt64, _ channel: Int) -> CGFloat {
+        let mixed = seed &+ UInt64(channel &* 0x517CC1B7)
+        let unit = Double(mixed % 10_001) / 5_000.0 - 1.0
+        return CGFloat(unit)
+    }
+}
+
+struct DiscardPileStackView: View {
+    let cards: [String]
+    var cardWidth: CGFloat = CardMetrics.compactWidth
+    /// When set, only the face-up top card is tappable (take discard / down card).
+    var topOnTap: (() -> Void)? = nil
+    var highlightTop: Bool = false
+
+    private var cardHeight: CGFloat { CardMetrics.height(for: cardWidth) }
+    private var cornerRadius: CGFloat { max(5, cardWidth * 0.10) }
+    private var spread: CGFloat { DiscardPileLayout.stackSpread(for: cardWidth) }
+
+    private var visibleSlice: [(pileIndex: Int, card: String)] {
+        let start = max(0, cards.count - DiscardPileLayout.maxVisibleCards)
+        return Array(cards.enumerated()).suffix(from: start).map { ($0.offset, $0.element) }
+    }
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(visibleSlice.enumerated()), id: \.offset) { zIndex, entry in
+                let isTop = entry.pileIndex == cards.count - 1
+                let t = DiscardPileLayout.transform(
+                    pileIndex: entry.pileIndex,
+                    totalCount: cards.count,
+                    card: entry.card,
+                    cardWidth: cardWidth
+                )
+                PlayingCardView(
+                    card: entry.card,
+                    compact: true,
+                    width: cardWidth,
+                    onTap: isTop ? topOnTap : nil
+                )
+                .rotationEffect(.degrees(t.rotation))
+                .offset(x: t.offsetX, y: t.offsetY)
+                .zIndex(Double(zIndex))
+                .allowsHitTesting(isTop)
+                .overlay {
+                    if isTop, highlightTop {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(GinRummyPalette.gold.opacity(0.72), lineWidth: 2)
+                    }
+                }
+            }
+        }
+        .frame(width: cardWidth + spread * 2, height: cardHeight + spread * 2)
+    }
+}
+
 /// Center table: draw pile (with count) + discard, reference-style.
 struct StockAndDiscardPiles: View {
     let stockCount: Int
-    let discardTop: String?
+    let discard: [String]
     /// When set, tapping the face-up discard takes that card (down card: your turn; play: your turn, 10 cards).
     var discardOnTap: (() -> Void)? = nil
     /// When set, tapping the stock draws (play or upcard dealer draw).
@@ -610,17 +714,18 @@ struct StockAndDiscardPiles: View {
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
             }
             VStack(spacing: 6) {
-                if let d = discardTop, !d.isEmpty {
-                    PlayingCardView(card: d, compact: true, onTap: discardOnTap)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
-                                .stroke(discardOnTap == nil ? Color.clear : GinRummyPalette.gold.opacity(0.72), lineWidth: discardOnTap == nil ? 0 : 2)
-                        )
-                } else {
+                if discard.isEmpty {
                     RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
                         .fill(GinRummyPalette.bgPanel.opacity(0.82))
                         .frame(width: pileW, height: pileH)
                         .overlay { Text("—").foregroundStyle(GinRummyPalette.sage.opacity(0.85)) }
+                } else {
+                    DiscardPileStackView(
+                        cards: discard,
+                        cardWidth: pileW,
+                        topOnTap: discardOnTap,
+                        highlightTop: discardOnTap != nil
+                    )
                 }
                 Text("Discard")
                     .font(.caption2)
@@ -704,6 +809,11 @@ struct CutCardFlyAnimationOverlay: View {
 // MARK: - Cut spread (overlapping slivers)
 
 struct CutSpreadPicker: View {
+    private enum CutSpreadFeedback {
+        static let begin = UIImpactFeedbackGenerator(style: .medium)
+        static let cross = UIImpactFeedbackGenerator(style: .light)
+    }
+
     let cardCount: Int
     @Binding var highlightIndex: Int?
 
@@ -713,6 +823,10 @@ struct CutSpreadPicker: View {
     private let cardH: CGFloat = 118
     private let lift: CGFloat = 24
     private let margin: CGFloat = 8
+
+    @State private var dragHoverIndex: Int?
+    @State private var isDragging = false
+    @State private var lastHapticIndex: Int?
 
     var body: some View {
         GeometryReader { geo in
@@ -728,6 +842,7 @@ struct CutSpreadPicker: View {
                 let step = n > 1 ? max(4, min(fullW * 0.5, rawStep)) : 0
                 let spreadW = fullW + step * CGFloat(max(0, n - 1))
                 let leading = max(margin, (avail - spreadW) / 2)
+                let hover = isDragging ? dragHoverIndex : highlightIndex
                 ZStack(alignment: .topLeading) {
                     ForEach(0 ..< n, id: \.self) { i in
                         let isSel = highlightIndex == i
@@ -738,21 +853,75 @@ struct CutSpreadPicker: View {
                             highlighted: isSel,
                             castsShadow: true
                         )
-                            // Selected card lifts up above its own slot.
-                            .offset(x: leading + CGFloat(i) * step, y: isSel ? 0 : lift)
-                            .zIndex(isSel ? 1000 : Double(i))
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    highlightIndex = i
-                                }
-                            }
+                            .offset(
+                                x: leading + CGFloat(i) * step,
+                                y: cardYOffset(index: i, hoverIndex: hover)
+                            )
+                            .zIndex(cardZIndex(index: i, hoverIndex: hover, isSelected: isSel))
+                            .animation(
+                                isDragging
+                                    ? .interactiveSpring(response: 0.22, dampingFraction: 0.82)
+                                    : .spring(response: 0.3, dampingFraction: 0.7),
+                                value: hover
+                            )
                             .accessibilityLabel("Card position \(i + 1) of \(n)")
+                            .accessibilityAddTraits(isSel ? .isSelected : [])
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let idx = indexAt(x: value.location.x, n: n, leading: leading, step: step)
+                            if !isDragging {
+                                isDragging = true
+                                CutSpreadFeedback.begin.prepare()
+                                CutSpreadFeedback.begin.impactOccurred()
+                            }
+                            if idx != dragHoverIndex {
+                                dragHoverIndex = idx
+                            }
+                            if idx != lastHapticIndex {
+                                lastHapticIndex = idx
+                                CutSpreadFeedback.cross.prepare()
+                                CutSpreadFeedback.cross.impactOccurred()
+                                highlightIndex = idx
+                            }
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                            dragHoverIndex = nil
+                            lastHapticIndex = nil
+                        }
+                )
             }
         }
         .frame(height: cardH + lift + 4)
+    }
+
+    /// Cards near the finger lift in a short wave; the rest stay in the deck.
+    private func cardYOffset(index: Int, hoverIndex: Int?) -> CGFloat {
+        guard let h = hoverIndex else { return lift }
+        switch abs(index - h) {
+        case 0: return 0
+        case 1: return lift * 0.42
+        case 2: return lift * 0.68
+        default: return lift
+        }
+    }
+
+    private func cardZIndex(index: Int, hoverIndex: Int?, isSelected: Bool) -> Double {
+        if isSelected { return 1000 }
+        guard let h = hoverIndex else { return Double(index) }
+        return Double(index) + Double(max(0, 3 - abs(index - h))) * 100
+    }
+
+    private func indexAt(x: CGFloat, n: Int, leading: CGFloat, step: CGFloat) -> Int {
+        guard n > 0 else { return 0 }
+        if n == 1 { return 0 }
+        let raw = (x - leading - fullW / 2) / step
+        return max(0, min(n - 1, Int(raw.rounded())))
     }
 }
 

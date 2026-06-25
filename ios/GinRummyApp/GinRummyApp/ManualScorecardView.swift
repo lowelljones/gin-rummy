@@ -212,12 +212,22 @@ struct ManualScorecardView: View {
         }
     }
 
+    /// Cumulative betting bucket total for a player through a completed game column.
+    private func gameTotalText(side: FocusField.Side, gameIndex: Int) -> String {
+        let forWe = side == .we
+        guard let total = store.cumulativeBettingTotal(forWePlayer: forWe, throughGameIndex: gameIndex) else {
+            let game = store.session.games[gameIndex]
+            return game.isLive ? "…" : "—"
+        }
+        return ScorecardScoring.signed(total)
+    }
+
     @ViewBuilder
     private func boxStrip(side: FocusField.Side, columns: [DisplayColumn], metrics: GridMetrics, height: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(store.session.games.enumerated()), id: \.element.id) { idx, game in
                 let slotW = slotWidth(index: idx, count: store.session.games.count, totalWidth: metrics.gamesWidth)
-                let display = boxText(game: game, side: side)
+                let display = gameTotalText(side: side, gameIndex: idx)
                 numericText(display, style: scoreStyle(for: display))
                     .frame(width: slotW, height: height, alignment: .center)
                     .background(game.isLive ? liveColumnTint : nil)
@@ -230,16 +240,6 @@ struct ManualScorecardView: View {
         }
         .frame(width: metrics.gamesWidth, height: height)
         .overlay(cellBorder(right: true).allowsHitTesting(false))
-    }
-
-    /// Running box tally (who's up): each hand won is a box; we show the signed
-    /// net so a glance tells you who leads and by how much.
-    private func boxText(game: ManualScoreGame, side: FocusField.Side) -> String {
-        guard game.hasScoredHand else { return game.isLive ? "…" : "—" }
-        let net = side == .we ? game.netBoxes() : -game.netBoxes()
-        if net > 0 { return "+\(net)" }
-        if net < 0 { return "\(net)" }
-        return "0"
     }
 
     @ViewBuilder
@@ -310,8 +310,6 @@ struct ManualScorecardView: View {
         let h = metrics.rowHeight
         let gcw = metrics.gameColumnWidth
         let hcw = metrics.halfColumnWidth
-        let weNet = store.netBox(forWePlayer: true)
-        let theyNet = store.netBox(forWePlayer: false)
 
         gridRow(height: h) {
             labelCell("Total", width: metrics.labelWidth, height: h, bold: true)
@@ -339,7 +337,7 @@ struct ManualScorecardView: View {
                 if let game = col.game {
                     let scored = game.hasScoredHand
                     valueCell(
-                        scored ? signed(game.netBoxes()) : (game.isLive ? "…" : "—"),
+                        scored ? ScorecardScoring.signed(game.netBoxes()) : (game.isLive ? "…" : "—"),
                         width: w,
                         height: h,
                         style: scored ? .score : .muted,
@@ -352,35 +350,24 @@ struct ManualScorecardView: View {
         }
         gridRow(height: h) {
             labelCell("Net", width: metrics.labelWidth, height: h, bold: true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(store.session.weName)  \(signed(weNet))")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(scoreColor(for: signed(weNet)))
-                Text("\(store.session.theyName)  \(signed(theyNet))")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(scoreColor(for: signed(theyNet)))
-                if let bet = bettingSummary {
-                    if bet.tied {
-                        Text("Betting · even")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
-                    } else {
-                        let name = bet.leaderIsWe ? store.session.weName : store.session.theyName
-                        Text("Betting · \(name) +\(bet.points) · box \(bet.bucket)")
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(GinRummyPalette.gold)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.65)
-                    }
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                let w = colW(idx, columns, gcw, metrics.gamesWidth)
+                if let game = col.game {
+                    let label: String = {
+                        if let net = game.interimNetForWe() { return ScorecardScoring.signed(net) }
+                        return game.isLive ? "…" : "—"
+                    }()
+                    valueCell(
+                        label,
+                        width: w,
+                        height: h,
+                        style: game.hasScoredHand ? .score : .muted,
+                        live: col.isLive
+                    )
                 } else {
-                    Text("\(store.session.games.count) game\(store.session.games.count == 1 ? "" : "s") · saved on device")
-                        .font(.caption2)
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+                    valueCell("", width: w, height: h, style: .placeholder, placeholder: true)
                 }
             }
-            .padding(.horizontal, cellPaddingH + 2)
-            .frame(width: metrics.gamesWidth, height: h, alignment: .leading)
-            .overlay(cellBorder(right: true))
         }
     }
 
@@ -564,8 +551,8 @@ struct ManualScorecardView: View {
                   let hand = game.hands.first(where: { $0.id == handId }) else { return "" }
             return handCellDisplay(hand: hand, side: side)
         case let .box(gameId, side):
-            guard let game = store.session.games.first(where: { $0.id == gameId }) else { return "" }
-            let t = boxText(game: game, side: side)
+            guard let idx = store.session.games.firstIndex(where: { $0.id == gameId }) else { return "" }
+            let t = gameTotalText(side: side, gameIndex: idx)
             return t == "…" || t == "—" ? "" : t
         }
     }
@@ -663,43 +650,6 @@ struct ManualScorecardView: View {
         let base = floor(totalWidth / CGFloat(count))
         let remainder = totalWidth - base * CGFloat(count)
         return index == count - 1 ? base + remainder : base
-    }
-
-    private func signed(_ v: Int) -> String { v >= 0 ? "+\(v)" : "\(v)" }
-
-    private struct ManualBetting {
-        let leaderIsWe: Bool
-        let points: Int
-        let bucket: Int
-        let tied: Bool
-    }
-
-    /// Quick betting settlement across the whole sheet, mirroring the in-app
-    /// betting math: point margin + 100 game bonus + 100 shutout + 25 per net box.
-    private var bettingSummary: ManualBetting? {
-        let games = store.session.games
-        guard games.contains(where: { $0.hasScoredHand }) else { return nil }
-        let weTotal = games.map { $0.totalWe() }.reduce(0, +)
-        let theyTotal = games.map { $0.totalThey() }.reduce(0, +)
-        if weTotal == theyTotal {
-            return ManualBetting(leaderIsWe: true, points: 0, bucket: 0, tied: true)
-        }
-        let weBoxes = games.map { $0.weBoxesWon() }.reduce(0, +)
-        let theyBoxes = games.map { $0.theyBoxesWon() }.reduce(0, +)
-        let leaderIsWe = weTotal > theyTotal
-        let leadPts = leaderIsWe ? weTotal : theyTotal
-        let loserPts = leaderIsWe ? theyTotal : weTotal
-        let leaderBoxes = leaderIsWe ? weBoxes : theyBoxes
-        let loserBoxes = leaderIsWe ? theyBoxes : weBoxes
-        let shutout = (loserPts == 0 && leadPts > 0) ? 100 : 0
-        let netBoxes = max(0, leaderBoxes - loserBoxes)
-        let raw = (leadPts - loserPts) + 100 + shutout + 25 * netBoxes
-        return ManualBetting(
-            leaderIsWe: leaderIsWe,
-            points: raw,
-            bucket: BettingSettlementBreakdown.bettingBucket(forRaw: raw),
-            tied: false
-        )
     }
 
     private func scoreStyle(for text: String) -> CellTextStyle {

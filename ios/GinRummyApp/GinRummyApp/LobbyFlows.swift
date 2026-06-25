@@ -110,9 +110,9 @@ struct JoinLobbyEnterCodeView: View {
                 FeedbackLine(text: message, isError: messageIsError, privateClubStyle: true)
             }
 
-            inviteHint
-
             Spacer(minLength: 0)
+
+            inviteHint
         }
         .padding(.horizontal, 24)
         .padding(.top, 28)
@@ -132,19 +132,11 @@ struct JoinLobbyEnterCodeView: View {
     }
 
     private var inviteHint: some View {
-        Group {
-            if AppConfig.usesInviteCustomURLScheme {
-                Text("Links look like ginrummy://join/… — tap one on your phone to open the app.")
-                    .font(.caption)
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Hosts can share HTTPS links once Universal Links are configured.")
-                    .font(.caption)
-                    .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
-            }
-        }
+        Text("Alternatively, click the link that was sent to you to join a lobby.")
+            .font(.caption)
+            .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func join() async {

@@ -302,6 +302,72 @@ struct BettingSettlementBreakdown: Equatable {
         let low = 150 + (bucket - 2) * 100
         return "\(low)–\(low + 99)"
     }
+
+    /// Settles a finished game from final scores (manual score sheet or any match where
+    /// the higher score wins, regardless of race target).
+    static func computeForFinalScores(scores: [Int], handsWon: [Int]) -> BettingSettlementBreakdown? {
+        guard scores.count == 2, handsWon.count == 2, scores[0] != scores[1] else { return nil }
+        let winner = scores[0] > scores[1] ? 0 : 1
+        return compute(scores: scores, handsWon: handsWon, raceTarget: scores[winner])
+    }
+
+    /// Score margin + 25× net boxes, before win bonus and shutout (blitz) points.
+    static func interimNet(myScore: Int, oppScore: Int, myHandsWon: Int, oppHandsWon: Int) -> Int {
+        (myScore - oppScore) + 25 * (myHandsWon - oppHandsWon)
+    }
+}
+
+/// Shared scorecard row helpers for manual and live session grids.
+enum ScorecardScoring {
+    static func signed(_ value: Int) -> String {
+        if value > 0 { return "+\(value)" }
+        if value < 0 { return "\(value)" }
+        return "0"
+    }
+
+    /// Cumulative betting bucket total for `seat` through completed matches 0…`throughIndex`.
+    static func cumulativeBettingTotal(
+        forSeat seat: Int,
+        matches: [SessionMatchRecapDTO],
+        throughIndex: Int
+    ) -> Int? {
+        guard throughIndex >= 0, throughIndex < matches.count else { return nil }
+        if matches[throughIndex].isCurrent { return nil }
+        var total = 0
+        var counted = false
+        for i in 0 ... throughIndex {
+            let match = matches[i]
+            guard !match.isCurrent,
+                  let bucket = match.bettingBucket,
+                  let winner = match.winnerSeat else { continue }
+            counted = true
+            total += winner == seat ? bucket : -bucket
+        }
+        return counted ? total : nil
+    }
+
+    static func netHandsLabel(for match: SessionMatchRecapDTO, seat: Int) -> String {
+        guard match.handsWon.count == 2 else { return match.isCurrent ? "…" : "—" }
+        let hasHands = !match.handScores.isEmpty || match.handsWon[0] + match.handsWon[1] > 0
+        guard hasHands else { return match.isCurrent ? "…" : "—" }
+        let net = match.handsWon[seat] - match.handsWon[1 - seat]
+        return signed(net)
+    }
+
+    static func interimNetLabel(for match: SessionMatchRecapDTO, seat: Int) -> String {
+        guard match.scores.count == 2, match.handsWon.count == 2 else {
+            return match.isCurrent ? "…" : "—"
+        }
+        let hasActivity = !match.handScores.isEmpty || match.scores[0] + match.scores[1] > 0
+        guard hasActivity else { return match.isCurrent ? "…" : "—" }
+        let net = BettingSettlementBreakdown.interimNet(
+            myScore: match.scores[seat],
+            oppScore: match.scores[1 - seat],
+            myHandsWon: match.handsWon[seat],
+            oppHandsWon: match.handsWon[1 - seat]
+        )
+        return signed(net)
+    }
 }
 
 struct GameStateResponse: Codable {

@@ -54,6 +54,26 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
     func netBoxes() -> Int { weBoxesWon() - theyBoxesWon() }
     /// True once at least one scored hand exists.
     var hasScoredHand: Bool { weBoxesWon() + theyBoxesWon() > 0 }
+
+    /// Score margin + 25× net boxes (excludes win bonus and shutout).
+    func interimNetForWe() -> Int? {
+        guard hasScoredHand else { return nil }
+        return BettingSettlementBreakdown.interimNet(
+            myScore: totalWe(),
+            oppScore: totalThey(),
+            myHandsWon: weBoxesWon(),
+            oppHandsWon: theyBoxesWon()
+        )
+    }
+
+    /// Full betting settlement once the game is no longer live.
+    func bettingSettlement() -> BettingSettlementBreakdown? {
+        guard !isLive, hasScoredHand else { return nil }
+        return BettingSettlementBreakdown.computeForFinalScores(
+            scores: [totalWe(), totalThey()],
+            handsWon: [weBoxesWon(), theyBoxesWon()]
+        )
+    }
 }
 
 struct ManualScoreHand: Codable, Equatable, Identifiable {
@@ -121,6 +141,23 @@ final class ManualScoreStore: ObservableObject {
         session.games[gi].weBox = we
         session.games[gi].theyBox = they
         touch()
+    }
+
+    func cumulativeBettingTotal(forWePlayer: Bool, throughGameIndex: Int) -> Int? {
+        guard throughGameIndex >= 0, throughGameIndex < session.games.count else { return nil }
+        if session.games[throughGameIndex].isLive { return nil }
+        var total = 0
+        var counted = false
+        for i in 0 ... throughGameIndex {
+            let game = session.games[i]
+            guard !game.isLive, let settlement = game.bettingSettlement() else { continue }
+            counted = true
+            let weWon = settlement.winner == 0
+            let delta = forWePlayer ? (weWon ? settlement.bucket : -settlement.bucket)
+                                    : (weWon ? -settlement.bucket : settlement.bucket)
+            total += delta
+        }
+        return counted ? total : nil
     }
 
     func netBox(forWePlayer: Bool) -> Int {

@@ -33,4 +33,29 @@ final class BettingSettlementBreakdownTests: XCTestCase {
         XCTAssertEqual(BettingSettlementBreakdown.bucketRangeLabel(for: 3), "250–349")
         XCTAssertEqual(BettingSettlementBreakdown.bucketRangeLabel(for: 4), "350–449")
     }
+
+    func testInterimNetExcludesWinAndShutoutBonuses() {
+        // 125 vs 25, net 2 boxes → (100) + (50) = 150 interim; full raw adds +100 win bonus.
+        let interim = BettingSettlementBreakdown.interimNet(
+            myScore: 125, oppScore: 25, myHandsWon: 3, oppHandsWon: 1
+        )
+        XCTAssertEqual(interim, 150)
+
+        let full = BettingSettlementBreakdown.compute(scores: [125, 25], handsWon: [3, 1], raceTarget: 125)
+        XCTAssertEqual(full?.raw, 250)
+    }
+
+    func testInterimNetCanBeNegative() {
+        let interim = BettingSettlementBreakdown.interimNet(
+            myScore: 40, oppScore: 80, myHandsWon: 1, oppHandsWon: 3
+        )
+        XCTAssertEqual(interim, -40 - 50)
+    }
+
+    func testComputeForFinalScoresUsesHigherScoreAsWinner() {
+        let b = BettingSettlementBreakdown.computeForFinalScores(scores: [90, 70], handsWon: [2, 1])
+        XCTAssertNotNil(b)
+        XCTAssertEqual(b?.winner, 0)
+        XCTAssertEqual(b?.scoreDiff, 20)
+    }
 }

@@ -191,9 +191,7 @@ struct ScorecardView: View {
             totalsSection(
                 columns: columns,
                 matches: matches,
-                playerRows: playerRows,
                 mySeat: mySeat,
-                totals: recap.totals,
                 metrics: metrics
             )
         }
@@ -245,7 +243,7 @@ struct ScorecardView: View {
             } else {
                 ForEach(Array(matches.enumerated()), id: \.element.id) { idx, match in
                     let slotW = slotWidth(index: idx, count: matches.count, totalWidth: width)
-                    let text = boxCellText(for: match, seat: seat)
+                    let text = boxCellText(for: match, seat: seat, matchIndex: idx, matches: matches)
                     numericText(text, style: scoreStyle(for: text))
                         .frame(width: slotW, height: height, alignment: .center)
                 }
@@ -262,9 +260,9 @@ struct ScorecardView: View {
         return index == count - 1 ? base + remainder : base
     }
 
-    private func boxCellText(for match: SessionMatchRecapDTO, seat: Int) -> String {
-        if let bucket = match.bettingBucket, let winner = match.winnerSeat {
-            return winner == seat ? "+\(bucket)" : "-\(bucket)"
+    private func boxCellText(for match: SessionMatchRecapDTO, seat: Int, matchIndex: Int, matches: [SessionMatchRecapDTO]) -> String {
+        if let total = ScorecardScoring.cumulativeBettingTotal(forSeat: seat, matches: matches, throughIndex: matchIndex) {
+            return ScorecardScoring.signed(total)
         }
         if match.isCurrent { return "…" }
         return "—"
@@ -357,16 +355,12 @@ struct ScorecardView: View {
     private func totalsSection(
         columns: [DisplayColumn],
         matches: [SessionMatchRecapDTO],
-        playerRows: [(seat: Int, label: String)],
         mySeat: Int,
-        totals: SessionTotalsDTO,
         metrics: GridMetrics
     ) -> some View {
         let h = metrics.rowHeight
         let gcw = metrics.gameColumnWidth
         let hcw = metrics.halfColumnWidth
-        let myNet = netBoxes(for: mySeat, matches: matches)
-        let oppNet = netBoxes(for: 1 - mySeat, matches: matches)
 
         gridRow(height: h) {
             labelCell("Total", width: metrics.labelWidth, height: h, bold: true)
@@ -395,10 +389,10 @@ struct ScorecardView: View {
                 let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
                 if let match = col.match {
                     valueCell(
-                        boxBucketLabel(for: match),
+                        ScorecardScoring.netHandsLabel(for: match, seat: mySeat),
                         width: colW,
                         height: h,
-                        style: match.bettingBucket != nil ? .score : .muted,
+                        style: match.handScores.isEmpty && !col.isLive ? .muted : .score,
                         live: col.isLive
                     )
                 } else {
@@ -409,22 +403,21 @@ struct ScorecardView: View {
 
         gridRow(height: h) {
             labelCell("Net", width: metrics.labelWidth, height: h, bold: true)
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(playerRows, id: \.seat) { row in
-                    let net = row.seat == mySeat ? myNet : oppNet
-                    Text("\(row.label)  \(signed(net))")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(scoreColor(for: signed(net)))
-                }
-                if totals.completedMatches > 0 {
-                    Text("\(totals.completedMatches) games · \(totals.totalBuckets) boxes")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+            ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
+                let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
+                if let match = col.match {
+                    let label = ScorecardScoring.interimNetLabel(for: match, seat: mySeat)
+                    valueCell(
+                        label,
+                        width: colW,
+                        height: h,
+                        style: label == "…" || label == "—" ? .muted : .score,
+                        live: col.isLive
+                    )
+                } else {
+                    valueCell("", width: colW, height: h, style: .placeholder, placeholder: true)
                 }
             }
-            .padding(.horizontal, cellPaddingH + 2)
-            .frame(width: metrics.gamesWidth, height: h, alignment: .leading)
-            .overlay(cellBorder(right: true))
         }
     }
 
@@ -669,17 +662,6 @@ struct ScorecardView: View {
         return match.scores[seat]
     }
 
-    private func boxBucketLabel(for match: SessionMatchRecapDTO) -> String {
-        match.bettingBucket.map(String.init) ?? (match.isCurrent ? "…" : "—")
-    }
-
-    private func netBoxes(for seat: Int, matches: [SessionMatchRecapDTO]) -> Int {
-        matches.reduce(0) { sum, match in
-            guard let bucket = match.bettingBucket, let winner = match.winnerSeat else { return sum }
-            return sum + (winner == seat ? bucket : -bucket)
-        }
-    }
-
     private func playerLabels(recap: SessionRecapResponse, mySeat: Int) -> [(seat: Int, label: String)] {
         let seat0Name = recap.players.first(where: { $0.seat == 0 })?.displayName ?? "Player 1"
         let seat1Name = recap.players.first(where: { $0.seat == 1 })?.displayName
@@ -688,10 +670,6 @@ struct ScorecardView: View {
             (0, mySeat == 0 ? "You" : seat0Name),
             (1, mySeat == 1 ? "You" : seat1Name),
         ]
-    }
-
-    private func signed(_ value: Int) -> String {
-        value >= 0 ? "+\(value)" : "\(value)"
     }
 
     private func loadRecap() async {
