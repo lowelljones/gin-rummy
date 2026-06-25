@@ -32,10 +32,7 @@ struct PostCutCardsStrip: View {
                 if mode == .both {
                     PlayingCardView(card: oppCard, compact: false, onTap: nil)
                 } else {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.orange.opacity(0.2))
-                        .frame(width: 78, height: 114)
-                        .overlay { ProgressView() }
+                    CardBackFace(width: CardMetrics.fullWidth, showProgress: true)
                     Text("Opponent drawing…")
                         .font(.caption.italic())
                         .foregroundStyle(.secondary)

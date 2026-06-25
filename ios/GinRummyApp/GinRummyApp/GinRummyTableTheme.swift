@@ -114,7 +114,10 @@ struct CutRevealView: View {
                             removal: .opacity
                         ))
                 } else {
-                    cardBack
+                    CardBackFace(
+                        width: CardMetrics.fullWidth,
+                        showProgress: true
+                    )
                 }
             }
             .overlay {
@@ -128,28 +131,6 @@ struct CutRevealView: View {
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private var cardBack: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(
-                LinearGradient(
-                    colors: [GinRummyPalette.bgPanel, GinRummyPalette.bgDeep],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .frame(width: 86, height: 124)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(GinRummyPalette.gold.opacity(0.4), lineWidth: 1)
-            )
-            .overlay {
-                Image(systemName: "suit.spade.fill")
-                    .font(.title)
-                    .foregroundStyle(GinRummyPalette.gold.opacity(0.35))
-            }
-            .overlay { ProgressView().tint(GinRummyPalette.gold).offset(y: 44) }
     }
 
     private var verdict: some View {

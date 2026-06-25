@@ -9,6 +9,17 @@ enum GinRummyPalette {
     static let sage = Color(red: 0.655, green: 0.698, blue: 0.624) // #A7B29F
     static let burgundy = Color(red: 0.357, green: 0.122, blue: 0.133) // #5B1F22
     static let navy = Color(red: 0.071, green: 0.137, blue: 0.227) // #12233A
+    /// Face-down card back — warm wine tones that read clearly on green felt.
+    static let cardBackLight = Color(red: 0.42, green: 0.13, blue: 0.15)
+    static let cardBackDark = Color(red: 0.26, green: 0.08, blue: 0.10)
+
+    static var cardBackGradient: LinearGradient {
+        LinearGradient(
+            colors: [cardBackLight, cardBackDark],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     static var feltGradient: LinearGradient {
         LinearGradient(

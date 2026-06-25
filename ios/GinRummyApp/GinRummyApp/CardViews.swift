@@ -87,6 +87,61 @@ enum CardMetrics {
     }
 }
 
+// MARK: - Card back (shared face-down styling)
+
+struct CardBackFace: View {
+    var width: CGFloat
+    var height: CGFloat? = nil
+    var cornerRadius: CGFloat? = nil
+    /// Gold double-border highlight (cut spread picker).
+    var highlighted: Bool = false
+    /// Spinner overlay while opponent's cut card is still hidden.
+    var showProgress: Bool = false
+    /// When true, draws the card's own drop shadow (e.g. cut spread). Off inside `PlayingCardView`.
+    var castsShadow: Bool = false
+
+    private var h: CGFloat { height ?? CardMetrics.height(for: width) }
+    private var corner: CGFloat { cornerRadius ?? max(5, width * 0.10) }
+    private var pad: CGFloat { max(3, width * 0.06) }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: corner)
+            .fill(GinRummyPalette.cardBackGradient)
+            .frame(width: width, height: h)
+            .overlay {
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner * 0.8)
+                        .stroke(GinRummyPalette.gold.opacity(highlighted ? 0.55 : 0.28), lineWidth: 1)
+                        .padding(pad)
+                    Image(systemName: "suit.spade.fill")
+                        .font(.system(size: width * 0.34))
+                        .foregroundStyle(GinRummyPalette.gold.opacity(highlighted ? 0.85 : 0.38))
+                }
+            }
+            .overlay {
+                if highlighted {
+                    RoundedRectangle(cornerRadius: corner)
+                        .stroke(GinRummyPalette.gold, lineWidth: 2.4)
+                        .padding(3)
+                    RoundedRectangle(cornerRadius: corner)
+                        .stroke(GinRummyPalette.gold.opacity(0.55), lineWidth: 1.6)
+                }
+            }
+            .overlay {
+                if showProgress {
+                    ProgressView()
+                        .tint(GinRummyPalette.gold)
+                        .offset(y: h * 0.18)
+                }
+            }
+            .shadow(
+                color: .black.opacity(castsShadow ? (highlighted ? 0.4 : 0.2) : 0),
+                radius: castsShadow ? (highlighted ? 10 : 3) : 0,
+                y: castsShadow ? (highlighted ? 6 : 2) : 0
+            )
+    }
+}
+
 // MARK: - Single card
 
 struct PlayingCardView: View {
@@ -105,26 +160,7 @@ struct PlayingCardView: View {
     private var centerSuitFont: Font { .system(size: cw * 0.44, weight: .regular) }
     private var pad: CGFloat { max(3, cw * 0.06) }
 
-    private var cardBackGradient: LinearGradient {
-        LinearGradient(
-            colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.9)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
     private var corner: CGFloat { max(5, cw * 0.10) }
-
-    private var cardBackFiligree: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: corner * 0.8)
-                .stroke(GinRummyPalette.gold.opacity(0.22), lineWidth: 1)
-                .padding(pad)
-            Image(systemName: "suit.spade.fill")
-                .font(.system(size: cw * 0.34))
-                .foregroundStyle(GinRummyPalette.gold.opacity(0.22))
-        }
-    }
 
     /// Opaque ivory face with a soft top-down sheen so cards read as solid
     /// objects on the felt rather than translucent panes.
@@ -139,9 +175,7 @@ struct PlayingCardView: View {
     var body: some View {
         Group {
             if faceDown {
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(cardBackGradient)
-                    .overlay { cardBackFiligree.opacity(0.35) }
+                CardBackFace(width: cw, height: ch, cornerRadius: corner)
             } else {
                 RoundedRectangle(cornerRadius: corner)
                     .fill(cardFaceFill)
@@ -561,18 +595,7 @@ struct StockAndDiscardPiles: View {
                     stockOnTap?()
                 } label: {
                     ZStack {
-                        RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
-                            .fill(
-                                LinearGradient(
-                                    colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.78)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: pileW, height: pileH)
-                        Image(systemName: "suit.spade.fill")
-                            .font(.system(size: pileW * 0.34))
-                            .foregroundStyle(GinRummyPalette.gold.opacity(0.28))
+                        CardBackFace(width: pileW, height: pileH, cornerRadius: max(5, pileW * 0.10))
                         Text("\(max(0, stockCount))")
                             .font(.headline.weight(.bold))
                             .monospacedDigit()
@@ -708,7 +731,13 @@ struct CutSpreadPicker: View {
                 ZStack(alignment: .topLeading) {
                     ForEach(0 ..< n, id: \.self) { i in
                         let isSel = highlightIndex == i
-                        cardBack(selected: isSel)
+                        CardBackFace(
+                            width: fullW,
+                            height: cardH,
+                            cornerRadius: 8,
+                            highlighted: isSel,
+                            castsShadow: true
+                        )
                             // Selected card lifts up above its own slot.
                             .offset(x: leading + CGFloat(i) * step, y: isSel ? 0 : lift)
                             .zIndex(isSel ? 1000 : Double(i))
@@ -724,36 +753,6 @@ struct CutSpreadPicker: View {
             }
         }
         .frame(height: cardH + lift + 4)
-    }
-
-    private func cardBack(selected: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(
-                LinearGradient(
-                    colors: [GinRummyPalette.navy, GinRummyPalette.burgundy.opacity(0.92)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .frame(width: fullW, height: cardH)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(selected ? GinRummyPalette.gold : GinRummyPalette.gold.opacity(0.4),
-                            lineWidth: selected ? 2.4 : 1)
-                    .padding(3)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(selected ? GinRummyPalette.gold : GinRummyPalette.gold.opacity(0.25),
-                            lineWidth: selected ? 2 : 0.8)
-            )
-            .overlay {
-                Image(systemName: "suit.spade.fill")
-                    .font(.system(size: fullW * 0.34))
-                    .foregroundStyle(GinRummyPalette.gold.opacity(selected ? 0.9 : 0.45))
-            }
-            .shadow(color: .black.opacity(selected ? 0.4 : 0.2),
-                    radius: selected ? 10 : 3, y: selected ? 6 : 2)
     }
 }
 
