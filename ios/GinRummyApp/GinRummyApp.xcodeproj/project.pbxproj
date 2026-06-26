@@ -40,6 +40,9 @@
 		EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */; };
 		EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */; };
 		EA0100000000000000000006 /* GameNarrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000006 /* GameNarrationTests.swift */; };
+		EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000007 /* CardMetricsHandEndTests.swift */; };
+		E9010000000000000000001E /* CardFaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001E /* CardFaceViews.swift */; };
+		E9010000000000000000001F /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001F /* AccountSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +93,9 @@
 		EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BettingSettlementBreakdownTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedealAndAbandonmentTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000006 /* GameNarrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameNarrationTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000007 /* CardMetricsHandEndTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMetricsHandEndTests.swift; sourceTree = "<group>"; };
+		E8010000000000000000001E /* CardFaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardFaceViews.swift; sourceTree = "<group>"; };
+		E8010000000000000000001F /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +134,7 @@
 				EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */,
 				EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */,
 				EA0200000000000000000006 /* GameNarrationTests.swift */,
+				EA0200000000000000000007 /* CardMetricsHandEndTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -140,6 +147,7 @@
 				E80100000000000000000003 /* AppModel.swift */,
 				E80100000000000000000015 /* KeychainStore.swift */,
 				E80100000000000000000004 /* AuthView.swift */,
+				E8010000000000000000001F /* AccountSettingsView.swift */,
 				E80100000000000000000005 /* APIClient.swift */,
 				E80100000000000000000006 /* AppConfig.swift */,
 				E80100000000000000000007 /* Models.swift */,
@@ -158,6 +166,7 @@
 				E8010000000000000000001D /* GameSignalSocket.swift */,
 				E8010000000000000000000D /* PlayerFeedback.swift */,
 				E8010000000000000000000E /* CardViews.swift */,
+				E8010000000000000000001E /* CardFaceViews.swift */,
 				E8010000000000000000000F /* GinRummyTableTheme.swift */,
 				E80100000000000000000013 /* GinRummyTheme.swift */,
 				E80100000000000000000014 /* LobbyFlows.swift */,
@@ -273,6 +282,7 @@
 				E90100000000000000000003 /* AppModel.swift in Sources */,
 				E90100000000000000000015 /* KeychainStore.swift in Sources */,
 				E90100000000000000000004 /* AuthView.swift in Sources */,
+				E9010000000000000000001F /* AccountSettingsView.swift in Sources */,
 				E90100000000000000000005 /* APIClient.swift in Sources */,
 				E90100000000000000000006 /* AppConfig.swift in Sources */,
 				E90100000000000000000007 /* Models.swift in Sources */,
@@ -291,6 +301,7 @@
 				E9010000000000000000001D /* GameSignalSocket.swift in Sources */,
 				E9010000000000000000000B /* PlayerFeedback.swift in Sources */,
 				E9010000000000000000000C /* CardViews.swift in Sources */,
+				E9010000000000000000001E /* CardFaceViews.swift in Sources */,
 				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
 				E90100000000000000000013 /* GinRummyTheme.swift in Sources */,
 				E90100000000000000000014 /* LobbyFlows.swift in Sources */,
@@ -307,6 +318,7 @@
 				EA0100000000000000000004 /* BettingSettlementBreakdownTests.swift in Sources */,
 				EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */,
 				EA0100000000000000000006 /* GameNarrationTests.swift in Sources */,
+				EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -25,6 +25,9 @@ struct LobbyView: View {
                     case let .wait(code, isHost):
                         LobbyWaitingRoomView(inviteCode: code, isHost: isHost)
                             .environmentObject(app)
+                    case .account:
+                        AccountSettingsView()
+                            .environmentObject(app)
                     }
                 }
         }
@@ -74,6 +77,11 @@ struct LobbyView: View {
 
                     Button("How to play") {
                         path.append(LobbyRoute.instructions)
+                    }
+                    .buttonStyle(GinGhostButtonStyle())
+
+                    Button("Account") {
+                        path.append(LobbyRoute.account)
                     }
                     .buttonStyle(GinGhostButtonStyle())
 

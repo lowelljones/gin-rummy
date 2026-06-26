@@ -5,6 +5,7 @@ struct StoredSession: Codable {
     var accessToken: String
     var refreshToken: String
     var expiresAt: Date
+    var userEmail: String?
 }
 
 enum KeychainStore {

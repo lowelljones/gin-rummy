@@ -25,6 +25,8 @@ final class AppModel: ObservableObject {
     /// Current bearer used for every authenticated API call. Kept in sync with `refreshToken` /
     /// `expiresAt` whenever a session is adopted or refreshed; views read it directly.
     @Published var accessToken: String?
+    /// Email from the last adopted Supabase session; shown on the account screen.
+    @Published var userEmail: String?
     /// Non-nil after the user taps an invite link / universal link (`ginrummy://join/…` or `…/join/CODE`).
     @Published internal private(set) var deepLinkInviteCode: String?
     /// Presented over the main stack when signed in, not in-game, invite link captured.
@@ -162,6 +164,7 @@ final class AppModel: ObservableObject {
     /// tokens, re-arms expiry, and writes the new state to the Keychain.
     func adoptSession(_ resp: AuthTokenResponse) {
         accessToken = resp.access_token
+        if let email = resp.user?.email { userEmail = email }
         if let rt = resp.refresh_token { refreshToken = rt }
         if let exp = resp.expires_in {
             expiresAt = Date().addingTimeInterval(TimeInterval(exp))
@@ -173,6 +176,7 @@ final class AppModel: ObservableObject {
     /// Forget the user's tokens locally and clear active-game state.
     func signOut() {
         accessToken = nil
+        userEmail = nil
         refreshToken = nil
         expiresAt = nil
         activeGameId = nil
@@ -217,6 +221,7 @@ final class AppModel: ObservableObject {
         if saved.expiresAt.timeIntervalSinceNow > 30 {
             /* Stored access token is still good — use it directly, refresher will take over later. */
             accessToken = saved.accessToken
+            userEmail = saved.userEmail
             reconcileInviteAcceptPresentation()
             return
         }
@@ -235,7 +240,9 @@ final class AppModel: ObservableObject {
             KeychainStore.clear()
             return
         }
-        KeychainStore.saveSession(StoredSession(accessToken: access, refreshToken: refresh, expiresAt: exp))
+        KeychainStore.saveSession(
+            StoredSession(accessToken: access, refreshToken: refresh, expiresAt: exp, userEmail: userEmail)
+        )
     }
 
     /// Updates table snapshots from `/state`, `/move`, or bot start payloads.

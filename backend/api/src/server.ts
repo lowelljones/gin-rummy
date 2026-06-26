@@ -1794,6 +1794,95 @@ function normalizeIntentSeat(intent: Intent, seat: 0 | 1): Intent {
   }
 }
 
+/**
+ * Permanently delete the caller's Supabase auth account and all cascaded app data.
+ * Abandons any active games and closes open lobbies first so the other player isn't
+ * left on a live table pointing at a deleted user.
+ */
+async function cleanupUserStateBeforeDelete(userId: string): Promise<void> {
+  const { data: activeGames, error: gErr } = await admin
+    .from("games")
+    .select("id, lobby_id")
+    .eq("status", "active")
+    .contains("player_ids", [userId]);
+  if (gErr) throw new Error(gErr.message);
+
+  for (const game of activeGames ?? []) {
+    const gameId = game.id as string;
+    const { data: claimed } = await admin
+      .from("games")
+      .update({
+        status: "abandoned",
+        abandoned_by: userId,
+        abandoned_at: new Date().toISOString(),
+      })
+      .eq("id", gameId)
+      .eq("status", "active")
+      .select("id")
+      .maybeSingle();
+    if (claimed) {
+      const lobbyId = (game as { lobby_id?: string | null }).lobby_id;
+      if (lobbyId) {
+        await admin.from("lobbies").update({ status: "closed" }).eq("id", lobbyId);
+      }
+      await syncPlayerGameSnapshots(gameId, snapshotDeps());
+    }
+  }
+
+  const { data: hostedOpen, error: hErr } = await admin
+    .from("lobbies")
+    .select("id")
+    .eq("created_by", userId)
+    .eq("status", "open");
+  if (hErr) throw new Error(hErr.message);
+  for (const lobby of hostedOpen ?? []) {
+    await admin.from("lobbies").update({ status: "closed" }).eq("id", lobby.id);
+  }
+
+  const { data: guestSeats, error: mErr } = await admin
+    .from("lobby_players")
+    .select("lobby_id")
+    .eq("user_id", userId);
+  if (mErr) throw new Error(mErr.message);
+  for (const row of guestSeats ?? []) {
+    const lobbyId = row.lobby_id as string;
+    const { data: lobby } = await admin
+      .from("lobbies")
+      .select("status, created_by")
+      .eq("id", lobbyId)
+      .maybeSingle();
+    if (!lobby || lobby.status !== "open" || lobby.created_by === userId) continue;
+    await admin.from("lobby_players").delete().eq("lobby_id", lobbyId).eq("user_id", userId);
+    await admin.from("lobby_players").update({ ready: false }).eq("lobby_id", lobbyId);
+  }
+}
+
+app.post("/account/delete", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  try {
+    await withTimeout(cleanupUserStateBeforeDelete(user.id), SUPABASE_STEP_TIMEOUT_MS, "account.cleanup");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Cleanup failed";
+    req.log.error({ userId: user.id, err: msg }, "account delete cleanup failed");
+    return reply.code(500).send({ error: msg });
+  }
+
+  const { error: delErr } = await withTimeout(
+    admin.auth.admin.deleteUser(user.id),
+    SUPABASE_STEP_TIMEOUT_MS,
+    "auth.admin.deleteUser",
+  );
+  if (delErr) {
+    req.log.error({ userId: user.id, err: delErr.message }, "account delete failed");
+    return reply.code(500).send({ error: delErr.message });
+  }
+
+  app.log.info({ userId: user.id }, "account deleted");
+  return { ok: true };
+});
+
 app.get("/health", async () => ({ ok: true }));
 
 await app.listen({ port: PORT, host: HOST });

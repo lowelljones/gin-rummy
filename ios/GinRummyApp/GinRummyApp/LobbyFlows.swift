@@ -17,6 +17,7 @@ enum LobbyRoute: Hashable {
     case wait(code: String, isHost: Bool)
     case instructions
     case manualScore
+    case account
 }
 
 struct InstructionsView: View {

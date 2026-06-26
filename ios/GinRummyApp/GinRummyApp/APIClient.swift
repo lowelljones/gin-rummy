@@ -213,4 +213,12 @@ final class APIClient {
         let body = try JSONSerialization.data(withJSONObject: ["text": text])
         return try await request(path: "/games/\(gameId)/chat", method: "POST", token: token, body: body)
     }
+
+    /// Permanently delete the signed-in user's account and all server-side data.
+    func deleteAccount(token: String) async throws {
+        struct DeleteResponse: Codable {
+            let ok: Bool?
+        }
+        let _: DeleteResponse = try await request(path: "/account/delete", method: "POST", token: token)
+    }
 }
