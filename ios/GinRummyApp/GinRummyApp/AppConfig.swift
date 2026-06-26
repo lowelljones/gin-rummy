@@ -63,4 +63,17 @@ enum AppConfig {
         }
         return URL(string: "https://\(auth)/join/\(inviteCode)")!
     }
+
+    /// Public privacy policy page (served by the API at `GET /privacy`).
+    static var privacyPolicyURL: URL? {
+        let auth = inviteLinkAuthority()
+        if auth.isEmpty {
+            if apiBaseURL.lowercased().hasPrefix("http") {
+                let base = apiBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return URL(string: "\(base)/privacy")
+            }
+            return nil
+        }
+        return URL(string: "https://\(auth)/privacy")
+    }
 }

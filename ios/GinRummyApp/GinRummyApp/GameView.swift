@@ -973,6 +973,57 @@ struct GameView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Full-width knock/layoff surface — cards scale to the device width instead of
+    /// overflowing horizontally inside the generic scroll column.
+    @ViewBuilder
+    private func knockLayoffScreen(
+        gameId: String,
+        p: PlayerPerspective,
+        knock: PlayerPerspective.KnockPerspective,
+        feedbackText: Binding<String>,
+        feedbackIsError: Binding<Bool>
+    ) -> some View {
+        VStack(spacing: 0) {
+            phaseRibbon(surface: .knockLayoff, p: p)
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
+
+            if knock.layoffTurn == p.seat, knock.knocker != p.seat {
+                LayoffArrangementView(
+                    p: p,
+                    knock: knock,
+                    opponentName: app.opponentDisplayName,
+                    onSubmit: { melds, layoffs in
+                        Task {
+                            await submitLayoffResolve(
+                                gameId: gameId,
+                                ownMelds: melds,
+                                layoffs: layoffs
+                            )
+                        }
+                    }
+                )
+            } else {
+                ScrollView {
+                    KnockerWaitingView(knock: knock, opponentName: app.opponentDisplayName)
+                        .padding(.top, 8)
+                }
+            }
+
+            if GameTablePolicy.proposeRedealAllowed(phase: p.phase) {
+                proposeRedealFooter(
+                    gameId: gameId,
+                    p: p,
+                    feedbackText: feedbackText,
+                    feedbackIsError: feedbackIsError
+                )
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
     /// Pinned bottom action bar — context buttons for the current surface, always
     /// on screen so the player never has to scroll to act.
     @ViewBuilder
@@ -1154,35 +1205,40 @@ struct GameView: View {
                         VStack(spacing: 0) {
                             tableTopBar(p: p)
                             if showsHandReveal(surface, p: p), let hr = p.handResult {
-                                ScrollView {
-                                    HandRevealView(
-                                        p: p,
-                                        result: hr,
-                                        opponentName: app.opponentDisplayName,
-                                        isMatchOver: surface == .matchOver,
-                                        onContinue: {
-                                            Task {
-                                                await send(
-                                                    gameId: gameId,
-                                                    token: app.accessToken,
-                                                    intent: ["type": "ackHandOver"],
-                                                    success: "Ready for the next hand.",
-                                                    feedbackText: $feedbackText,
-                                                    feedbackIsError: $feedbackIsError
-                                                )
-                                            }
-                                        },
-                                        onShowFinalResults: { showMatchSummaryAfterReveal = true }
-                                    )
-                                    .id(handRevealIdentity(hr))
-                                    .padding(8)
-                                }
+                                HandRevealView(
+                                    p: p,
+                                    result: hr,
+                                    opponentName: app.opponentDisplayName,
+                                    isMatchOver: surface == .matchOver,
+                                    onContinue: {
+                                        Task {
+                                            await send(
+                                                gameId: gameId,
+                                                token: app.accessToken,
+                                                intent: ["type": "ackHandOver"],
+                                                success: "Ready for the next hand.",
+                                                feedbackText: $feedbackText,
+                                                feedbackIsError: $feedbackIsError
+                                            )
+                                        }
+                                    },
+                                    onShowFinalResults: { showMatchSummaryAfterReveal = true }
+                                )
+                                .id(handRevealIdentity(hr))
                             } else if surface == .cutForDeal {
                                 // Fixed single-screen cut layout — never scrolls.
                                 cutForDealScreen(gameId: gameId, p: p)
                             } else if surface == .play || surface == .downCard {
                                 // Fixed single-screen table — never scrolls during a turn.
                                 playingTable(gameId: gameId, surface: surface, p: p)
+                            } else if surface == .knockLayoff, let k = p.knock {
+                                knockLayoffScreen(
+                                    gameId: gameId,
+                                    p: p,
+                                    knock: k,
+                                    feedbackText: $feedbackText,
+                                    feedbackIsError: $feedbackIsError
+                                )
                             } else {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 10) {
@@ -1196,27 +1252,6 @@ struct GameView: View {
 
                                         if surface == .handOver, p.handResult == nil {
                                             handOverPanel(p: p)
-                                        }
-
-                                        if surface == .knockLayoff, let k = p.knock {
-                                            if k.layoffTurn == p.seat, k.knocker != p.seat {
-                                                LayoffArrangementView(
-                                                    p: p,
-                                                    knock: k,
-                                                    opponentName: app.opponentDisplayName,
-                                                    onSubmit: { melds, layoffs in
-                                                        Task {
-                                                            await submitLayoffResolve(
-                                                                gameId: gameId,
-                                                                ownMelds: melds,
-                                                                layoffs: layoffs
-                                                            )
-                                                        }
-                                                    }
-                                                )
-                                            } else {
-                                                KnockerWaitingView(knock: k, opponentName: app.opponentDisplayName)
-                                            }
                                         }
 
                                         if showsYouHand(surface, p: p) {

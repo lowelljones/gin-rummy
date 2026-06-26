@@ -38,6 +38,13 @@ struct AuthView: View {
             }
             .padding(.horizontal, 24)
 
+            if let privacyURL = AppConfig.privacyPolicyURL {
+                Link("Privacy Policy", destination: privacyURL)
+                    .font(.footnote)
+                    .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
+                    .padding(.bottom, 8)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

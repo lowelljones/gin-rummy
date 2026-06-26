@@ -15,6 +15,7 @@ enum HandEndStyle {
 /// A single meld as a tight overlapped row of cards, in a felt "slot".
 struct MeldGroupView: View {
     let meld: MeldDTO
+    var cardWidth: CGFloat = CardMetrics.compactWidth
     /// Cards tinted blue (laid off by the defender).
     var laidOffCards: Set<String> = []
     /// Glowing target state (defender picking where a card attaches).
@@ -24,11 +25,19 @@ struct MeldGroupView: View {
     /// Tap a specific card inside the meld (used to undo a staged layoff).
     var onTapCard: ((String) -> Void)? = nil
 
+    private var overlap: CGFloat { cardWidth * CardMetrics.meldOverlapFraction }
+    private var slotPadding: CGFloat { CardMetrics.meldSlotPadding(for: cardWidth) }
+
     var body: some View {
         let cards = meld.type == "run" ? MeldSolver.rankSorted(meld.cards) : meld.cards
-        HStack(spacing: -26) {
+        HStack(spacing: -overlap) {
             ForEach(cards, id: \.self) { c in
-                PlayingCardView(card: c, compact: true, onTap: onTapCard.map { tap in { tap(c) } })
+                PlayingCardView(
+                    card: c,
+                    compact: true,
+                    width: cardWidth,
+                    onTap: onTapCard.map { tap in { tap(c) } }
+                )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5)
                             .fill(laidOffCards.contains(c) ? HandEndStyle.layoffBlue.opacity(0.30) : Color.clear)
@@ -44,21 +53,21 @@ struct MeldGroupView: View {
                     )
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, slotPadding)
+        .padding(.vertical, max(4, cardWidth * 0.10))
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: max(8, cardWidth * 0.16))
                 .fill(highlighted ? HandEndStyle.layoffBlue.opacity(0.22) : Color.black.opacity(0.18))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: max(8, cardWidth * 0.16))
                 .stroke(
                     highlighted ? HandEndStyle.layoffBlue : GinRummyPalette.gold.opacity(0.28),
                     lineWidth: highlighted ? 2.5 : 1
                 )
         )
         .opacity(dimmed ? 0.55 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: max(8, cardWidth * 0.16)))
         .onTapGesture { onTap?() }
     }
 }
@@ -69,29 +78,28 @@ struct MeldGroupView: View {
 /// and one centered a little lower. Extra melds (rare) wrap on a final row.
 struct MeldTableArrangement: View {
     let melds: [MeldDTO]
+    var cardWidth: CGFloat = CardMetrics.compactWidth
     var laidOffCards: Set<String> = []
     /// Index of the meld currently glowing as a layoff target set.
     var highlightedIndices: Set<Int> = []
     var onTapMeld: ((Int) -> Void)? = nil
     var onTapCardInMeld: ((String, Int) -> Void)? = nil
 
+    private let rowGutter: CGFloat = 8
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: max(8, cardWidth * 0.14)) {
             if melds.isEmpty {
                 Text("No melds")
                     .font(.caption.italic())
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
                     .padding(.vertical, 10)
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: rowGutter) {
                     if melds.count > 0 { group(0) }
-                    if melds.count > 1 {
-                        Spacer(minLength: 6)
-                        group(1)
-                    } else {
-                        Spacer(minLength: 6)
-                    }
+                    if melds.count > 1 { group(1) }
                 }
+                .frame(maxWidth: .infinity)
                 if melds.count > 2 {
                     HStack {
                         Spacer(minLength: 0)
@@ -100,20 +108,23 @@ struct MeldTableArrangement: View {
                     }
                 }
                 if melds.count > 3 {
-                    HStack(spacing: 8) {
+                    HStack(spacing: rowGutter) {
                         ForEach(3 ..< melds.count, id: \.self) { i in
                             group(i)
                         }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private func group(_ i: Int) -> some View {
         MeldGroupView(
             meld: melds[i],
+            cardWidth: cardWidth,
             laidOffCards: laidOffCards,
             highlighted: highlightedIndices.contains(i),
             onTap: onTapMeld.map { tap in { tap(i) } },
@@ -128,10 +139,14 @@ struct MeldTableArrangement: View {
 struct DeadwoodRow: View {
     let cards: [String]
     let points: Int
+    var cardWidth: CGFloat = CardMetrics.compactWidth
     var label: String = "Unmelded"
 
+    private var cardSpacing: CGFloat { max(4, cardWidth * 0.10) }
+    private var badgeFont: Font { cardWidth >= 46 ? .caption2.bold().monospacedDigit() : .system(size: 9, weight: .bold).monospacedDigit() }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .center, spacing: 6) {
             HStack(spacing: 8) {
                 Text(label.uppercased())
                     .font(.caption2.weight(.bold))
@@ -143,28 +158,31 @@ struct DeadwoodRow: View {
                     .padding(.vertical, 2)
                     .background(Capsule().fill(HandEndStyle.deadwoodRed.opacity(0.55)))
             }
+            .frame(maxWidth: .infinity)
             if cards.isEmpty {
                 Text("None — every card melded")
                     .font(.caption.italic())
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    .frame(maxWidth: .infinity)
             } else {
-                HStack(spacing: 6) {
+                HStack(spacing: cardSpacing) {
                     ForEach(MeldSolver.rankSorted(cards), id: \.self) { c in
                         VStack(spacing: 2) {
-                            PlayingCardView(card: c, compact: true, onTap: nil)
+                            PlayingCardView(card: c, compact: true, width: cardWidth, onTap: nil)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .stroke(HandEndStyle.deadwoodRed.opacity(0.9), lineWidth: 2)
+                                    RoundedRectangle(cornerRadius: max(4, cardWidth * 0.08))
+                                        .stroke(HandEndStyle.deadwoodRed.opacity(0.9), lineWidth: max(1.5, cardWidth * 0.03))
                                 )
                             Text("\(MeldSolver.deadwoodValue(c))")
-                                .font(.caption2.bold().monospacedDigit())
+                                .font(badgeFont)
                                 .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
                         }
                     }
-                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity)
             }
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -197,45 +215,75 @@ struct HandRevealView: View {
     private var laidOffSet: Set<String> { Set(result.layoffs.map(\.card)) }
     private var youWon: Bool { result.winner == mySeat }
 
+    private var revealMeldCounts: [Int] {
+        (oppSide?.melds ?? []).map(\.cards.count) + (mySide?.melds ?? []).map(\.cards.count)
+    }
+
+    private var revealDeadwoodMax: Int {
+        max(oppSide?.deadwood.count ?? 0, mySide?.deadwood.count ?? 0)
+    }
+
     var body: some View {
-        ZStack {
-            VStack(alignment: .leading, spacing: 14) {
-                headline
-                seatSection(
-                    title: opponentName.uppercased(),
-                    side: oppSide,
-                    isCloser: result.closer == oppSeat
-                )
-                Divider()
-                    .overlay(GinRummyPalette.gold.opacity(0.35))
-                seatSection(
-                    title: "YOU",
-                    side: mySide,
-                    isCloser: result.closer == mySeat
-                )
-                if !result.layoffs.isEmpty {
-                    Label(
-                        "Blue cards were laid off onto the knocker's melds.",
-                        systemImage: "arrow.turn.right.up"
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(HandEndStyle.layoffBlue.opacity(0.95))
+        GeometryReader { geo in
+            let horizontalInset: CGFloat = 16
+            let cardWidth = CardMetrics.handEndCardWidth(
+                availableWidth: max(0, geo.size.width - horizontalInset),
+                meldCardCounts: revealMeldCounts,
+                maxDeadwoodCount: revealDeadwoodMax
+            )
+
+            ZStack {
+                ScrollView {
+                    revealBody(cardWidth: cardWidth)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 8)
                 }
-                if stage == .ready {
-                    readyArea
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                if stage == .flash {
+                    flashOverlay
+                        .transition(.scale(scale: 0.86).combined(with: .opacity))
                 }
             }
             .blur(radius: stage == .flash ? 2.5 : 0)
-
-            if stage == .flash {
-                flashOverlay
-                    .transition(.scale(scale: 0.86).combined(with: .opacity))
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: stage)
         .onAppear { runSequence() }
         .onDisappear { sequenceTask?.cancel() }
+    }
+
+    @ViewBuilder
+    private func revealBody(cardWidth: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            headline
+            seatSection(
+                title: opponentName.uppercased(),
+                side: oppSide,
+                isCloser: result.closer == oppSeat,
+                cardWidth: cardWidth
+            )
+            Divider()
+                .overlay(GinRummyPalette.gold.opacity(0.35))
+            seatSection(
+                title: "YOU",
+                side: mySide,
+                isCloser: result.closer == mySeat,
+                cardWidth: cardWidth
+            )
+            if !result.layoffs.isEmpty {
+                Label(
+                    "Blue cards were laid off onto the knocker's melds.",
+                    systemImage: "arrow.turn.right.up"
+                )
+                .font(.caption2)
+                .foregroundStyle(HandEndStyle.layoffBlue.opacity(0.95))
+                .frame(maxWidth: .infinity)
+            }
+            if stage == .ready {
+                readyArea
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
     }
 
     // MARK: pieces
@@ -261,7 +309,12 @@ struct HandRevealView: View {
     }
 
     @ViewBuilder
-    private func seatSection(title: String, side: HandResultDTO.Side?, isCloser: Bool) -> some View {
+    private func seatSection(
+        title: String,
+        side: HandResultDTO.Side?,
+        isCloser: Bool,
+        cardWidth: CGFloat
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(title)
@@ -280,11 +333,17 @@ struct HandRevealView: View {
             if let side {
                 MeldTableArrangement(
                     melds: side.melds,
+                    cardWidth: cardWidth,
                     laidOffCards: isCloser ? laidOffSet : []
                 )
-                DeadwoodRow(cards: side.deadwood, points: side.deadwoodPoints)
+                DeadwoodRow(
+                    cards: side.deadwood,
+                    points: side.deadwoodPoints,
+                    cardWidth: cardWidth
+                )
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var flashOverlay: some View {
@@ -611,17 +670,26 @@ struct KnockLayoutChooserView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Choose which melds go down. Your unmelded total is the same either way, but the melds you table decide what your opponent can lay off.")
-                        .font(.subheadline)
-                        .foregroundStyle(GinRummyPalette.sage)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(options) { opt in
-                        optionCard(opt)
+            GeometryReader { geo in
+                let horizontalInset: CGFloat = 28
+                let cardWidth = CardMetrics.handEndCardWidth(
+                    availableWidth: max(0, geo.size.width - horizontalInset),
+                    meldCardCounts: options.flatMap { $0.melds.map(\.cards.count) },
+                    maxDeadwoodCount: options.map(\.deadwood.count).max() ?? 0
+                )
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Choose which melds go down. Your unmelded total is the same either way, but the melds you table decide what your opponent can lay off.")
+                            .font(.subheadline)
+                            .foregroundStyle(GinRummyPalette.sage)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(options) { opt in
+                            optionCard(opt, cardWidth: cardWidth)
+                        }
                     }
+                    .padding(14)
                 }
-                .padding(14)
             }
             .background(GinRummyPalette.feltGradient.ignoresSafeArea())
             .navigationTitle("Knock — pick your melds")
@@ -644,11 +712,19 @@ struct KnockLayoutChooserView: View {
     }
 
     @ViewBuilder
-    private func optionCard(_ opt: MeldSolver.PartitionOption) -> some View {
+    private func optionCard(_ opt: MeldSolver.PartitionOption, cardWidth: CGFloat) -> some View {
         let isSelected = selectedId == opt.id
         VStack(alignment: .leading, spacing: 10) {
-            MeldTableArrangement(melds: opt.melds.map { MeldDTO(type: $0.dtoType, cards: $0.cards) })
-            DeadwoodRow(cards: opt.deadwood, points: opt.deadwoodPoints, label: "Stays in hand")
+            MeldTableArrangement(
+                melds: opt.melds.map { MeldDTO(type: $0.dtoType, cards: $0.cards) },
+                cardWidth: cardWidth
+            )
+            DeadwoodRow(
+                cards: opt.deadwood,
+                points: opt.deadwoodPoints,
+                cardWidth: cardWidth,
+                label: "Stays in hand"
+            )
         }
         .padding(12)
         .background(
@@ -722,25 +798,36 @@ struct LayoffArrangementView: View {
         knock.knockerDeadwood.reduce(0) { $0 + MeldSolver.deadwoodValue($1) }
     }
 
-    private var eligibleMeldIndices: Set<Int> {
-        guard let card = selectedCard else { return [] }
-        var out: Set<Int> = []
-        for (i, m) in effectiveKnockerMelds.enumerated() {
-            if MeldSolver.canExtend(meldType: m.type, cards: m.cards, with: card) {
-                out.insert(i)
-            }
+    private var layoutMeldCounts: [Int] {
+        var counts = effectiveKnockerMelds.map(\.cards.count)
+        if let opt = chosenOption {
+            counts += opt.melds.map(\.cards.count)
+        } else if let first = suggestions.first {
+            counts += first.melds.map(\.cards.count)
         }
-        return out
+        return counts
+    }
+
+    private var layoutDeadwoodMax: Int {
+        max(remainingCards.count, knock.knockerDeadwood.count)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            knockerSection
-            Divider().overlay(GinRummyPalette.gold.opacity(0.35))
-            yourSection
-            footer
+        GeometryReader { geo in
+            let horizontalInset: CGFloat = 16
+            let cardWidth = CardMetrics.handEndCardWidth(
+                availableWidth: max(0, geo.size.width - horizontalInset),
+                meldCardCounts: layoutMeldCounts,
+                maxDeadwoodCount: layoutDeadwoodMax
+            )
+
+            ScrollView {
+                layoffBody(cardWidth: cardWidth)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 8)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { computeSuggestionsIfNeeded() }
         .onChange(of: hand) { _, _ in
             suggestions = []
@@ -751,7 +838,29 @@ struct LayoffArrangementView: View {
         }
     }
 
+    @ViewBuilder
+    private func layoffBody(cardWidth: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            knockerSection(cardWidth: cardWidth)
+            Divider().overlay(GinRummyPalette.gold.opacity(0.35))
+            yourSection(cardWidth: cardWidth)
+            footer
+        }
+    }
+
     // MARK: sections
+
+    private var eligibleMeldIndices: Set<Int> {
+        guard let card = selectedCard else { return [] }
+        var out: Set<Int> = []
+        for (i, m) in effectiveKnockerMelds.enumerated() {
+            if MeldSolver.canExtend(meldType: m.type, cards: m.cards, with: card) {
+                out.insert(i)
+            }
+        }
+        return out
+    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -769,7 +878,7 @@ struct LayoffArrangementView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.phaseKnockLayoff.opacity(0.4)))
     }
 
-    private var knockerSection: some View {
+    private func knockerSection(cardWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("\(opponentName.uppercased())'S MELDS")
@@ -782,6 +891,7 @@ struct LayoffArrangementView: View {
             }
             MeldTableArrangement(
                 melds: effectiveKnockerMelds,
+                cardWidth: cardWidth,
                 laidOffCards: stagedCards,
                 highlightedIndices: eligibleMeldIndices,
                 onTapMeld: { i in attachSelectedCard(to: i) },
@@ -793,10 +903,16 @@ struct LayoffArrangementView: View {
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
-    private var yourSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func yourSection(cardWidth: CGFloat) -> some View {
+        let badgeFont: Font = cardWidth >= 46
+            ? .caption2.bold().monospacedDigit()
+            : .system(size: 9, weight: .bold).monospacedDigit()
+        let cardSpacing = max(4, cardWidth * 0.10)
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("YOUR MELDS")
                     .font(.caption.weight(.bold))
@@ -813,9 +929,10 @@ struct LayoffArrangementView: View {
                 }
             }
             MeldTableArrangement(
-                melds: (chosenOption?.melds ?? []).map { MeldDTO(type: $0.dtoType, cards: $0.cards) }
+                melds: (chosenOption?.melds ?? []).map { MeldDTO(type: $0.dtoType, cards: $0.cards) },
+                cardWidth: cardWidth
             )
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .center, spacing: 6) {
                 HStack(spacing: 8) {
                     Text("YOUR REMAINING CARDS")
                         .font(.caption2.weight(.bold))
@@ -832,26 +949,30 @@ struct LayoffArrangementView: View {
                     Text("Nothing left unmelded.")
                         .font(.caption.italic())
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                        .frame(maxWidth: .infinity)
                 } else {
-                    HStack(spacing: 6) {
+                    HStack(spacing: cardSpacing) {
                         ForEach(remainingCards, id: \.self) { c in
                             VStack(spacing: 2) {
                                 PlayingCardView(
                                     card: c,
                                     selected: selectedCard == c,
                                     compact: true,
+                                    width: cardWidth,
                                     onTap: { selectedCard = selectedCard == c ? nil : c }
                                 )
                                 Text("\(MeldSolver.deadwoodValue(c))")
-                                    .font(.caption2.bold().monospacedDigit())
+                                    .font(badgeFont)
                                     .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
                             }
                         }
-                        Spacer(minLength: 0)
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
+            .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var footer: some View {
@@ -954,33 +1075,48 @@ struct KnockerWaitingView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                ProgressView()
-                    .tint(GinRummyPalette.gold)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("You knocked")
-                        .font(.headline)
-                        .foregroundStyle(GinRummyPalette.cream)
-                    Text("\(opponentName) is choosing their melds and layoffs…")
-                        .font(.caption)
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(GinRummyPalette.phaseKnockLayoff.opacity(0.16)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.phaseKnockLayoff.opacity(0.4)))
-
-            Text("YOUR MELDS")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(GinRummyPalette.cream)
-            MeldTableArrangement(melds: knock.knockerMeldsAfterLayoff ?? knock.knockerMelds)
-            DeadwoodRow(
-                cards: knock.knockerDeadwood,
-                points: knockerDeadwoodPoints,
-                label: "Your unmelded"
+        GeometryReader { geo in
+            let horizontalInset: CGFloat = 16
+            let cardWidth = CardMetrics.handEndCardWidth(
+                availableWidth: max(0, geo.size.width - horizontalInset),
+                meldCardCounts: (knock.knockerMeldsAfterLayoff ?? knock.knockerMelds).map(\.cards.count),
+                maxDeadwoodCount: knock.knockerDeadwood.count
             )
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .tint(GinRummyPalette.gold)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("You knocked")
+                            .font(.headline)
+                            .foregroundStyle(GinRummyPalette.cream)
+                        Text("\(opponentName) is choosing their melds and layoffs…")
+                            .font(.caption)
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12).fill(GinRummyPalette.phaseKnockLayoff.opacity(0.16)))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(GinRummyPalette.phaseKnockLayoff.opacity(0.4)))
+
+                Text("YOUR MELDS")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(GinRummyPalette.cream)
+                MeldTableArrangement(
+                    melds: knock.knockerMeldsAfterLayoff ?? knock.knockerMelds,
+                    cardWidth: cardWidth
+                )
+                DeadwoodRow(
+                    cards: knock.knockerDeadwood,
+                    points: knockerDeadwoodPoints,
+                    cardWidth: cardWidth,
+                    label: "Your unmelded"
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 8)
         }
     }
 }

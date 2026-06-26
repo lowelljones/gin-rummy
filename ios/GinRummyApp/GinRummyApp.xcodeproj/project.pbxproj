@@ -43,6 +43,7 @@
 		EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000007 /* CardMetricsHandEndTests.swift */; };
 		E9010000000000000000001E /* CardFaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001E /* CardFaceViews.swift */; };
 		E9010000000000000000001F /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001F /* AccountSettingsView.swift */; };
+		E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +97,7 @@
 		EA0200000000000000000007 /* CardMetricsHandEndTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMetricsHandEndTests.swift; sourceTree = "<group>"; };
 		E8010000000000000000001E /* CardFaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardFaceViews.swift; sourceTree = "<group>"; };
 		E8010000000000000000001F /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
+		E80100000000000000000020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -172,6 +174,7 @@
 				E80100000000000000000014 /* LobbyFlows.swift */,
 				E8010000000000000000000A /* Assets.xcassets */,
 				E8010000000000000000000B /* Info.plist */,
+				E80100000000000000000020 /* PrivacyInfo.xcprivacy */,
 				E8010000000000000000000C /* GinRummyApp.entitlements */,
 			);
 			path = GinRummyApp;
@@ -267,6 +270,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E9010000000000000000000A /* Assets.xcassets in Resources */,
+				E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

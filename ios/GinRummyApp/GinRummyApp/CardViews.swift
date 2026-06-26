@@ -20,11 +20,7 @@ enum PlayingCard {
     }
 
     static func suitColor(_ card: String) -> Color {
-        let u = CardIdValidation.normalize(card)
-        guard u.count == 2 else { return GinRummyPalette.navy }
-        return u.last == "H" || u.last == "D"
-            ? Color(red: 0.62, green: 0.12, blue: 0.12)
-            : GinRummyPalette.navy.opacity(0.93)
+        inkColor(card)
     }
 
     static func suitSymbol(_ card: String) -> String {
@@ -85,6 +81,85 @@ enum CardMetrics {
         let target = w / (CGFloat(n) * 0.60 + 0.40)
         return min(104, max(64, target))
     }
+
+    // MARK: Hand-end / knock-layoff layout
+
+    /// Fraction of card width consumed by overlap in a meld row (~45% hidden per step).
+    static let meldOverlapFraction: CGFloat = 0.45
+
+    /// Horizontal padding inside a meld slot, scaled with card width.
+    static func meldSlotPadding(for cardWidth: CGFloat) -> CGFloat { max(6, cardWidth * 0.12) }
+
+    /// Width of an overlapped meld row at a given card size.
+    static func meldRowWidth(cardWidth: CGFloat, cardCount: Int) -> CGFloat {
+        guard cardCount > 0 else { return 0 }
+        let pad = meldSlotPadding(for: cardWidth)
+        let step = cardWidth * (1 - meldOverlapFraction)
+        return pad * 2 + cardWidth + step * CGFloat(cardCount - 1)
+    }
+
+    /// Width of a deadwood card row (no overlap).
+    static func deadwoodRowWidth(cardWidth: CGFloat, cardCount: Int) -> CGFloat {
+        guard cardCount > 0 else { return 0 }
+        let spacing = max(4, cardWidth * 0.10)
+        return CGFloat(cardCount) * cardWidth + spacing * CGFloat(cardCount - 1)
+    }
+
+    /// Largest card width that keeps every hand-end row within `availableWidth`.
+    static func handEndCardWidth(
+        availableWidth: CGFloat,
+        meldCardCounts: [Int],
+        maxDeadwoodCount: Int,
+        minWidth: CGFloat = 34,
+        maxWidth: CGFloat = compactWidth
+    ) -> CGFloat {
+        let width = max(availableWidth, 1)
+        let gutter: CGFloat = 8
+
+        func rowFits(_ cardWidth: CGFloat) -> Bool {
+            let sorted = meldCardCounts.sorted(by: >)
+            var rowWidths: [CGFloat] = []
+
+            if sorted.count >= 2 {
+                rowWidths.append(
+                    meldRowWidth(cardWidth: cardWidth, cardCount: sorted[0])
+                        + gutter
+                        + meldRowWidth(cardWidth: cardWidth, cardCount: sorted[1])
+                )
+            } else if let only = sorted.first {
+                rowWidths.append(meldRowWidth(cardWidth: cardWidth, cardCount: only))
+            }
+
+            if sorted.count > 2 {
+                rowWidths.append(meldRowWidth(cardWidth: cardWidth, cardCount: sorted[2]))
+            }
+            if sorted.count > 3 {
+                let extras = sorted.dropFirst(3)
+                let extrasWidth = extras.reduce(CGFloat(0)) { partial, count in
+                    partial + meldRowWidth(cardWidth: cardWidth, cardCount: count)
+                } + gutter * CGFloat(extras.count - 1)
+                rowWidths.append(extrasWidth)
+            }
+
+            let deadwoodWidth = deadwoodRowWidth(cardWidth: cardWidth, cardCount: maxDeadwoodCount)
+            let widest = max(rowWidths.max() ?? 0, deadwoodWidth)
+            return widest <= width
+        }
+
+        if rowFits(maxWidth) { return maxWidth }
+
+        var lo = minWidth
+        var hi = maxWidth
+        for _ in 0 ..< 14 {
+            let mid = (lo + hi) / 2
+            if rowFits(mid) {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        return floor(lo)
+    }
 }
 
 // MARK: - Card back (shared face-down styling)
@@ -111,11 +186,11 @@ struct CardBackFace: View {
             .overlay {
                 ZStack {
                     RoundedRectangle(cornerRadius: corner * 0.8)
-                        .stroke(GinRummyPalette.gold.opacity(highlighted ? 0.55 : 0.28), lineWidth: 1)
+                        .stroke(GinRummyPalette.gold.opacity(highlighted ? 0.42 : 0.20), lineWidth: 1)
                         .padding(pad)
                     Image(systemName: "suit.spade.fill")
                         .font(.system(size: width * 0.34))
-                        .foregroundStyle(GinRummyPalette.gold.opacity(highlighted ? 0.85 : 0.38))
+                        .foregroundStyle(GinRummyPalette.gold.opacity(highlighted ? 0.62 : 0.30))
                 }
             }
             .overlay {
@@ -155,22 +230,9 @@ struct PlayingCardView: View {
 
     private var cw: CGFloat { width ?? (compact ? CardMetrics.compactWidth : CardMetrics.fullWidth) }
     private var ch: CGFloat { CardMetrics.height(for: cw) }
-    private var rankFont: Font { .system(size: cw * 0.22, weight: .semibold) }
-    private var cornerSuitFont: Font { .system(size: cw * 0.20, weight: .semibold) }
-    private var centerSuitFont: Font { .system(size: cw * 0.44, weight: .regular) }
     private var pad: CGFloat { max(3, cw * 0.06) }
 
     private var corner: CGFloat { max(5, cw * 0.10) }
-
-    /// Opaque ivory face with a soft top-down sheen so cards read as solid
-    /// objects on the felt rather than translucent panes.
-    private var cardFaceFill: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 1.0, green: 0.99, blue: 0.96), Color(red: 0.95, green: 0.92, blue: 0.85)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
 
     var body: some View {
         Group {
@@ -178,37 +240,27 @@ struct PlayingCardView: View {
                 CardBackFace(width: cw, height: ch, cornerRadius: corner)
             } else {
                 RoundedRectangle(cornerRadius: corner)
-                    .fill(cardFaceFill)
+                    .fill(PlayingCard.cardFaceGradient)
                     .overlay(
-                        VStack(spacing: 0) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: cw * 0.02) {
-                                    Text(PlayingCard.displayRank(card))
-                                        .font(rankFont)
-                                        .fontWeight(.bold)
-                                    Text(PlayingCard.suitSymbol(card))
-                                        .font(cornerSuitFont)
-                                }
-                                Spacer()
-                            }
-                            Spacer()
-                            Text(PlayingCard.suitSymbol(card))
-                                .font(centerSuitFont)
-                        }
-                        .padding(pad)
+                        PlayingCardFaceContent(
+                            card: card,
+                            width: cw,
+                            height: ch,
+                            pad: pad,
+                            corner: corner
+                        )
                     )
-                    .foregroundStyle(PlayingCard.suitColor(card))
             }
         }
         .frame(width: cw, height: ch)
         .background(
             // Solid base so nothing behind the card ever shows through.
-            RoundedRectangle(cornerRadius: corner).fill(Color(red: 0.97, green: 0.95, blue: 0.9))
+            RoundedRectangle(cornerRadius: corner).fill(GinRummyPalette.cream.opacity(0.96))
         )
         .overlay(
             RoundedRectangle(cornerRadius: corner)
                 .stroke(
-                    selected ? GinRummyPalette.burgundy : GinRummyPalette.navy.opacity(0.28),
+                    selected ? GinRummyPalette.burgundy : PlayingCard.inkColor(card).opacity(0.22),
                     lineWidth: selected ? 2.5 : 1
                 )
         )
@@ -591,32 +643,38 @@ private enum DiscardPileLayout {
 
     static func transform(pileIndex: Int, totalCount: Int, card: String, cardWidth: CGFloat) -> CardTransform {
         let seed = stableHash(card: card, salt: pileIndex)
+
+        // First upcard / pile foundation: perfectly flat and centered.
+        if pileIndex == 0 {
+            return CardTransform()
+        }
+
         let isTop = pileIndex == totalCount - 1
-        let layerFromTop = totalCount - 1 - pileIndex
+        let depth = pileIndex // 1 = second card, 2 = third, …
 
-        if isTop {
-            return CardTransform(
-                offsetX: pseudo(seed, 1) * cardWidth * 0.04,
-                offsetY: pseudo(seed, 2) * cardWidth * 0.03,
-                rotation: pseudo(seed, 3) * 2.6
-            )
+        // Barely-there nudge — just enough for one corner to peek (~3–7 pt).
+        let nudge = cardWidth * (0.028 + 0.010 * CGFloat(min(depth - 1, 3)))
+        let wobbleX = pseudo(seed, 1) * cardWidth * 0.010
+        let wobbleY = pseudo(seed, 2) * cardWidth * 0.008
+
+        let (ox, oy): (CGFloat, CGFloat) = switch pileIndex % 4 {
+        case 0: (nudge * 0.50 + wobbleX, nudge * 0.32 + wobbleY)
+        case 1: (-nudge * 0.46 + wobbleX, nudge * 0.28 + wobbleY)
+        case 2: (nudge * 0.42 + wobbleX, -nudge * 0.22 + wobbleY)
+        default: (-nudge * 0.44 + wobbleX, -nudge * 0.20 + wobbleY)
         }
 
-        let spread = cardWidth * (0.07 + 0.025 * CGFloat(min(layerFromTop, 3)))
-        let wobble = pseudo(seed, 3) * 1.8
-        switch pileIndex % 4 {
-        case 0:
-            return CardTransform(offsetX: spread * 0.72, offsetY: spread * 0.58, rotation: 4.8 + wobble)
-        case 1:
-            return CardTransform(offsetX: -spread * 0.78, offsetY: spread * 0.46, rotation: -5.4 - wobble)
-        case 2:
-            return CardTransform(offsetX: spread * 0.58, offsetY: -spread * 0.38, rotation: 3.6 + wobble)
-        default:
-            return CardTransform(offsetX: -spread * 0.66, offsetY: -spread * 0.32, rotation: -4.2 - wobble)
-        }
+        // Tilt ramps up with each toss; top card gets a little extra lean.
+        let baseRot = 4.0 + Double(min(depth, 4)) * 2.0
+        let rotWobble = pseudo(seed, 3) * 2.4
+        let sign: Double = pileIndex % 2 == 0 ? 1 : -1
+        let topBoost = isTop ? 1.8 + abs(pseudo(seed, 4)) * 1.2 : 0
+        let rotation = sign * (baseRot + rotWobble + topBoost)
+
+        return CardTransform(offsetX: ox, offsetY: oy, rotation: rotation)
     }
 
-    static func stackSpread(for cardWidth: CGFloat) -> CGFloat { cardWidth * 0.16 }
+    static func stackSpread(for cardWidth: CGFloat) -> CGFloat { cardWidth * 0.11 }
 
     private static func stableHash(card: String, salt: Int) -> UInt64 {
         var h = UInt64(bitPattern: Int64(salt &* 0x9E37))
@@ -810,9 +868,11 @@ struct CutCardFlyAnimationOverlay: View {
 
 struct CutSpreadPicker: View {
     private enum CutSpreadFeedback {
-        static let begin = UIImpactFeedbackGenerator(style: .medium)
+        static let select = UIImpactFeedbackGenerator(style: .light)
         static let cross = UIImpactFeedbackGenerator(style: .light)
     }
+
+    private static let scrollMinimumDistance: CGFloat = 14
 
     let cardCount: Int
     @Binding var highlightIndex: Int?
@@ -825,7 +885,7 @@ struct CutSpreadPicker: View {
     private let margin: CGFloat = 8
 
     @State private var dragHoverIndex: Int?
-    @State private var isDragging = false
+    @State private var isScrolling = false
     @State private var lastHapticIndex: Int?
 
     var body: some View {
@@ -842,7 +902,7 @@ struct CutSpreadPicker: View {
                 let step = n > 1 ? max(4, min(fullW * 0.5, rawStep)) : 0
                 let spreadW = fullW + step * CGFloat(max(0, n - 1))
                 let leading = max(margin, (avail - spreadW) / 2)
-                let hover = isDragging ? dragHoverIndex : highlightIndex
+                let hover = isScrolling ? dragHoverIndex : highlightIndex
                 ZStack(alignment: .topLeading) {
                     ForEach(0 ..< n, id: \.self) { i in
                         let isSel = highlightIndex == i
@@ -855,29 +915,32 @@ struct CutSpreadPicker: View {
                         )
                             .offset(
                                 x: leading + CGFloat(i) * step,
-                                y: cardYOffset(index: i, hoverIndex: hover)
+                                y: cardYOffset(index: i, hoverIndex: hover, wave: isScrolling)
                             )
-                            .zIndex(cardZIndex(index: i, hoverIndex: hover, isSelected: isSel))
+                            .zIndex(cardZIndex(index: i, hoverIndex: hover, isSelected: isSel, wave: isScrolling))
                             .animation(
-                                isDragging
+                                isScrolling
                                     ? .interactiveSpring(response: 0.22, dampingFraction: 0.82)
                                     : .spring(response: 0.3, dampingFraction: 0.7),
                                 value: hover
                             )
                             .accessibilityLabel("Card position \(i + 1) of \(n)")
                             .accessibilityAddTraits(isSel ? .isSelected : [])
+                            .onTapGesture {
+                                selectCard(at: i)
+                            }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
+                    DragGesture(minimumDistance: Self.scrollMinimumDistance)
                         .onChanged { value in
                             let idx = indexAt(x: value.location.x, n: n, leading: leading, step: step)
-                            if !isDragging {
-                                isDragging = true
-                                CutSpreadFeedback.begin.prepare()
-                                CutSpreadFeedback.begin.impactOccurred()
+                            if !isScrolling {
+                                isScrolling = true
+                                dragHoverIndex = idx
+                                lastHapticIndex = idx
                             }
                             if idx != dragHoverIndex {
                                 dragHoverIndex = idx
@@ -890,7 +953,7 @@ struct CutSpreadPicker: View {
                             }
                         }
                         .onEnded { _ in
-                            isDragging = false
+                            isScrolling = false
                             dragHoverIndex = nil
                             lastHapticIndex = nil
                         }
@@ -900,9 +963,21 @@ struct CutSpreadPicker: View {
         .frame(height: cardH + lift + 4)
     }
 
-    /// Cards near the finger lift in a short wave; the rest stay in the deck.
-    private func cardYOffset(index: Int, hoverIndex: Int?) -> CGFloat {
+    private func selectCard(at index: Int) {
+        guard !isScrolling else { return }
+        CutSpreadFeedback.select.prepare()
+        CutSpreadFeedback.select.impactOccurred()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            highlightIndex = index
+        }
+    }
+
+    /// Wave lift only while scrolling; tap/random selection lifts a single card.
+    private func cardYOffset(index: Int, hoverIndex: Int?, wave: Bool) -> CGFloat {
         guard let h = hoverIndex else { return lift }
+        if !wave {
+            return index == h ? 0 : lift
+        }
         switch abs(index - h) {
         case 0: return 0
         case 1: return lift * 0.42
@@ -911,9 +986,9 @@ struct CutSpreadPicker: View {
         }
     }
 
-    private func cardZIndex(index: Int, hoverIndex: Int?, isSelected: Bool) -> Double {
+    private func cardZIndex(index: Int, hoverIndex: Int?, isSelected: Bool, wave: Bool) -> Double {
         if isSelected { return 1000 }
-        guard let h = hoverIndex else { return Double(index) }
+        guard wave, let h = hoverIndex else { return Double(index) }
         return Double(index) + Double(max(0, 3 - abs(index - h))) * 100
     }
 

@@ -48,6 +48,12 @@ struct AccountSettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let privacyURL = AppConfig.privacyPolicyURL {
+                    Link("Privacy Policy", destination: privacyURL)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(GinRummyPalette.gold.opacity(0.9))
+                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)

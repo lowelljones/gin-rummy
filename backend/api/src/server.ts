@@ -22,6 +22,7 @@ import {
   type SnapshotSyncDeps,
 } from "./playerGameSnapshots.js";
 import { buildSessionRecapFromGames, type SessionRecapPayload } from "./sessionRecap.js";
+import { privacyContactEmail, renderPrivacyPolicyPage } from "./privacyPolicy.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
 /* Railway's internal healthcheck and service-to-service network is IPv6, so when running
@@ -538,6 +539,11 @@ function renderInvitePage(opts: {
  * is served from the same public API domain and bounces into the installed
  * app via the ginrummy:// scheme, with the code + instructions as fallback.
  */
+app.get("/privacy", async (_req, reply) => {
+  const html = renderPrivacyPolicyPage({ contactEmail: privacyContactEmail() });
+  return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
+});
+
 app.get("/join/:code", async (req, reply) => {
   const raw = (req.params as { code: string }).code.toUpperCase().trim();
   const code = INVITE_CODE_RE.test(raw) ? raw : "";
