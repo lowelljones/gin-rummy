@@ -68,12 +68,19 @@ struct RootView: View {
         .fullScreenCover(item: $app.inviteAcceptPresentation) { presentation in
             InviteAcceptView(inviteCode: presentation.inviteCode)
         }
+        .fullScreenCover(item: $app.passwordResetPresentation) { presentation in
+            ResetPasswordView(presentation: presentation)
+        }
         .onOpenURL { url in
-            app.handleInviteURL(url)
+            if !app.handlePasswordResetURL(url) {
+                app.handleInviteURL(url)
+            }
         }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             if let url = activity.webpageURL {
-                app.handleInviteURL(url)
+                if !app.handlePasswordResetURL(url) {
+                    app.handleInviteURL(url)
+                }
             }
         }
         .onChange(of: app.activeGameId) { _, _ in

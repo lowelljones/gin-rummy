@@ -64,16 +64,30 @@ enum AppConfig {
         return URL(string: "https://\(auth)/join/\(inviteCode)")!
     }
 
-    /// Public privacy policy page (served by the API at `GET /privacy`).
-    static var privacyPolicyURL: URL? {
+    /// Where Supabase sends users after they tap the password-reset link in email.
+    /// HTTPS when a public domain exists (bounces into the app); custom scheme for local dev.
+    static var passwordResetRedirectURL: String {
+        let auth = inviteLinkAuthority()
+        if auth.isEmpty {
+            return "ginrummy://reset-password"
+        }
+        return "https://\(auth)/reset-password"
+    }
+
+    /// Public legal pages served by the API (`GET /privacy`, `GET /terms`).
+    private static func publicLegalPageURL(path: String) -> URL? {
         let auth = inviteLinkAuthority()
         if auth.isEmpty {
             if apiBaseURL.lowercased().hasPrefix("http") {
                 let base = apiBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                return URL(string: "\(base)/privacy")
+                return URL(string: "\(base)/\(path)")
             }
             return nil
         }
-        return URL(string: "https://\(auth)/privacy")
+        return URL(string: "https://\(auth)/\(path)")
     }
+
+    static var privacyPolicyURL: URL? { publicLegalPageURL(path: "privacy") }
+
+    static var termsOfServiceURL: URL? { publicLegalPageURL(path: "terms") }
 }

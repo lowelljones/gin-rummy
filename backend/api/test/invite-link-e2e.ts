@@ -177,6 +177,24 @@ async function main() {
     check("page shows the invite code", page.text.includes(code));
     check("page never leaks raw JSON error", !page.text.includes('"error"'));
 
+    // --- 2b. Universal Links: AASA must be served for iOS to open the app directly ---
+    const aasa = await api("/.well-known/apple-app-site-association");
+    check(
+      "AASA returns 200 JSON",
+      aasa.status === 200 && aasa.contentType.includes("application/json"),
+      `status=${aasa.status} type=${aasa.contentType}`,
+    );
+    const aasaBody = aasa.body as {
+      applinks?: { details?: Array<{ appID?: string; paths?: string[] }> };
+    };
+    const detail = aasaBody.applinks?.details?.[0];
+    check("AASA lists invite paths", detail?.paths?.includes("/join/*") === true, `paths=${detail?.paths?.join(",")}`);
+    check(
+      "AASA appID matches iOS target",
+      typeof detail?.appID === "string" && detail.appID.includes("com.lowelljones.GinRummyApp"),
+      `appID=${detail?.appID}`,
+    );
+
     // --- 3. Friend's phone opens ginrummy://join/CODE; app parses the code ---
     const bounce = page.text.match(/ginrummy:\/\/join\/[A-Z0-9]+/)?.[0] ?? "";
     const parsed = parseInviteCode(bounce);

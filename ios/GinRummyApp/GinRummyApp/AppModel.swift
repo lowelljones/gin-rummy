@@ -7,6 +7,14 @@ struct InviteAcceptPresentation: Identifiable, Equatable {
     var id: String { inviteCode }
 }
 
+/// Recovery tokens from a password-reset email link; drives the set-new-password sheet.
+struct PasswordResetPresentation: Identifiable, Equatable {
+    let accessToken: String
+    let refreshToken: String?
+    let expiresIn: Int?
+    var id: String { accessToken }
+}
+
 /// An invite that arrived while the user was mid-game. Surfaced as a banner at
 /// the top of the table instead of the full-screen InviteAcceptView, since
 /// accepting means forfeiting the game in progress.
@@ -27,10 +35,14 @@ final class AppModel: ObservableObject {
     @Published var accessToken: String?
     /// Email from the last adopted Supabase session; shown on the account screen.
     @Published var userEmail: String?
+    /// Nickname friends see in lobbies and invites (from `/account/profile`).
+    @Published var displayName: String = "Player"
     /// Non-nil after the user taps an invite link / universal link (`ginrummy://join/…` or `…/join/CODE`).
     @Published internal private(set) var deepLinkInviteCode: String?
     /// Presented over the main stack when signed in, not in-game, invite link captured.
     @Published var inviteAcceptPresentation: InviteAcceptPresentation?
+    /// Presented when the user opens a password-reset link from email.
+    @Published var passwordResetPresentation: PasswordResetPresentation?
 
     /// When the user joins from InviteAcceptView, LobbyView consumes this plus a nonce bump to start polling for start.
     @Published internal private(set) var lobbyInviteJoinHandoffNonce: UInt = 0
@@ -46,6 +58,9 @@ final class AppModel: ObservableObject {
     /// reset to nil between hands and on signOut.
     @Published var lastBetting: BettingDTO?
     @Published var lastError: String?
+
+    /// Players the signed-in user has blocked (synced from the API after sign-in).
+    @Published private(set) var blockedUserIds: Set<String> = []
 
     /// While true, RootView shows a brief "Restoring session…" spinner instead of bouncing the
     /// user to AuthView during the access-token refresh that happens at app launch.
@@ -79,6 +94,27 @@ final class AppModel: ObservableObject {
         let code = lobbyInviteJoinHandoffCode
         lobbyInviteJoinHandoffCode = nil
         return code?.uppercased()
+    }
+
+    /// Returns true when the URL was a password-reset callback and was handled.
+    @discardableResult
+    func handlePasswordResetURL(_ url: URL) -> Bool {
+        guard let session = Self.parsePasswordResetSession(from: url) else { return false }
+        passwordResetPresentation = PasswordResetPresentation(
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken,
+            expiresIn: session.expiresIn
+        )
+        return true
+    }
+
+    func dismissPasswordReset() {
+        passwordResetPresentation = nil
+    }
+
+    func finishPasswordReset(adopting resp: AuthTokenResponse) {
+        passwordResetPresentation = nil
+        adoptSession(resp)
     }
 
     func handleInviteURL(_ url: URL) {
@@ -160,6 +196,42 @@ final class AppModel: ObservableObject {
         return nil
     }
 
+    /// Parses recovery tokens Supabase appends to the redirect URL fragment after the user
+    /// taps the reset link in email (`#access_token=…&type=recovery&…`).
+    static func parsePasswordResetSession(from url: URL) -> (
+        accessToken: String,
+        refreshToken: String?,
+        expiresIn: Int?
+    )? {
+        guard isPasswordResetURL(url) else { return nil }
+        guard let fragment = url.fragment, !fragment.isEmpty else { return nil }
+        let params = parseURLFragment(fragment)
+        guard let token = params["access_token"], !token.isEmpty else { return nil }
+        let refresh = params["refresh_token"]
+        let expires = params["expires_in"].flatMap { Int($0) }
+        return (token, refresh, expires)
+    }
+
+    static func isPasswordResetURL(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "ginrummy", url.host?.lowercased() == "reset-password" {
+            return true
+        }
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path == "reset-password"
+    }
+
+    private static func parseURLFragment(_ fragment: String) -> [String: String] {
+        var params: [String: String] = [:]
+        for pair in fragment.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            let key = String(kv[0])
+            let raw = String(kv[1])
+            params[key] = raw.removingPercentEncoding ?? raw
+        }
+        return params
+    }
+
     /// Apply a freshly-obtained Supabase session (sign-in or refresh). Replaces the in-memory
     /// tokens, re-arms expiry, and writes the new state to the Keychain.
     func adoptSession(_ resp: AuthTokenResponse) {
@@ -171,12 +243,67 @@ final class AppModel: ObservableObject {
         }
         persistSession()
         reconcileInviteAcceptPresentation()
+        Task { await refreshProfile() }
+        Task { await syncBlockedUsers() }
+    }
+
+    func isBlocked(_ userId: String) -> Bool {
+        blockedUserIds.contains(userId)
+    }
+
+    func syncBlockedUsers() async {
+        guard let token = accessToken else {
+            blockedUserIds = []
+            return
+        }
+        do {
+            let r = try await api.fetchBlockedUsers(token: token)
+            blockedUserIds = Set(r.users.map(\.userId))
+        } catch {
+            /* Non-fatal — keep the last known block list if the fetch fails. */
+        }
+    }
+
+    func blockUser(_ userId: String) async throws {
+        guard let token = accessToken else { return }
+        try await api.blockUser(userId: userId, token: token)
+        blockedUserIds.insert(userId)
+    }
+
+    func unblockUser(_ userId: String) async throws {
+        guard let token = accessToken else { return }
+        try await api.unblockUser(userId: userId, token: token)
+        blockedUserIds.remove(userId)
+    }
+
+    /// Load the server-side profile (display name) for the signed-in user.
+    func refreshProfile() async {
+        guard let token = accessToken else { return }
+        do {
+            let profile = try await api.fetchAccountProfile(token: token)
+            let trimmed = profile.display_name.trimmingCharacters(in: .whitespacesAndNewlines)
+            displayName = trimmed.isEmpty ? "Player" : trimmed
+            if userEmail == nil, let email = profile.email {
+                userEmail = email
+            }
+        } catch {
+            /* Non-fatal — lobby APIs still resolve names; account screen retries on appear. */
+        }
+    }
+
+    /// Persist a new display name and update local state on success.
+    func saveDisplayName(_ raw: String) async throws {
+        guard let token = accessToken else { return }
+        let resp = try await api.updateDisplayName(raw, token: token)
+        let trimmed = resp.display_name.trimmingCharacters(in: .whitespacesAndNewlines)
+        displayName = trimmed.isEmpty ? "Player" : trimmed
     }
 
     /// Forget the user's tokens locally and clear active-game state.
     func signOut() {
         accessToken = nil
         userEmail = nil
+        displayName = "Player"
         refreshToken = nil
         expiresAt = nil
         activeGameId = nil
@@ -184,6 +311,7 @@ final class AppModel: ObservableObject {
         lastPerspective = nil
         opponentDisplayName = "Opponent"
         lastBetting = nil
+        blockedUserIds = []
         KeychainStore.clear()
         reconcileInviteAcceptPresentation()
     }
@@ -223,6 +351,10 @@ final class AppModel: ObservableObject {
             accessToken = saved.accessToken
             userEmail = saved.userEmail
             reconcileInviteAcceptPresentation()
+            Task {
+                await refreshProfile()
+                await syncBlockedUsers()
+            }
             return
         }
         /* Access token has expired (or is about to). Block the UI on a refresh attempt instead of
@@ -230,6 +362,7 @@ final class AppModel: ObservableObject {
         restoring = true
         Task { @MainActor in
             await refreshIfExpiringSoon()
+            await refreshProfile()
             restoring = false
             reconcileInviteAcceptPresentation()
         }

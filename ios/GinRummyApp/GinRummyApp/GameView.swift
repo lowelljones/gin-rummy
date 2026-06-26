@@ -60,6 +60,7 @@ struct GameView: View {
 
     @State private var showChatSheet = false
     @State private var chatMessages: [GameChatMessageDTO] = []
+    @State private var chatOpponentUserId: String?
     @State private var chatWatermarkIso: String?
     @State private var chatBaselineLoaded = false
     @State private var chatToasts: [ChatToastItem] = []
@@ -262,6 +263,8 @@ struct GameView: View {
                 if let gid = app.activeGameId {
                     GameChatSheet(
                         gameId: gid,
+                        opponentDisplayName: app.opponentDisplayName,
+                        opponentUserId: $chatOpponentUserId,
                         messages: $chatMessages,
                         chatWatermarkIso: $chatWatermarkIso,
                         composeError: $chatComposeError
@@ -1348,6 +1351,7 @@ struct GameView: View {
         .onAppear {
             mergeHandOrder(with: p.hands[p.seat])
             chatMessages = []
+            chatOpponentUserId = nil
             chatWatermarkIso = nil
             chatBaselineLoaded = false
             chatToasts = []
@@ -1908,7 +1912,12 @@ struct GameView: View {
         do {
             let r = try await app.api.fetchGameChat(gameId: gameId, token: token, after: nil)
             await MainActor.run {
-                chatMessages = r.messages.sorted { $0.createdAt < $1.createdAt }
+                if let opp = r.messages.first(where: { !$0.fromSelf }) {
+                    chatOpponentUserId = opp.userId
+                }
+                chatMessages = r.messages
+                    .filter { !app.isBlocked($0.userId) }
+                    .sorted { $0.createdAt < $1.createdAt }
                 chatWatermarkIso = chatMessages.map(\.createdAt).max() ?? Self.chatEpochIso
                 chatBaselineLoaded = true
             }
@@ -1932,6 +1941,10 @@ struct GameView: View {
                 var receivedIncoming = false
                 for m in r.messages {
                     guard !known.contains(m.id) else { continue }
+                    if !m.fromSelf, chatOpponentUserId == nil {
+                        chatOpponentUserId = m.userId
+                    }
+                    guard !app.isBlocked(m.userId) else { continue }
                     known.insert(m.id)
                     chatMessages.append(m)
                     if !m.fromSelf {
@@ -2022,6 +2035,7 @@ struct GameView: View {
                 selectedHandCard = nil
                 handDisplayOrder = []
                 chatMessages = []
+                chatOpponentUserId = nil
                 chatWatermarkIso = nil
                 chatBaselineLoaded = false
                 chatToasts = []

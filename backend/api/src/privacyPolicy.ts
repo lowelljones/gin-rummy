@@ -28,7 +28,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function readRepoFile(relPath: string): string {
+export function readRepoFile(relPath: string): string {
   const abs = join(REPO_ROOT, relPath);
   if (!existsSync(abs)) return "";
   return readFileSync(abs, "utf8");
@@ -91,7 +91,7 @@ export function renderPrivacyPolicyPage(opts: PrivacyPolicyOptions): string {
       <h2>Information we collect</h2>
       <ul>
         <li><strong>Account information.</strong> If you create an account, we collect your email address and password. Passwords are handled by our authentication provider; we do not store your password in plain text.</li>
-        <li><strong>Profile information.</strong> We store a display name for your account (initially derived from your email address) so friends can see who invited them to a lobby.</li>
+        <li><strong>Profile information.</strong> We store a display name for your account (initially derived from your email address, and editable in <strong>Account</strong> settings) so friends can see who invited them to a lobby.</li>
         <li><strong>Gameplay and lobby data.</strong> To run multiplayer games we store lobby membership, invite codes, game state, move history, scores, betting totals within a match, session recaps, and related metadata needed to keep games in sync and let you resume play.</li>
         <li><strong>In-game chat.</strong> If you send chat messages during a game, we store the message text, your user ID, and the associated game.</li>
         <li><strong>Device session data.</strong> The app stores your sign-in session (access token, refresh token, and email) in the iOS Keychain on your device so you stay signed in.</li>
@@ -168,6 +168,20 @@ export function auditPrivacyCompliance(): PrivacyComplianceCheck[] {
     detail: authView ? "AuthView collects email for sign-in and sign-up." : "AuthView.swift not found.",
   });
 
+  const entitlements = readRepoFile("ios/GinRummyApp/GinRummyApp/GinRummyApp.entitlements");
+  const apiClient = readRepoFile("ios/GinRummyApp/GinRummyApp/APIClient.swift");
+  checks.push({
+    id: "sign-in-with-apple",
+    requirement: "Sign in with Apple offered alongside email auth (App Store guideline 4.8)",
+    status:
+      authView.includes("GinAppleSignInButton") &&
+      apiClient.includes("signInWithApple") &&
+      entitlements.includes("com.apple.developer.applesignin")
+        ? "pass"
+        : "fail",
+    detail: "Native Apple button on auth screens; token exchange via Supabase id_token grant.",
+  });
+
   const serverTs = readRepoFile("backend/api/src/server.ts");
   const initSql = readRepoFile("supabase/migrations/20260420000000_init.sql");
   checks.push({
@@ -230,7 +244,6 @@ export function auditPrivacyCompliance(): PrivacyComplianceCheck[] {
   });
 
   const accountSettings = readRepoFile("ios/GinRummyApp/GinRummyApp/AccountSettingsView.swift");
-  const apiClient = readRepoFile("ios/GinRummyApp/GinRummyApp/APIClient.swift");
   checks.push({
     id: "account-deletion",
     requirement: "Users can request account deletion in-app; API implements deletion",

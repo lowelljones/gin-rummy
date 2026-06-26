@@ -58,6 +58,17 @@ final class APIClient {
         return try await postSupabaseAuth(url: urlStr, body: body)
     }
 
+    /// Native Sign in with Apple — exchange the Apple identity token for a Supabase session.
+    func signInWithApple(identityToken: String, nonce: String) async throws -> AuthTokenResponse {
+        let urlStr = AppConfig.supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/auth/v1/token?grant_type=id_token"
+        let body = try JSONSerialization.data(withJSONObject: [
+            "provider": "apple",
+            "id_token": identityToken,
+            "nonce": nonce,
+        ])
+        return try await postSupabaseAuth(url: urlStr, body: body)
+    }
+
     /// Exchange a refresh token for a new access token + (rotated) refresh token.
     /// AppModel calls this proactively in the background so a long game never lands the
     /// user back on the sign-in screen mid-hand.
@@ -82,6 +93,48 @@ final class APIClient {
             throw APIError.badStatus(code, msg)
         }
         return try JSONDecoder().decode(AuthTokenResponse.self, from: data)
+    }
+
+    /// Sends a password-reset email via Supabase. Always succeeds from the caller's perspective
+    /// when Supabase accepts the request (the API does not reveal whether the email exists).
+    func requestPasswordReset(email: String) async throws {
+        let urlStr = AppConfig.supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/auth/v1/recover"
+        let body = try JSONSerialization.data(withJSONObject: [
+            "email": email,
+            "redirect_to": AppConfig.passwordResetRedirectURL,
+        ])
+        guard let url = URL(string: urlStr) else { throw APIError.invalidURL }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.httpBody = body
+
+        let (data, resp) = try await session.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+            let msg = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.badStatus(code, msg)
+        }
+    }
+
+    /// Sets a new password using the short-lived recovery access token from the reset email link.
+    func updatePassword(newPassword: String, accessToken: String) async throws {
+        let urlStr = AppConfig.supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/auth/v1/user"
+        guard let url = URL(string: urlStr) else { throw APIError.invalidURL }
+        var req = URLRequest(url: url)
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["password": newPassword])
+
+        let (data, resp) = try await session.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+            let msg = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.badStatus(code, msg)
+        }
     }
 
     /// Returns the session when the Supabase project has email confirmation OFF (the response
@@ -214,11 +267,51 @@ final class APIClient {
         return try await request(path: "/games/\(gameId)/chat", method: "POST", token: token, body: body)
     }
 
+    func reportChatMessage(
+        gameId: String,
+        messageId: String,
+        token: String,
+        reason: String?
+    ) async throws -> ChatReportResponse {
+        var payload: [String: Any] = [:]
+        if let reason, !reason.isEmpty {
+            payload["reason"] = reason
+        }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await request(
+            path: "/games/\(gameId)/chat/\(messageId)/report",
+            method: "POST",
+            token: token,
+            body: body
+        )
+    }
+
+    func fetchBlockedUsers(token: String) async throws -> BlockedUsersResponse {
+        try await request(path: "/users/blocked", method: "GET", token: token)
+    }
+
+    func blockUser(userId: String, token: String) async throws {
+        let _: OkResponse = try await request(path: "/users/\(userId)/block", method: "POST", token: token)
+    }
+
+    func unblockUser(userId: String, token: String) async throws {
+        let _: OkResponse = try await request(path: "/users/\(userId)/block", method: "DELETE", token: token)
+    }
+
     /// Permanently delete the signed-in user's account and all server-side data.
     func deleteAccount(token: String) async throws {
         struct DeleteResponse: Codable {
             let ok: Bool?
         }
         let _: DeleteResponse = try await request(path: "/account/delete", method: "POST", token: token)
+    }
+
+    func fetchAccountProfile(token: String) async throws -> AccountProfileResponse {
+        try await request(path: "/account/profile", method: "GET", token: token)
+    }
+
+    func updateDisplayName(_ displayName: String, token: String) async throws -> DisplayNameUpdateResponse {
+        let body = try JSONSerialization.data(withJSONObject: ["display_name": displayName])
+        return try await request(path: "/account/display-name", method: "PATCH", token: token, body: body)
     }
 }

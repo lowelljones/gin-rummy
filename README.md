@@ -109,6 +109,17 @@ xcodebuild test -project ios/GinRummyApp/GinRummyApp.xcodeproj -scheme GinRummyA
 
 Open [`ios/GinRummyApp/GinRummyApp.xcodeproj`](ios/GinRummyApp/GinRummyApp.xcodeproj) in Xcode, set your bundle ID and signing team, add `Info.plist` values above, then run on a simulator or device.
 
+### Sign in with Apple
+
+The app uses native Sign in with Apple and exchanges the identity token with Supabase (`grant_type=id_token`). One-time setup:
+
+1. **Apple Developer** — for App ID `com.lowelljones.GinRummyApp`, enable **Sign in with Apple** (Identifiers → your App ID → Capabilities).
+2. **Xcode** — target **Signing & Capabilities** → **+ Capability** → **Sign in with Apple** (should match [`GinRummyApp.entitlements`](ios/GinRummyApp/GinRummyApp/GinRummyApp.entitlements)).
+3. **Supabase** — Authentication → Providers → **Apple** → enable. Set **Client IDs** to your bundle ID (`com.lowelljones.GinRummyApp`). For native iOS you do **not** need the Services ID redirect URL; Supabase validates the token audience against the bundle ID.
+4. **Test on a real device** — Sign in with Apple does not work in the Simulator for all accounts; use a physical iPhone signed into iCloud.
+
+If sign-in fails with an audience or provider error, double-check the bundle ID matches in Xcode, Apple Developer, and Supabase Apple provider settings.
+
 ### Invite links
 
 Invite links shared from the lobby are **HTTPS** URLs served by the API itself:
@@ -126,31 +137,40 @@ cd backend/api
 npm run test:invite-link
 ```
 
-### Universal links (optional upgrade)
+### Universal links
 
-The landing page works without any Apple setup. To make links open the app
-*directly* from Messages (skipping the Safari hop), configure Universal Links:
+When the app is installed, invite links open **directly in Gin Rummy** from
+Messages (no Safari hop). If the app is not installed, the same HTTPS URL still
+shows the [`/join/:code`](backend/api/src/server.ts) landing page with a
+`ginrummy://` fallback.
 
-1. Host **AASA** (no file extension) at `https://<your-domain>/.well-known/apple-app-site-association` with JSON like:
+This is wired up in-repo:
 
-```json
-{
-  "applinks": {
-    "apps": [],
-    "details": [
-      {
-        "appID": "<TEAMID>.com.ginrummy.GinRummyApp",
-        "paths": ["/join/*"]
-      }
-    ]
-  }
-}
-```
+1. **AASA** — the API serves
+   [`/.well-known/apple-app-site-association`](backend/api/src/appleAppSiteAssociation.ts)
+   (JSON built from `APPLE_TEAM_ID` / `APPLE_BUNDLE_ID`, defaulting to
+   `BDDQS574XW.com.lowelljones.GinRummyApp` with path `/join/*`).
+2. **Associated Domains** — [`GinRummyApp.entitlements`](ios/GinRummyApp/GinRummyApp/GinRummyApp.entitlements)
+   includes `applinks:gin-rummy-production.up.railway.app` (must match
+   `GIN_INVITE_WEB_BASE_URL` in `Info.plist`).
+3. **App handlers** — `RootView` forwards Universal Links via
+   `onContinueUserActivity`; `AppModel.parseInviteCode` accepts
+   `https://…/join/CODE`.
 
-2. In Xcode: **Signing & Capabilities** → **Associated Domains** → `applinks:<your-domain>` (replace `example.com` in [`GinRummyApp.entitlements`](ios/GinRummyApp/GinRummyApp/GinRummyApp.entitlements) and set your **Team** in the target).
-3. Set **GIN_INVITE_WEB_BASE_URL** in `Info.plist` to `https://<your-domain>` (no trailing slash) so ShareLink uses HTTPS invites.
+After changing the invite domain or entitlements, **delete and reinstall** the
+app on a physical device (Universal Links are cached aggressively). Validate
+AASA with [Apple's App Search Validation Tool](https://search.developer.apple.com/appsearch-validation-tool/).
 
-For local development the app registers the custom URL scheme `ginrummy://join/<code>` (see `CFBundleURLTypes` in [`Info.plist`](ios/GinRummyApp/GinRummyApp/Info.plist)).
+In [Apple Developer](https://developer.apple.com/account/resources/identifiers/list)
+→ **Identifiers** → your App ID → enable **Associated Domains** if Xcode
+signing reports a provisioning profile mismatch.
+
+Compliance is checked in `npm test` (`appleAppSiteAssociation.test.ts`).
+
+For local development the app registers the custom URL scheme
+`ginrummy://join/<code>` (see `CFBundleURLTypes` in
+[`Info.plist`](ios/GinRummyApp/GinRummyApp/Info.plist)) — Universal Links
+require a public HTTPS host.
 
 ## Realtime updates
 

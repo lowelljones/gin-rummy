@@ -44,6 +44,10 @@
 		E9010000000000000000001E /* CardFaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001E /* CardFaceViews.swift */; };
 		E9010000000000000000001F /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001F /* AccountSettingsView.swift */; };
 		E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* PrivacyInfo.xcprivacy */; };
+		E90100000000000000000021 /* AppleSignInNonce.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000021 /* AppleSignInNonce.swift */; };
+		E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000022 /* GinAppleSignInButton.swift */; };
+		EA0100000000000000000008 /* AppleSignInNonceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000008 /* AppleSignInNonceTests.swift */; };
+		EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000009 /* PasswordResetURLTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +102,10 @@
 		E8010000000000000000001E /* CardFaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardFaceViews.swift; sourceTree = "<group>"; };
 		E8010000000000000000001F /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
 		E80100000000000000000020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		E80100000000000000000021 /* AppleSignInNonce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonce.swift; sourceTree = "<group>"; };
+		E80100000000000000000022 /* GinAppleSignInButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinAppleSignInButton.swift; sourceTree = "<group>"; };
+		EA0200000000000000000008 /* AppleSignInNonceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonceTests.swift; sourceTree = "<group>"; };
+		EA0200000000000000000009 /* PasswordResetURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordResetURLTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,6 +145,8 @@
 				EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */,
 				EA0200000000000000000006 /* GameNarrationTests.swift */,
 				EA0200000000000000000007 /* CardMetricsHandEndTests.swift */,
+				EA0200000000000000000008 /* AppleSignInNonceTests.swift */,
+				EA0200000000000000000009 /* PasswordResetURLTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -149,6 +159,8 @@
 				E80100000000000000000003 /* AppModel.swift */,
 				E80100000000000000000015 /* KeychainStore.swift */,
 				E80100000000000000000004 /* AuthView.swift */,
+				E80100000000000000000021 /* AppleSignInNonce.swift */,
+				E80100000000000000000022 /* GinAppleSignInButton.swift */,
 				E8010000000000000000001F /* AccountSettingsView.swift */,
 				E80100000000000000000005 /* APIClient.swift */,
 				E80100000000000000000006 /* AppConfig.swift */,
@@ -309,6 +321,8 @@
 				E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */,
 				E90100000000000000000013 /* GinRummyTheme.swift in Sources */,
 				E90100000000000000000014 /* LobbyFlows.swift in Sources */,
+				E90100000000000000000021 /* AppleSignInNonce.swift in Sources */,
+				E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +337,8 @@
 				EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */,
 				EA0100000000000000000006 /* GameNarrationTests.swift in Sources */,
 				EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */,
+				EA0100000000000000000008 /* AppleSignInNonceTests.swift in Sources */,
+				EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

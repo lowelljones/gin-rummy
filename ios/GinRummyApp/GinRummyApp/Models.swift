@@ -614,6 +614,27 @@ struct GameChatPostResponse: Codable {
     let message: GameChatMessageDTO
 }
 
+struct BlockedUserDTO: Codable, Equatable, Identifiable {
+    let userId: String
+    let displayName: String
+    let blockedAt: String
+
+    var id: String { userId }
+}
+
+struct BlockedUsersResponse: Codable {
+    let users: [BlockedUserDTO]
+}
+
+struct ChatReportResponse: Codable {
+    let ok: Bool?
+    let reportId: String?
+}
+
+struct OkResponse: Codable {
+    let ok: Bool?
+}
+
 struct AuthTokenResponse: Codable {
     let access_token: String
     /// Supabase rotates the refresh token on every refresh; persist whichever one we last received.
@@ -627,6 +648,15 @@ struct AuthTokenResponse: Codable {
         let id: String
         let email: String?
     }
+}
+
+struct AccountProfileResponse: Codable {
+    let display_name: String
+    let email: String?
+}
+
+struct DisplayNameUpdateResponse: Codable {
+    let display_name: String
 }
 
 /// Swift port of the subset of `backend/rules/src/melds.ts` needed for client-side

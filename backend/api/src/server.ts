@@ -14,6 +14,15 @@ import {
 } from "../../rules/src/index.js";
 import { computeTestBotIntent, fallbackTestBotIntent, hasTestBotWork } from "./bot.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
+import {
+  blockedUserIdsFor,
+  deleteUserBlock,
+  insertChatReport,
+  insertUserBlock,
+  listBlockedUsers,
+  normalizeReportReason,
+} from "./chatSafety.js";
+import { moderateDisplayName } from "./displayNameModeration.js";
 import { detectHandEpisodeClose, moveAnalyticsFields, stampDealStartMoveSeq } from "./handEpisode.js";
 import {
   buildGameStatePayloadForUser,
@@ -23,6 +32,8 @@ import {
 } from "./playerGameSnapshots.js";
 import { buildSessionRecapFromGames, type SessionRecapPayload } from "./sessionRecap.js";
 import { privacyContactEmail, renderPrivacyPolicyPage } from "./privacyPolicy.js";
+import { renderTermsOfServicePage } from "./termsOfService.js";
+import { buildAppleAppSiteAssociation } from "./appleAppSiteAssociation.js";
 
 const PORT = Number(process.env.PORT ?? "8787");
 /* Railway's internal healthcheck and service-to-service network is IPv6, so when running
@@ -150,8 +161,10 @@ function seatForUser(game: { seat_for_user: Record<string, number> }, userId: st
 }
 
 async function ensureProfile(userId: string, email?: string) {
+  const { data: existing } = await admin.from("profiles").select("id").eq("id", userId).maybeSingle();
+  if (existing) return;
   const name = email?.split("@")[0] ?? "Player";
-  await admin.from("profiles").upsert({ id: userId, display_name: name }, { onConflict: "id" });
+  await admin.from("profiles").insert({ id: userId, display_name: name });
 }
 
 async function ensureHand(gameId: string, truth: ServerTruth): Promise<string> {
@@ -541,6 +554,90 @@ function renderInvitePage(opts: {
  */
 app.get("/privacy", async (_req, reply) => {
   const html = renderPrivacyPolicyPage({ contactEmail: privacyContactEmail() });
+  return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
+});
+
+app.get("/terms", async (_req, reply) => {
+  const html = renderTermsOfServicePage({ contactEmail: privacyContactEmail() });
+  return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
+});
+
+/** Apple Universal Links — must be HTTPS, no redirects, application/json. */
+function sendAppleAppSiteAssociation(_req: FastifyRequest, reply: FastifyReply) {
+  const body = buildAppleAppSiteAssociation();
+  return reply
+    .header("Cache-Control", "public, max-age=3600")
+    .type("application/json")
+    .send(body);
+}
+
+app.get("/.well-known/apple-app-site-association", sendAppleAppSiteAssociation);
+/** Legacy path some CDNs/proxies expect alongside .well-known. */
+app.get("/apple-app-site-association", sendAppleAppSiteAssociation);
+
+function renderPasswordResetPage(): string {
+  const appLink = "ginrummy://reset-password";
+  const title = "Reset your Gin Rummy password";
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title}</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at top, #14352a 0%, #0b211a 65%, #081711 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #f3ecd9;
+  }
+  .card {
+    max-width: 420px; width: calc(100% - 48px); padding: 36px 28px; text-align: center;
+    background: rgba(10, 30, 23, 0.82); border: 1px solid rgba(212, 175, 55, 0.45);
+    border-radius: 18px; box-shadow: 0 18px 60px rgba(0,0,0,0.5);
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { color: #b9c9b3; font-size: 15px; line-height: 1.5; margin: 0 0 22px; }
+  .btn {
+    display: block; width: 100%; box-sizing: border-box; padding: 15px 18px; margin-bottom: 12px;
+    border-radius: 12px; font-size: 17px; font-weight: 600; text-decoration: none; cursor: pointer; border: none;
+    background: #d4af37; color: #1c1604;
+  }
+  .hint { font-size: 13px; color: #8fa388; margin-top: 14px; margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>${title}</h1>
+    <p id="status">Opening the Gin Rummy app so you can choose a new password…</p>
+    <a class="btn" id="openApp" href="${appLink}">Continue in the app</a>
+    <p class="hint">Nothing happening? Open Gin Rummy manually — you should see a screen to set a new password.</p>
+    <script>
+      (function () {
+        var hash = window.location.hash || "";
+        var target = "${appLink}" + hash;
+        var link = document.getElementById("openApp");
+        link.href = target;
+        if (hash.indexOf("access_token=") !== -1) {
+          setTimeout(function () { window.location.href = target; }, 350);
+        } else {
+          document.getElementById("status").textContent =
+            "This reset link looks incomplete or has expired. Request a fresh link from the app.";
+        }
+      })();
+    </script>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * Password-reset landing page. Supabase redirects here with recovery tokens in the URL
+ * fragment; this page forwards them into the app via the ginrummy:// scheme.
+ */
+app.get("/reset-password", async (_req, reply) => {
+  const html = renderPasswordResetPage();
   return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
 });
 
@@ -1576,8 +1673,140 @@ app.get("/games/:id/chat", async (req, reply) => {
     rows = ((data ?? []) as ChatRow[]).slice().reverse();
   }
 
+  let blocked: Set<string>;
+  try {
+    blocked = await blockedUserIdsFor(admin, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "block lookup failed";
+    return reply.code(500).send({ error: msg });
+  }
+  rows = rows.filter((r) => !blocked.has(r.user_id));
+
   const names = await displayNamesForUserIds(rows.map((r) => r.user_id));
   return { messages: formatChatRows(rows, user.id, names) };
+});
+
+app.post("/games/:id/chat/:messageId/report", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  const { id: gameId, messageId } = req.params as { id: string; messageId: string };
+  const { data: game, error: gErr } = await admin
+    .from("games")
+    .select("id, seat_for_user")
+    .eq("id", gameId)
+    .maybeSingle();
+
+  if (gErr || !game) return reply.code(404).send({ error: "Game not found" });
+  if (seatForUser(game as { seat_for_user: Record<string, number> }, user.id) === null) {
+    return reply.code(403).send({ error: "Not a participant" });
+  }
+
+  const { data: message, error: mErr } = await admin
+    .from("game_chat_messages")
+    .select("id, user_id, body, game_id")
+    .eq("id", messageId)
+    .eq("game_id", gameId)
+    .maybeSingle();
+
+  if (mErr) return reply.code(500).send({ error: mErr.message });
+  if (!message) return reply.code(404).send({ error: "Message not found" });
+
+  const reportedUserId = message.user_id as string;
+  if (reportedUserId === user.id) {
+    return reply.code(400).send({ error: "Cannot report your own message" });
+  }
+
+  const reason = normalizeReportReason((req.body as { reason?: unknown })?.reason);
+
+  let report;
+  try {
+    report = await insertChatReport(admin, {
+      game_id: gameId,
+      message_id: messageId,
+      reporter_id: user.id,
+      reported_user_id: reportedUserId,
+      reason,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "report failed";
+    return reply.code(500).send({ error: msg });
+  }
+
+  app.log.warn(
+    {
+      reportId: report.id,
+      gameId,
+      messageId,
+      reporterId: user.id,
+      reportedUserId,
+      reason,
+      messageBody: (message.body as string).slice(0, 200),
+      reviewContact: privacyContactEmail(),
+    },
+    "chat_report_pending_review",
+  );
+
+  return { ok: true, reportId: report.id };
+});
+
+app.get("/users/blocked", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  let rows;
+  try {
+    rows = await listBlockedUsers(admin, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "block lookup failed";
+    return reply.code(500).send({ error: msg });
+  }
+
+  const names = await displayNamesForUserIds(rows.map((r) => r.blocked_user_id));
+  return {
+    users: rows.map((r) => ({
+      userId: r.blocked_user_id,
+      displayName: names[r.blocked_user_id] ?? "Player",
+      blockedAt: r.created_at,
+    })),
+  };
+});
+
+app.post("/users/:id/block", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  const blockedUserId = (req.params as { id: string }).id.trim();
+  if (!blockedUserId) return reply.code(400).send({ error: "Invalid user id" });
+  if (blockedUserId === user.id) return reply.code(400).send({ error: "Cannot block yourself" });
+
+  try {
+    await insertUserBlock(admin, user.id, blockedUserId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "block failed";
+    return reply.code(500).send({ error: msg });
+  }
+
+  return { ok: true };
+});
+
+app.delete("/users/:id/block", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  const blockedUserId = (req.params as { id: string }).id.trim();
+  if (!blockedUserId) return reply.code(400).send({ error: "Invalid user id" });
+
+  let removed: boolean;
+  try {
+    removed = await deleteUserBlock(admin, user.id, blockedUserId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unblock failed";
+    return reply.code(500).send({ error: msg });
+  }
+
+  if (!removed) return reply.code(404).send({ error: "Not blocked" });
+  return { ok: true };
 });
 
 app.post("/games/:id/chat", async (req, reply) => {
@@ -1861,7 +2090,46 @@ async function cleanupUserStateBeforeDelete(userId: string): Promise<void> {
     await admin.from("lobby_players").delete().eq("lobby_id", lobbyId).eq("user_id", userId);
     await admin.from("lobby_players").update({ ready: false }).eq("lobby_id", lobbyId);
   }
+
+  await admin.from("user_blocks").delete().or(`blocker_id.eq.${userId},blocked_user_id.eq.${userId}`);
+  await admin.from("chat_reports").delete().or(`reporter_id.eq.${userId},reported_user_id.eq.${userId}`);
 }
+
+app.get("/account/profile", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  await ensureProfile(user.id, user.email);
+
+  const { data: profile, error } = await admin
+    .from("profiles")
+    .select("display_name")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error) return reply.code(500).send({ error: error.message });
+
+  const raw = (profile?.display_name as string | undefined)?.trim();
+  return {
+    display_name: raw || "Player",
+    email: user.email ?? null,
+  };
+});
+
+app.patch("/account/display-name", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  const body = req.body as { display_name?: unknown };
+  const mod = moderateDisplayName(body?.display_name);
+  if (!mod.ok) return reply.code(400).send({ error: mod.error });
+
+  await ensureProfile(user.id, user.email);
+
+  const { error } = await admin.from("profiles").update({ display_name: mod.text }).eq("id", user.id);
+  if (error) return reply.code(500).send({ error: error.message });
+
+  return { display_name: mod.text };
+});
 
 app.post("/account/delete", async (req, reply) => {
   const user = await requireUser(req, reply);
