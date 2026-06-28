@@ -54,7 +54,7 @@ final class AppModel: ObservableObject {
     @Published var lastPerspective: PlayerPerspective?
     /// Display name for the other seat at the table (from API; defaults to "Opponent").
     @Published var opponentDisplayName: String = "Opponent"
-    /// Final-match settlement. Server populates `{ raw, bucket }` only when phase == matchOver;
+    /// Final-match settlement. Server populates `{ raw, bucket }` (match points + tier) only when phase == matchOver;
     /// reset to nil between hands and on signOut.
     @Published var lastBetting: BettingDTO?
     @Published var lastError: String?

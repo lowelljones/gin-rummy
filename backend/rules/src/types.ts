@@ -153,7 +153,7 @@ export interface ServerTruth {
    */
   handOverAcks?: [boolean, boolean] | null;
 
-  /** Betting settlement at match end. */
+  /** Match point settlement at match end. */
   bettingRaw: number | null;
   bettingBucket: number | null;
 

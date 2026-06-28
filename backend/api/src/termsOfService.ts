@@ -92,7 +92,7 @@ export function renderTermsOfServicePage(opts: TermsOfServiceOptions): string {
       <h2>Gameplay and scorekeeping</h2>
       <p>
         Gin Rummy is a social card game for entertainment. The app tracks match scores and optional
-        betting totals <em>within a game session</em> for convenience among friends. These are
+        match point totals <em>within a game session</em> for convenience among friends. These are
         not real-money wagers, casino services, or regulated gambling. You and your friends are
         responsible for any side arrangements you make outside the app.
       </p>

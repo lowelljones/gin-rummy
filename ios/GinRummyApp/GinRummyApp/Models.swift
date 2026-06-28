@@ -243,7 +243,7 @@ struct BettingDTO: Codable, Equatable {
     let bucket: Int?
 }
 
-/// Line-item breakdown of match-end betting settlement (mirrors `computeBettingSettlement` in
+/// Line-item breakdown of match-end settlement (mirrors `computeBettingSettlement` in
 /// `backend/rules/src/scoring.ts`).
 struct BettingSettlementBreakdown: Equatable {
     let winner: Int
@@ -296,10 +296,10 @@ struct BettingSettlementBreakdown: Equatable {
         return 2 + (raw - 150) / 100
     }
 
-    /// Human-readable raw range for a bucket (e.g. bucket 4 → "350–449").
-    static func bucketRangeLabel(for bucket: Int) -> String {
-        if bucket == 1 { return "under 150" }
-        let low = 150 + (bucket - 2) * 100
+    /// Human-readable match-point range for a tier (e.g. tier 4 → "350–449").
+    static func tierRangeLabel(for tier: Int) -> String {
+        if tier == 1 { return "under 150" }
+        let low = 150 + (tier - 2) * 100
         return "\(low)–\(low + 99)"
     }
 
@@ -311,7 +311,7 @@ struct BettingSettlementBreakdown: Equatable {
         return compute(scores: scores, handsWon: handsWon, raceTarget: scores[winner])
     }
 
-    /// Score margin + 25× net boxes, before win bonus and shutout (blitz) points.
+    /// Score margin + 25× net hands won, before win bonus and shutout (blitz) points.
     static func interimNet(myScore: Int, oppScore: Int, myHandsWon: Int, oppHandsWon: Int) -> Int {
         (myScore - oppScore) + 25 * (myHandsWon - oppHandsWon)
     }
@@ -325,7 +325,7 @@ enum ScorecardScoring {
         return "0"
     }
 
-    /// Cumulative betting bucket total for `seat` through completed matches 0…`throughIndex`.
+    /// Cumulative match tier total for `seat` through completed matches 0…`throughIndex`.
     static func cumulativeBettingTotal(
         forSeat seat: Int,
         matches: [SessionMatchRecapDTO],

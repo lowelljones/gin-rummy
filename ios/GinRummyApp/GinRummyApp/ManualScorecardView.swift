@@ -85,7 +85,7 @@ struct ManualScorecardView: View {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { store.resetSession() }
         } message: {
-            Text("Clears all games, hands, and box totals. This can't be undone.")
+            Text("Clears all games, hands, and match point totals. This can't be undone.")
         }
     }
 
@@ -212,7 +212,7 @@ struct ManualScorecardView: View {
         }
     }
 
-    /// Cumulative betting bucket total for a player through a completed game column.
+    /// Cumulative match tier total for a player through a completed game column.
     private func gameTotalText(side: FocusField.Side, gameIndex: Int) -> String {
         let forWe = side == .we
         guard let total = store.cumulativeBettingTotal(forWePlayer: forWe, throughGameIndex: gameIndex) else {
@@ -331,7 +331,7 @@ struct ManualScorecardView: View {
             }
         }
         gridRow(height: h) {
-            labelCell("Box", width: metrics.labelWidth, height: h, bold: true)
+            labelCell("Hands", width: metrics.labelWidth, height: h, bold: true)
             ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
                 let w = colW(idx, columns, gcw, metrics.gamesWidth)
                 if let game = col.game {
@@ -349,7 +349,7 @@ struct ManualScorecardView: View {
             }
         }
         gridRow(height: h) {
-            labelCell("Net", width: metrics.labelWidth, height: h, bold: true)
+            labelCell("Match pts", width: metrics.labelWidth, height: h, bold: true)
             ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
                 let w = colW(idx, columns, gcw, metrics.gamesWidth)
                 if let game = col.game {

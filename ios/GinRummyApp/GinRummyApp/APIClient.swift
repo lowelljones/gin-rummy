@@ -217,7 +217,7 @@ final class APIClient {
         try await request(path: "/games/\(gameId)/state", method: "GET", token: token)
     }
 
-    /// Chronological list of every match in the lobby sitting (scores, boxes, winners).
+    /// Chronological list of every match in the lobby sitting (scores, match tiers, winners).
     func sessionRecap(inviteCode: String, token: String) async throws -> SessionRecapResponse {
         let code = inviteCode.uppercased()
         return try await request(path: "/lobbies/\(code)/session", method: "GET", token: token)

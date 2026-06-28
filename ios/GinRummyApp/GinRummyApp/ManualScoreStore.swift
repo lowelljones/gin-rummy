@@ -23,7 +23,7 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
     var id: UUID
     var number: Int
     var hands: [ManualScoreHand]
-    /// Signed box result for the We player (+3, -2, …). Nil until entered.
+    /// Signed match tier result for the We player (+3, -2, …). Nil until entered.
     var weBox: Int?
     var theyBox: Int?
     var isLive: Bool
@@ -47,15 +47,15 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
         hands.compactMap(\.theyPoints).reduce(0, +)
     }
 
-    /// A hand is "won" (a box) by whoever scored points in it.
+    /// A hand is won by whoever scored points in it.
     func weBoxesWon() -> Int { hands.filter { ($0.wePoints ?? 0) > 0 }.count }
     func theyBoxesWon() -> Int { hands.filter { ($0.theyPoints ?? 0) > 0 }.count }
-    /// Net boxes from the We player's perspective (+ means We are up).
+    /// Net hands won from the We player's perspective (+ means We are up).
     func netBoxes() -> Int { weBoxesWon() - theyBoxesWon() }
     /// True once at least one scored hand exists.
     var hasScoredHand: Bool { weBoxesWon() + theyBoxesWon() > 0 }
 
-    /// Score margin + 25× net boxes (excludes win bonus and shutout).
+    /// Score margin + 25× net hands won (excludes win bonus and shutout).
     func interimNetForWe() -> Int? {
         guard hasScoredHand else { return nil }
         return BettingSettlementBreakdown.interimNet(
@@ -66,7 +66,7 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
         )
     }
 
-    /// Full betting settlement once the game is no longer live.
+    /// Full match point settlement once the game is no longer live.
     func bettingSettlement() -> BettingSettlementBreakdown? {
         guard !isLive, hasScoredHand else { return nil }
         return BettingSettlementBreakdown.computeForFinalScores(

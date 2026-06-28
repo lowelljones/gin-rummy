@@ -28,10 +28,10 @@ final class BettingSettlementBreakdownTests: XCTestCase {
         XCTAssertEqual(b?.raw, 130 - 40 + 100 + 50)
     }
 
-    func testBucketRangeLabels() {
-        XCTAssertEqual(BettingSettlementBreakdown.bucketRangeLabel(for: 1), "under 150")
-        XCTAssertEqual(BettingSettlementBreakdown.bucketRangeLabel(for: 3), "250–349")
-        XCTAssertEqual(BettingSettlementBreakdown.bucketRangeLabel(for: 4), "350–449")
+    func testTierRangeLabels() {
+        XCTAssertEqual(BettingSettlementBreakdown.tierRangeLabel(for: 1), "under 150")
+        XCTAssertEqual(BettingSettlementBreakdown.tierRangeLabel(for: 3), "250–349")
+        XCTAssertEqual(BettingSettlementBreakdown.tierRangeLabel(for: 4), "350–449")
     }
 
     func testInterimNetExcludesWinAndShutoutBonuses() {

@@ -673,7 +673,7 @@ struct GameView: View {
                ) {
                 Divider().padding(.vertical, 2)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Betting bucket")
+                    Text("Match tier")
                         .font(.subheadline.weight(.semibold))
                     Spacer(minLength: 8)
                     Text("\(bucket)")
@@ -681,25 +681,25 @@ struct GameView: View {
                         .foregroundStyle(GamePlaySurface.matchOver.accent)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    bettingBreakdownRow(label: "Win bonus", value: breakdown.winBonus)
-                    bettingBreakdownRow(
+                    matchBreakdownRow(label: "Win bonus", value: breakdown.winBonus)
+                    matchBreakdownRow(
                         label: "Score margin (\(breakdown.winnerScore) − \(breakdown.loserScore))",
                         value: breakdown.scoreDiff
                     )
                     if breakdown.shutoutBonus > 0 {
-                        bettingBreakdownRow(label: "Blitz shutout", value: breakdown.shutoutBonus)
+                        matchBreakdownRow(label: "Blitz shutout", value: breakdown.shutoutBonus)
                     }
                     if breakdown.netHands != 0 {
-                        bettingBreakdownRow(
-                            label: "Net boxes (25 × \(breakdown.netHands))",
+                        matchBreakdownRow(
+                            label: "Net hands (25 × \(breakdown.netHands))",
                             value: breakdown.handsBonus
                         )
                     } else {
-                        bettingBreakdownRow(label: "Net boxes (25 × 0)", value: 0)
+                        matchBreakdownRow(label: "Net hands (25 × 0)", value: 0)
                     }
                     Divider().padding(.vertical, 2)
-                    bettingBreakdownRow(label: "Raw points", value: breakdown.raw, emphasized: true)
-                    Text("\(breakdown.raw) raw → bucket \(bucket) (\(BettingSettlementBreakdown.bucketRangeLabel(for: bucket)))")
+                    matchBreakdownRow(label: "Match points", value: breakdown.raw, emphasized: true)
+                    Text("\(breakdown.raw) match pts → tier \(bucket) (\(BettingSettlementBreakdown.tierRangeLabel(for: bucket)))")
                         .font(.caption2)
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
                 }
@@ -720,19 +720,19 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func bettingBreakdownRow(label: String, value: Int, emphasized: Bool = false) -> some View {
+    private func matchBreakdownRow(label: String, value: Int, emphasized: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
                 .font(emphasized ? .caption.weight(.semibold) : .caption)
                 .foregroundStyle(GinRummyPalette.sage.opacity(emphasized ? 1 : 0.95))
             Spacer(minLength: 8)
-            Text(bettingSignedPoints(value))
+            Text(matchSignedPoints(value))
                 .font(emphasized ? .caption.weight(.semibold).monospacedDigit() : .caption.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.cream.opacity(emphasized ? 1 : 0.95))
         }
     }
 
-    private func bettingSignedPoints(_ value: Int) -> String {
+    private func matchSignedPoints(_ value: Int) -> String {
         if value > 0 { return "+\(value)" }
         if value < 0 { return "\(value)" }
         return "0"

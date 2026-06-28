@@ -104,7 +104,7 @@ struct ScorecardView: View {
             let contentWidth = max(0, geo.size.width - contentInset * 2)
             let realMaxHands = matches.map(\.handScores.count).max() ?? 0
             let handRows = max(realMaxHands, 1)
-            // box header + 2 players + game row + we/they row + hands + 3 footer rows
+            // tier header + 2 players + game row + we/they row + hands + 3 footer rows
             let sectionRows: CGFloat = 3 + 2 + 1 + CGFloat(handRows) + 3
             let metrics = GridMetrics(
                 contentWidth: contentWidth,
@@ -199,7 +199,7 @@ struct ScorecardView: View {
         .overlay(gridOuterBorder)
     }
 
-    // MARK: - Box betting
+    // MARK: - Match tier totals
 
     @ViewBuilder
     private func boxBettingSection(
@@ -384,7 +384,7 @@ struct ScorecardView: View {
         }
 
         gridRow(height: h) {
-            labelCell("Box", width: metrics.labelWidth, height: h, bold: true)
+            labelCell("Hands", width: metrics.labelWidth, height: h, bold: true)
             ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
                 let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
                 if let match = col.match {
@@ -402,7 +402,7 @@ struct ScorecardView: View {
         }
 
         gridRow(height: h) {
-            labelCell("Net", width: metrics.labelWidth, height: h, bold: true)
+            labelCell("Match pts", width: metrics.labelWidth, height: h, bold: true)
             ForEach(Array(columns.enumerated()), id: \.element.id) { idx, col in
                 let colW = columnWidth(index: idx, count: columns.count, columnWidth: gcw, gamesWidth: metrics.gamesWidth)
                 if let match = col.match {

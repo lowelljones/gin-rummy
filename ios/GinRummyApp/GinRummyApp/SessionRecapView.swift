@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Full sitting recap: every consecutive match in the lobby with scores and box (bucket) results.
+/// Full sitting recap: every consecutive match in the lobby with scores and match tier results.
 struct SessionRecapView: View {
     @EnvironmentObject private var app: AppModel
     let inviteCode: String?
@@ -87,7 +87,7 @@ struct SessionRecapView: View {
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             if recap.totals.completedMatches > 0 {
-                Text("Session boxes · \(recap.totals.totalBuckets) total · \(recap.totals.totalBettingRaw) raw")
+                Text("Session tiers · \(recap.totals.totalBuckets) total · \(recap.totals.totalBettingRaw) match pts")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
             }
@@ -133,7 +133,7 @@ struct SessionRecapView: View {
                ) {
                 Divider().overlay(GinRummyPalette.gold.opacity(0.25))
                 HStack {
-                    Text("Box (bucket)")
+                    Text("Match tier")
                         .font(.caption.weight(.semibold))
                     Spacer()
                     Text("\(bucket)")
@@ -141,23 +141,23 @@ struct SessionRecapView: View {
                         .foregroundStyle(GinRummyPalette.gold)
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    boxRow("Win bonus", breakdown.winBonus)
-                    boxRow("Score margin", breakdown.scoreDiff)
+                    matchPointsRow("Win bonus", breakdown.winBonus)
+                    matchPointsRow("Score margin", breakdown.scoreDiff)
                     if breakdown.shutoutBonus > 0 {
-                        boxRow("Blitz shutout", breakdown.shutoutBonus)
+                        matchPointsRow("Blitz shutout", breakdown.shutoutBonus)
                     }
-                    boxRow("Net boxes (25 × \(breakdown.netHands))", breakdown.handsBonus)
-                    boxRow("Raw", raw, emphasized: true)
-                    Text("\(raw) raw → bucket \(bucket) (\(BettingSettlementBreakdown.bucketRangeLabel(for: bucket)))")
+                    matchPointsRow("Net hands (25 × \(breakdown.netHands))", breakdown.handsBonus)
+                    matchPointsRow("Match points", raw, emphasized: true)
+                    Text("\(raw) match pts → tier \(bucket) (\(BettingSettlementBreakdown.tierRangeLabel(for: bucket)))")
                         .font(.caption2)
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
                 }
             } else if match.status == "active" {
-                Text("Match still in progress — box settles when someone reaches \(match.raceTarget).")
+                Text("Match still in progress — match points settle when someone reaches \(match.raceTarget).")
                     .font(.caption)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             } else if match.status == "abandoned" {
-                Text("Match ended early — no box settlement.")
+                Text("Match ended early — no match point settlement.")
                     .font(.caption)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
@@ -209,7 +209,7 @@ struct SessionRecapView: View {
                 .font(.caption)
             Text("Match wins · \(recap.totals.matchWins[0]) – \(recap.totals.matchWins[1])")
                 .font(.caption.monospacedDigit())
-            Text("Combined boxes · \(recap.totals.totalBuckets) · \(recap.totals.totalBettingRaw) raw")
+            Text("Combined tiers · \(recap.totals.totalBuckets) · \(recap.totals.totalBettingRaw) match pts")
                 .font(.caption.monospacedDigit())
         }
         .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
@@ -219,7 +219,7 @@ struct SessionRecapView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(GinRummyPalette.burgundy.opacity(0.35)))
     }
 
-    private func boxRow(_ label: String, _ value: Int, emphasized: Bool = false) -> some View {
+    private func matchPointsRow(_ label: String, _ value: Int, emphasized: Bool = false) -> some View {
         HStack {
             Text(label)
                 .font(emphasized ? .caption.weight(.semibold) : .caption)

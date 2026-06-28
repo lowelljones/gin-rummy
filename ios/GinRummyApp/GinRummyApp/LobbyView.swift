@@ -43,8 +43,9 @@ struct LobbyView: View {
 
     private var homeScreen: some View {
         VStack(spacing: 28) {
+            Spacer(minLength: 56)
+
             GinRummyLogoBlock()
-                .padding(.top, 12)
 
             if !toast.isEmpty {
                 FeedbackLine(text: toast, isError: toastIsError, privateClubStyle: true)
@@ -52,52 +53,44 @@ struct LobbyView: View {
             }
 
             VStack(spacing: 14) {
-                    Button(busy ? "Creating…" : "Create lobby") {
-                        Task { await createLobbyAndWait() }
-                    }
-                    .buttonStyle(GinPrimaryButtonStyle())
-                    .disabled(busy || app.accessToken == nil)
+                Button(busy ? "Creating…" : "Create lobby") {
+                    Task { await createLobbyAndWait() }
+                }
+                .buttonStyle(GinPrimaryButtonStyle())
+                .disabled(busy || app.accessToken == nil)
 
-                    Button("Join lobby") {
-                        path.append(LobbyRoute.joinEnter)
-                    }
-                    .buttonStyle(GinGhostButtonStyle())
-                    .disabled(busy || app.accessToken == nil)
+                Button("Join lobby") {
+                    path.append(LobbyRoute.joinEnter)
+                }
+                .buttonStyle(GinGhostButtonStyle())
+                .disabled(busy || app.accessToken == nil)
 
-                    Button(busy ? "Starting…" : "Play bot") {
-                        Task { await playAgainstBot() }
-                    }
-                    .buttonStyle(GinGhostButtonStyle())
-                    .disabled(busy || app.accessToken == nil)
+                Button(busy ? "Starting…" : "Play bot") {
+                    Task { await playAgainstBot() }
+                }
+                .buttonStyle(GinGhostButtonStyle())
+                .disabled(busy || app.accessToken == nil)
 
-                    Button("Score a game") {
-                        path.append(LobbyRoute.manualScore)
-                    }
-                    .buttonStyle(GinGhostButtonStyle())
+                Button("Score a game") {
+                    path.append(LobbyRoute.manualScore)
+                }
+                .buttonStyle(GinGhostButtonStyle())
 
-                    Button("How to play") {
-                        path.append(LobbyRoute.instructions)
-                    }
-                    .buttonStyle(GinGhostButtonStyle())
+                Button("How to play") {
+                    path.append(LobbyRoute.instructions)
+                }
+                .buttonStyle(GinGhostButtonStyle())
 
-                    Button("Account") {
-                        path.append(LobbyRoute.account)
-                    }
-                    .buttonStyle(GinGhostButtonStyle())
-
-                    Button("Sign out", role: .destructive) {
-                        app.signOut()
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(GinRummyPalette.sage)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
+                Button("Account") {
+                    path.append(LobbyRoute.account)
+                }
+                .buttonStyle(GinGhostButtonStyle())
             }
             .padding(.horizontal, 28)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 56)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// After accepting an invite sheet, drop into the unified waiting room so the

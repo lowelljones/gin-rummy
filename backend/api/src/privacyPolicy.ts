@@ -92,7 +92,7 @@ export function renderPrivacyPolicyPage(opts: PrivacyPolicyOptions): string {
       <ul>
         <li><strong>Account information.</strong> If you create an account, we collect your email address and password. Passwords are handled by our authentication provider; we do not store your password in plain text.</li>
         <li><strong>Profile information.</strong> We store a display name for your account (initially derived from your email address, and editable in <strong>Account</strong> settings) so friends can see who invited them to a lobby.</li>
-        <li><strong>Gameplay and lobby data.</strong> To run multiplayer games we store lobby membership, invite codes, game state, move history, scores, betting totals within a match, session recaps, and related metadata needed to keep games in sync and let you resume play.</li>
+        <li><strong>Gameplay and lobby data.</strong> To run multiplayer games we store lobby membership, invite codes, game state, move history, scores, match point totals within a match, session recaps, and related metadata needed to keep games in sync and let you resume play.</li>
         <li><strong>In-game chat.</strong> If you send chat messages during a game, we store the message text, your user ID, and the associated game.</li>
         <li><strong>Device session data.</strong> The app stores your sign-in session (access token, refresh token, and email) in the iOS Keychain on your device so you stay signed in.</li>
         <li><strong>Local score sheet (optional).</strong> If you use the in-app manual scorecard for an in-person game, names and scores are saved only on your device using iOS local storage. That data is not uploaded to our servers.</li>

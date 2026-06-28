@@ -1163,7 +1163,7 @@ app.get("/lobbies/:code", async (req, reply) => {
 });
 
 /**
- * Chronological recap of every match played in this lobby (scores, boxes/buckets,
+ * Chronological recap of every match played in this lobby (scores, match tiers,
  * winners). Used by the iOS session-results screen after rematches.
  */
 app.get("/lobbies/:code/session", async (req, reply) => {
