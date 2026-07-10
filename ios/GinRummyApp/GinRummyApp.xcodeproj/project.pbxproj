@@ -17,6 +17,8 @@
 		E90100000000000000000008 /* LobbyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000008 /* LobbyView.swift */; };
 		E90100000000000000000009 /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000009 /* GameView.swift */; };
 		E9010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000A /* Assets.xcassets */; };
+		E90100000000000000000023 /* CourtCards.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000023 /* CourtCards.xcassets */; };
+		E90100000000000000000024 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000024 /* ProfileView.swift */; };
 		E9010000000000000000000B /* PlayerFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000D /* PlayerFeedback.swift */; };
 		E9010000000000000000000C /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000E /* CardViews.swift */; };
 		E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000F /* GinRummyTableTheme.swift */; };
@@ -48,6 +50,8 @@
 		E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000022 /* GinAppleSignInButton.swift */; };
 		EA0100000000000000000008 /* AppleSignInNonceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000008 /* AppleSignInNonceTests.swift */; };
 		EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000009 /* PasswordResetURLTests.swift */; };
+		EA010000000000000000000A /* ScorecardScoringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000A /* ScorecardScoringTests.swift */; };
+		EA010000000000000000000B /* ProfileGameLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000B /* ProfileGameLogTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +76,8 @@
 		E80100000000000000000008 /* LobbyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyView.swift; sourceTree = "<group>"; };
 		E80100000000000000000009 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
 		E8010000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E80100000000000000000023 /* CourtCards.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = CourtCards.xcassets; sourceTree = "<group>"; };
+		E80100000000000000000024 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		E8010000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E8010000000000000000000C /* GinRummyApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GinRummyApp.entitlements; sourceTree = "<group>"; };
 		E8010000000000000000000D /* PlayerFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerFeedback.swift; sourceTree = "<group>"; };
@@ -106,6 +112,8 @@
 		E80100000000000000000022 /* GinAppleSignInButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinAppleSignInButton.swift; sourceTree = "<group>"; };
 		EA0200000000000000000008 /* AppleSignInNonceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonceTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000009 /* PasswordResetURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordResetURLTests.swift; sourceTree = "<group>"; };
+		EA020000000000000000000A /* ScorecardScoringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardScoringTests.swift; sourceTree = "<group>"; };
+		EA020000000000000000000B /* ProfileGameLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileGameLogTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -147,6 +155,8 @@
 				EA0200000000000000000007 /* CardMetricsHandEndTests.swift */,
 				EA0200000000000000000008 /* AppleSignInNonceTests.swift */,
 				EA0200000000000000000009 /* PasswordResetURLTests.swift */,
+				EA020000000000000000000A /* ScorecardScoringTests.swift */,
+				EA020000000000000000000B /* ProfileGameLogTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -162,6 +172,7 @@
 				E80100000000000000000021 /* AppleSignInNonce.swift */,
 				E80100000000000000000022 /* GinAppleSignInButton.swift */,
 				E8010000000000000000001F /* AccountSettingsView.swift */,
+				E80100000000000000000024 /* ProfileView.swift */,
 				E80100000000000000000005 /* APIClient.swift */,
 				E80100000000000000000006 /* AppConfig.swift */,
 				E80100000000000000000007 /* Models.swift */,
@@ -185,6 +196,7 @@
 				E80100000000000000000013 /* GinRummyTheme.swift */,
 				E80100000000000000000014 /* LobbyFlows.swift */,
 				E8010000000000000000000A /* Assets.xcassets */,
+				E80100000000000000000023 /* CourtCards.xcassets */,
 				E8010000000000000000000B /* Info.plist */,
 				E80100000000000000000020 /* PrivacyInfo.xcprivacy */,
 				E8010000000000000000000C /* GinRummyApp.entitlements */,
@@ -282,6 +294,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E9010000000000000000000A /* Assets.xcassets in Resources */,
+				E90100000000000000000023 /* CourtCards.xcassets in Resources */,
 				E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -299,6 +312,7 @@
 				E90100000000000000000015 /* KeychainStore.swift in Sources */,
 				E90100000000000000000004 /* AuthView.swift in Sources */,
 				E9010000000000000000001F /* AccountSettingsView.swift in Sources */,
+				E90100000000000000000024 /* ProfileView.swift in Sources */,
 				E90100000000000000000005 /* APIClient.swift in Sources */,
 				E90100000000000000000006 /* AppConfig.swift in Sources */,
 				E90100000000000000000007 /* Models.swift in Sources */,
@@ -339,6 +353,8 @@
 				EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */,
 				EA0100000000000000000008 /* AppleSignInNonceTests.swift in Sources */,
 				EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */,
+				EA010000000000000000000A /* ScorecardScoringTests.swift in Sources */,
+				EA010000000000000000000B /* ProfileGameLogTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

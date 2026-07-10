@@ -31,6 +31,17 @@ struct GameView: View {
     /// Realtime subscription to `player_game_snapshots` (RLS-filtered per user).
     @State private var signalSocket: GameSignalSocket?
 
+    /// Measured frames of the table zones (stock, discard, hands) so flight and
+    /// deal animations land exactly on the real views.
+    @State private var tableAnchorFrames: [String: CGRect] = [:]
+    /// Card dropped on the table via drag-to-discard, consumed by `DiscardHelper`.
+    @State private var dragDiscardRequest: String?
+    /// Card just drawn into your hand — briefly glows gold in the fan.
+    @State private var recentlyDrawnCard: String?
+    @State private var drawnHighlightClearTask: Task<Void, Never>?
+    /// Non-nil while the start-of-hand deal flourish is playing.
+    @State private var dealAnimationToken: UUID?
+
     /// Terminal/transition states for leaving an unfinished game (yours or the opponent's).
     private enum GameExitState: Equatable {
         /// The leave API call is in flight — brief "leaving the table" visual.
@@ -189,6 +200,11 @@ struct GameView: View {
         surface == .play || surface == .downCard
     }
 
+    /// Drag-to-discard is live exactly when a discard is: your turn in play with 11 cards.
+    private func canDragDiscard(surface: GamePlaySurface, p: PlayerPerspective) -> Bool {
+        surface == .play && p.currentTurn == p.seat && p.hands[p.seat].count == 11
+    }
+
     private struct CutRevealModel: Equatable {
         var last: PlayerPerspective.LastCutResult
         var youAreSeat: Int
@@ -280,6 +296,7 @@ struct GameView: View {
             cardFlightClearTask?.cancel()
             messageTask?.cancel()
             chatBaselineTask?.cancel()
+            drawnHighlightClearTask?.cancel()
             disconnectGameSignals()
         }
     }
@@ -418,6 +435,8 @@ struct GameView: View {
         if maybeBeginCutReveal(before: before, after: after) {
             return
         }
+        detectNewDeal(before: before, after: after)
+        detectMyDraw(before: before, after: after)
         detectRedealCompletion(before: before, after: after)
         detectPlayedThroughVoid(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
@@ -944,6 +963,7 @@ struct GameView: View {
             FannedOpponentHandRow(cardCount: p.hands[1 - p.seat].count)
                 .frame(height: 74)
                 .padding(.horizontal, 4)
+                .tableFlightAnchor(.opponentHand)
 
             Spacer(minLength: 0)
 
@@ -967,9 +987,14 @@ struct GameView: View {
                 displayOrder: handDisplayFor(hand: p.hands[p.seat]),
                 selected: $selectedHandCard,
                 canReorder: canReorderHand(for: surface),
-                onReorder: { handDisplayOrder = $0 }
+                onReorder: { handDisplayOrder = $0 },
+                onDragDiscard: canDragDiscard(surface: surface, p: p)
+                    ? { dragDiscardRequest = $0 }
+                    : nil,
+                recentlyDrawn: recentlyDrawnCard
             )
             .frame(height: 152)
+            .tableFlightAnchor(.myHand)
 
             tableActionBar(gameId: gameId, surface: surface, p: p)
         }
@@ -1321,12 +1346,25 @@ struct GameView: View {
                 .padding(.trailing, 6)
                 .allowsHitTesting(false)
         }
+        .coordinateSpace(name: "gameTable")
+        .onPreferenceChange(TableAnchorFramesKey.self) { tableAnchorFrames = $0 }
         .overlay {
             if let cf = cardFlight, surface == .play || surface == .downCard {
-                CardFlightAnimationOverlay(route: cf.route, card: cf.card)
+                CardFlightAnimationOverlay(route: cf.route, card: cf.card, anchorFrames: tableAnchorFrames)
                     .id(cf.id)
                     .allowsHitTesting(false)
                     .transition(.opacity)
+            }
+        }
+        .overlay {
+            if let token = dealAnimationToken,
+               exitState == nil, cutReveal == nil, voidFlashKind == nil,
+               surface == .downCard || surface == .play
+            {
+                DealAnimationOverlay(anchorFrames: tableAnchorFrames) {
+                    dealAnimationToken = nil
+                }
+                .id(token)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -1466,6 +1504,10 @@ struct GameView: View {
         cutRevealTask?.cancel()
         revealedCutKey = cutKey(model.last)
         withAnimation(.easeInOut(duration: 0.3)) { cutReveal = nil }
+        // First hand of the match: the deal flourish plays once the cut clears.
+        if app.lastPerspective?.phase == "upcardOffer" {
+            dealAnimationToken = UUID()
+        }
         if model.deferDealerDeclineHint {
             downCardStatusMessage = Self.opponentDeclinedDownCardMessage
             messageTask?.cancel()
@@ -1475,6 +1517,36 @@ struct GameView: View {
                     downCardStatusMessage = nil
                 }
             }
+        }
+    }
+
+    /// A fresh 10-card deal just landed (next hand or redeal) — play the deal flourish.
+    /// Reconnects (`before == nil`) never animate.
+    private func detectNewDeal(before: PlayerPerspective?, after: PlayerPerspective) {
+        guard let b = before else { return }
+        guard after.phase == "upcardOffer", b.phase != "upcardOffer" else { return }
+        dealAnimationToken = UUID()
+    }
+
+    /// Track the card that just entered your hand so the fan can glow it briefly.
+    private func detectMyDraw(before: PlayerPerspective?, after: PlayerPerspective) {
+        guard let b = before else { return }
+        let my = after.seat
+        if b.hands[my].count == 10, after.hands[my].count == 11,
+           let added = after.hands[my].first(where: { !b.hands[my].contains($0) })
+        {
+            let n = CardIdValidation.normalize(added)
+            guard CardIdValidation.isValidFormat(n) else { return }
+            recentlyDrawnCard = added
+            drawnHighlightClearTask?.cancel()
+            drawnHighlightClearTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                if !Task.isCancelled, recentlyDrawnCard == added {
+                    withAnimation(.easeOut(duration: 0.3)) { recentlyDrawnCard = nil }
+                }
+            }
+        } else if after.hands[my].count != 11 {
+            recentlyDrawnCard = nil
         }
     }
 
@@ -2535,7 +2607,7 @@ struct GameView: View {
     ) -> some View {
         VStack(spacing: 8) {
             if p.currentTurn == p.seat {
-                Text("Take the up-card, or pass.")
+                Text("Take the down card, or pass.")
                     .font(.footnote)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -2561,7 +2633,7 @@ struct GameView: View {
                     .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
                 }
             } else {
-                Label("Waiting for \(app.opponentDisplayName) on the up-card…", systemImage: "hourglass")
+                Label("Waiting for \(app.opponentDisplayName) on the down card…", systemImage: "hourglass")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(GinRummyPalette.sage)
                     .frame(maxWidth: .infinity)
@@ -2616,6 +2688,7 @@ struct GameView: View {
                     feedbackText: feedbackText,
                     feedbackIsError: feedbackIsError,
                     selectedCard: selectedHandCard,
+                    dragDiscardRequest: $dragDiscardRequest,
                     onAfterSuccessfulMove: { before, after in
                         if let b = before {
                             handleAfterPerspectiveUpdate(before: b, after: after)
@@ -2782,6 +2855,8 @@ private struct DiscardHelper: View {
     @Binding var feedbackText: String
     @Binding var feedbackIsError: Bool
     @Binding var selectedCard: String?
+    /// Card dropped via drag-to-discard in the fan; consumed (set back to nil) here.
+    @Binding var dragDiscardRequest: String?
     var onAfterSuccessfulMove: ((PlayerPerspective?, PlayerPerspective) -> Void)? = nil
     var onAfterSuccessfulDiscard: ((String, PlayerPerspective?, PlayerPerspective) -> Void)? = nil
 
@@ -2822,7 +2897,7 @@ private struct DiscardHelper: View {
             }
 
             if !haveSelection {
-                Text("Tap a card in your hand to discard, knock, or go gin.")
+                Text("Drag a card up to discard it, or tap to select for knock / gin.")
                     .font(.footnote)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -2833,9 +2908,20 @@ private struct DiscardHelper: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .onAppear { recomputeIfNeeded() }
+        .onAppear {
+            recomputeIfNeeded()
+            if let dropped = dragDiscardRequest {
+                dragDiscardRequest = nil
+                handleDragDiscard(dropped)
+            }
+        }
         .onChange(of: hand) { _, _ in recomputeIfNeeded() }
         .onChange(of: knockCheckCard) { _, _ in recomputeIfNeeded() }
+        .onChange(of: dragDiscardRequest) { _, new in
+            guard let dropped = new else { return }
+            dragDiscardRequest = nil
+            handleDragDiscard(dropped)
+        }
         .sheet(item: $knockChooser) { model in
             KnockLayoutChooserView(
                 options: model.options,
@@ -2854,6 +2940,17 @@ private struct DiscardHelper: View {
         lastEvaluatedHand = hand
         lastEvaluatedKnockCard = knockCheckCard
         eligibility = MeldSolver.eligibility(forHand11: hand, knockCheckCard: knockCheckCard)
+    }
+
+    /// Drag-to-discard: submit the plain discard directly when it's legal;
+    /// otherwise select the card so the inline hint explains why it isn't.
+    private func handleDragDiscard(_ dropped: String) {
+        recomputeIfNeeded()
+        let c = CardIdValidation.normalize(dropped)
+        selectedCard = c
+        if eligibility.plain.contains(c) {
+            Task { await submit(plain: true) }
+        }
     }
 
     private func inlineHint(canPlain: Bool, canGin: Bool, canKnock: Bool) -> String? {

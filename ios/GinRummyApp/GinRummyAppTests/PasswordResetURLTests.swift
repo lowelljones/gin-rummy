@@ -1,6 +1,7 @@
 import XCTest
 @testable import GinRummyApp
 
+@MainActor
 final class PasswordResetURLTests: XCTestCase {
     func testCustomSchemeResetLinkParsesTokens() {
         let url = URL(string: "ginrummy://reset-password#access_token=abc123&refresh_token=ref456&expires_in=3600&type=recovery")!

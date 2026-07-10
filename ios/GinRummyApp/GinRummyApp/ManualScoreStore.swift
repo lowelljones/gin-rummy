@@ -86,6 +86,36 @@ struct ManualScoreHand: Codable, Equatable, Identifiable {
     }
 }
 
+/// Names of people you've played — online opponents (recorded when the profile
+/// game log loads) plus names typed into the manual scorecard. Powers the
+/// opponent suggestions when scoring an in-person game. Local only; not a
+/// friend system.
+enum KnownOpponentsStore {
+    private static let storageKey = "gin.knownOpponents.v1"
+    private static let maxNames = 30
+    /// Placeholder names that would pollute the suggestions.
+    private static let ignored: Set<String> = ["you", "opponent", "player", "practice bot"]
+
+    static func all() -> [String] {
+        UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+    }
+
+    /// Most-recently-used first, case-insensitively deduped.
+    static func remember(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, !ignored.contains(trimmed.lowercased()) else { return }
+        var names = all().filter { $0.lowercased() != trimmed.lowercased() }
+        names.insert(trimmed, at: 0)
+        if names.count > maxNames { names = Array(names.prefix(maxNames)) }
+        UserDefaults.standard.set(names, forKey: storageKey)
+    }
+
+    static func remember(contentsOf newNames: [String]) {
+        // Reverse so the first entry in `newNames` ends up most recent.
+        for name in newNames.reversed() { remember(name) }
+    }
+}
+
 @MainActor
 final class ManualScoreStore: ObservableObject {
     @Published private(set) var session: ManualScoreSession
@@ -110,6 +140,7 @@ final class ManualScoreStore: ObservableObject {
     func updateNames(we: String, they: String) {
         session.weName = we.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "You" : we
         session.theyName = they.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Opponent" : they
+        KnownOpponentsStore.remember(session.theyName)
         touch()
     }
 
@@ -141,23 +172,6 @@ final class ManualScoreStore: ObservableObject {
         session.games[gi].weBox = we
         session.games[gi].theyBox = they
         touch()
-    }
-
-    func cumulativeBettingTotal(forWePlayer: Bool, throughGameIndex: Int) -> Int? {
-        guard throughGameIndex >= 0, throughGameIndex < session.games.count else { return nil }
-        if session.games[throughGameIndex].isLive { return nil }
-        var total = 0
-        var counted = false
-        for i in 0 ... throughGameIndex {
-            let game = session.games[i]
-            guard !game.isLive, let settlement = game.bettingSettlement() else { continue }
-            counted = true
-            let weWon = settlement.winner == 0
-            let delta = forWePlayer ? (weWon ? settlement.bucket : -settlement.bucket)
-                                    : (weWon ? -settlement.bucket : settlement.bucket)
-            total += delta
-        }
-        return counted ? total : nil
     }
 
     func netBox(forWePlayer: Bool) -> Int {

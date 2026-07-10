@@ -31,6 +31,7 @@ import {
   type SnapshotSyncDeps,
 } from "./playerGameSnapshots.js";
 import { buildSessionRecapFromGames, type SessionRecapPayload } from "./sessionRecap.js";
+import { buildAccountGameLog, type AccountGameRow } from "./accountGameLog.js";
 import { privacyContactEmail, renderPrivacyPolicyPage } from "./privacyPolicy.js";
 import { renderTermsOfServicePage } from "./termsOfService.js";
 import { buildAppleAppSiteAssociation } from "./appleAppSiteAssociation.js";
@@ -2113,6 +2114,34 @@ app.get("/account/profile", async (req, reply) => {
     display_name: raw || "Player",
     email: user.email ?? null,
   };
+});
+
+/** Profile game log: finished matches with opponent, result, score, tier, hands. */
+app.get("/account/games", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+
+  const { data: rows, error } = await admin
+    .from("games")
+    .select("id, status, created_at, updated_at, seat_for_user, server_truth, abandoned_by, is_bot_game")
+    .contains("player_ids", [user.id])
+    .in("status", ["completed", "abandoned"])
+    .order("updated_at", { ascending: false })
+    .limit(100);
+  if (error) return reply.code(500).send({ error: error.message });
+
+  const gameRows = (rows ?? []) as AccountGameRow[];
+  const opponentIds = gameRows
+    .flatMap((g) => Object.keys(g.seat_for_user ?? {}))
+    .filter((uid) => uid !== user.id && uid !== BOT_USER_ID);
+  const displayNames = await displayNamesForUserIds(opponentIds);
+
+  return buildAccountGameLog({
+    userId: user.id,
+    botUserId: BOT_USER_ID,
+    rows: gameRows,
+    displayNames,
+  });
 });
 
 app.patch("/account/display-name", async (req, reply) => {

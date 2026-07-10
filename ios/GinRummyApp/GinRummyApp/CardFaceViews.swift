@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Card face rendering (pip layouts + court art)
 
@@ -45,6 +46,14 @@ extension PlayingCard {
             endPoint: .bottom
         )
     }
+
+    /// Asset name for the bundled court figure, e.g. "court_S_K".
+    /// Returns nil for non-court ranks.
+    static func courtAssetName(_ card: String) -> String? {
+        guard let r = rankChar(card), let s = suitChar(card) else { return nil }
+        guard r == "J" || r == "Q" || r == "K" else { return nil }
+        return "court_\(s)_\(r)"
+    }
 }
 
 // MARK: - Suit glyphs
@@ -86,12 +95,18 @@ private enum CardPipLayout {
     private static let lx: CGFloat = 0.28
     private static let rx: CGFloat = 0.72
     private static let cx: CGFloat = 0.50
+    // Three-row column positions (2–8).
     private static let y1: CGFloat = 0.16
-    private static let y2: CGFloat = 0.36
     private static let y3: CGFloat = 0.50
-    private static let y4: CGFloat = 0.64
     private static let y5: CGFloat = 0.84
+    // Four-row column positions (9s and 10s).
+    private static let q1: CGFloat = 0.16
+    private static let q2: CGFloat = 0.387
+    private static let q3: CGFloat = 0.613
+    private static let q4: CGFloat = 0.84
 
+    /// Standard Anglo-American pip layouts: side columns plus centered
+    /// "filler" pips; everything in the bottom half renders inverted.
     static func pips(for rank: Character) -> [Pip] {
         switch rank {
         case "2":
@@ -105,18 +120,13 @@ private enum CardPipLayout {
         case "6":
             return columnSix()
         case "7":
-            return columnSix() + [p(cx, 0.26, false)]
+            return columnSix() + [p(cx, 0.33, false)]
         case "8":
-            return [
-                p(lx, 0.14, false), p(rx, 0.14, false),
-                p(lx, 0.34, false), p(rx, 0.34, false),
-                p(lx, 0.66, true), p(rx, 0.66, true),
-                p(lx, 0.86, true), p(rx, 0.86, true),
-            ]
+            return columnSix() + [p(cx, 0.33, false), p(cx, 0.67, true)]
         case "9":
-            return grid3x3()
+            return columnEight() + [p(cx, y3, false)]
         case "T":
-            return grid3x3() + [p(cx, 0.40, false), p(cx, 0.60, true)]
+            return columnEight() + [p(cx, 0.27, false), p(cx, 0.73, true)]
         default:
             return []
         }
@@ -134,18 +144,46 @@ private enum CardPipLayout {
         [p(lx, y1, false), p(rx, y1, false), p(lx, y3, false), p(rx, y3, false), p(lx, y5, true), p(rx, y5, true)]
     }
 
-    private static func grid3x3() -> [Pip] {
-        let xs: [CGFloat] = [0.26, cx, 0.74]
-        let ys: [CGFloat] = [y1, y3, y5]
-        return ys.flatMap { y in
-            xs.map { x in p(x, y, y > 0.55) }
+    /// Two side columns of four (9 and 10).
+    private static func columnEight() -> [Pip] {
+        [q1, q2, q3, q4].flatMap { y in
+            [p(lx, y, y > 0.55), p(rx, y, y > 0.55)]
         }
     }
 }
 
-// MARK: - Court card line art (stroke-based, traditional silhouettes)
+// MARK: - Court card art
 
+/// Bundled traditional court figure (recolored into the Heritage palette),
+/// shown inside the card chrome. Falls back to the legacy line art if the
+/// image asset is missing (e.g. before the CourtCards catalog is added).
 private struct CardCourtArt: View {
+    let rank: Character
+    let card: String
+
+    var body: some View {
+        if let name = PlayingCard.courtAssetName(card), UIImage(named: name) != nil {
+            Image(name)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                // Traditional panel frame; also hides the seam between the
+                // art's flat cream and the card's gradient cream.
+                .overlay(
+                    Rectangle()
+                        .stroke(PlayingCard.inkColor(card).opacity(0.45), lineWidth: 0.8)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
+        } else {
+            CardCourtLineArt(rank: rank, card: card)
+        }
+    }
+}
+
+// MARK: - Legacy court line art (fallback only)
+
+private struct CardCourtLineArt: View {
     let rank: Character
     let card: String
 
@@ -383,11 +421,21 @@ struct PlayingCardFaceContent: View {
     private var rankFont: Font { .system(size: width * 0.22, weight: .bold, design: .serif) }
     private var cornerSuitSize: CGFloat { width * 0.17 }
 
+    private var isCourt: Bool {
+        guard let rank else { return false }
+        return rank == "J" || rank == "Q" || rank == "K"
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: corner * 0.75)
                 .stroke(ink.opacity(0.14), lineWidth: 0.8)
                 .padding(pad * 0.55)
+
+            // Court panel is inset enough that the corner indices stay clear.
+            centerArt
+                .padding(.horizontal, isCourt ? pad * 1.2 : pad * 1.1)
+                .padding(.vertical, isCourt ? pad * 1.5 : pad * 1.55)
 
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 0) {
@@ -401,10 +449,6 @@ struct PlayingCardFaceContent: View {
                 }
             }
             .padding(pad)
-
-            centerArt
-                .padding(.horizontal, pad * 1.1)
-                .padding(.vertical, pad * 1.55)
         }
     }
 

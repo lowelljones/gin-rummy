@@ -25,6 +25,9 @@ struct LobbyView: View {
                     case let .wait(code, isHost):
                         LobbyWaitingRoomView(inviteCode: code, isHost: isHost)
                             .environmentObject(app)
+                    case .profile:
+                        ProfileView()
+                            .environmentObject(app)
                     case .account:
                         AccountSettingsView()
                             .environmentObject(app)
@@ -41,57 +44,164 @@ struct LobbyView: View {
         }
     }
 
+    // MARK: - Home
+
     private var homeScreen: some View {
-        VStack(spacing: 28) {
-            Spacer(minLength: 56)
+        VStack(spacing: 0) {
+            Spacer(minLength: 44)
 
             GinRummyLogoBlock()
 
             if !toast.isEmpty {
                 FeedbackLine(text: toast, isError: toastIsError, privateClubStyle: true)
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
             }
 
-            VStack(spacing: 14) {
-                Button(busy ? "Creating…" : "Create lobby") {
+            Spacer(minLength: 34)
+
+            VStack(alignment: .leading, spacing: 12) {
+                sectionLabel("Play a match")
+
+                Button(busy ? "Creating…" : "Create a table") {
                     Task { await createLobbyAndWait() }
                 }
                 .buttonStyle(GinPrimaryButtonStyle())
                 .disabled(busy || app.accessToken == nil)
 
-                Button("Join lobby") {
-                    path.append(LobbyRoute.joinEnter)
-                }
-                .buttonStyle(GinGhostButtonStyle())
-                .disabled(busy || app.accessToken == nil)
+                HStack(spacing: 12) {
+                    Button("Join with code") {
+                        path.append(LobbyRoute.joinEnter)
+                    }
+                    .buttonStyle(GinGhostButtonStyle())
+                    .disabled(busy || app.accessToken == nil)
 
-                Button(busy ? "Starting…" : "Play bot") {
-                    Task { await playAgainstBot() }
+                    Button(busy ? "Starting…" : "Play bot") {
+                        Task { await playAgainstBot() }
+                    }
+                    .buttonStyle(GinGhostButtonStyle())
+                    .disabled(busy || app.accessToken == nil)
                 }
-                .buttonStyle(GinGhostButtonStyle())
-                .disabled(busy || app.accessToken == nil)
+            }
+            .padding(.horizontal, 24)
 
-                Button("Score a game") {
+            Spacer(minLength: 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                sectionLabel("Keeping score in person")
+
+                Button {
                     path.append(LobbyRoute.manualScore)
+                } label: {
+                    scoreByHandCard
                 }
-                .buttonStyle(GinGhostButtonStyle())
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
 
-                Button("How to play") {
+            Spacer(minLength: 32)
+
+            HStack(spacing: 12) {
+                homeTile(title: "How to play", systemImage: "questionmark.circle") {
                     path.append(LobbyRoute.instructions)
                 }
-                .buttonStyle(GinGhostButtonStyle())
-
-                Button("Account") {
-                    path.append(LobbyRoute.account)
+                homeTile(title: "Profile", systemImage: "person.crop.circle") {
+                    path.append(LobbyRoute.profile)
                 }
-                .buttonStyle(GinGhostButtonStyle())
             }
-            .padding(.horizontal, 28)
-
-            Spacer(minLength: 56)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 42)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.caption2.weight(.bold))
+            .tracking(2)
+            .foregroundStyle(GinRummyPalette.sage)
+    }
+
+    private var scoreByHandCard: some View {
+        HStack(spacing: 15) {
+            miniScoreSheet
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Score a game by hand")
+                    .font(.headline)
+                    .foregroundStyle(GinRummyPalette.cream)
+                Text("Keep the sheet for an in-person match")
+                    .font(.caption)
+                    .foregroundStyle(GinRummyPalette.sage)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GinRummyPalette.goldAccentSoft)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(red: 0.031, green: 0.051, blue: 0.039))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(GinRummyPalette.goldAccent.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private var miniScoreSheet: some View {
+        VStack(spacing: 0) {
+            miniScoreRow(left: "25", right: "")
+            miniScoreRow(left: "", right: "19")
+            miniScoreRow(left: "18", right: "")
+        }
+        .padding(5)
+        .frame(width: 46, height: 58)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(GinRummyPalette.cream.opacity(0.32), lineWidth: 1))
+    }
+
+    private func miniScoreRow(left: String, right: String) -> some View {
+        HStack(spacing: 0) {
+            Text(left)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(GinRummyPalette.goldAccentSoft)
+            Rectangle()
+                .fill(GinRummyPalette.cream.opacity(0.22))
+                .frame(width: 1)
+            Text(right)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(Color(red: 0.86, green: 0.4, blue: 0.36))
+        }
+        .font(.system(size: 9, weight: .bold, design: .rounded))
+        .overlay(
+            Rectangle()
+                .fill(GinRummyPalette.cream.opacity(0.16))
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    private func homeTile(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(GinRummyPalette.goldAccentSoft)
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(GinRummyPalette.cream)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(GinRummyPalette.cream.opacity(0.14), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Navigation + networking
 
     /// After accepting an invite sheet, drop into the unified waiting room so the
     /// guest can see the host's name and ready up.

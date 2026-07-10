@@ -325,25 +325,23 @@ enum ScorecardScoring {
         return "0"
     }
 
-    /// Cumulative match tier total for `seat` through completed matches 0…`throughIndex`.
-    static func cumulativeBettingTotal(
-        forSeat seat: Int,
-        matches: [SessionMatchRecapDTO],
-        throughIndex: Int
-    ) -> Int? {
-        guard throughIndex >= 0, throughIndex < matches.count else { return nil }
-        if matches[throughIndex].isCurrent { return nil }
-        var total = 0
-        var counted = false
-        for i in 0 ... throughIndex {
-            let match = matches[i]
-            guard !match.isCurrent,
-                  let bucket = match.bettingBucket,
-                  let winner = match.winnerSeat else { continue }
-            counted = true
-            total += winner == seat ? bucket : -bucket
+    /// Signed match tier for one completed match from `seat`'s perspective.
+    static func gameBettingBucketLabel(for match: SessionMatchRecapDTO, seat: Int) -> String {
+        if let bucket = match.bettingBucket, let winner = match.winnerSeat {
+            return signed(winner == seat ? bucket : -bucket)
         }
-        return counted ? total : nil
+        if match.isCurrent { return "…" }
+        return "—"
+    }
+
+    /// Signed match tier (betting group) for one manual game, from the We or
+    /// They side. Live/unfinished games show "…", finished-but-unscored "—".
+    static func manualGameTierLabel(_ game: ManualScoreGame, forWe: Bool) -> String {
+        if let settlement = game.bettingSettlement() {
+            let weWon = settlement.winner == 0
+            return signed(forWe == weWon ? settlement.bucket : -settlement.bucket)
+        }
+        return game.isLive ? "…" : "—"
     }
 
     static func netHandsLabel(for match: SessionMatchRecapDTO, seat: Int) -> String {
@@ -368,6 +366,74 @@ enum ScorecardScoring {
         )
         return signed(net)
     }
+}
+
+// MARK: - Profile game log (GET /account/games)
+
+struct AccountGameLogEntryDTO: Codable, Equatable, Identifiable {
+    let gameId: String
+    let status: String
+    let createdAt: String
+    let updatedAt: String
+    let isBotGame: Bool
+    let opponentUserId: String?
+    let opponentDisplayName: String
+    let myScore: Int
+    let opponentScore: Int
+    let handsPlayed: Int
+    /// true you won, false you lost, nil no result (abandoned mid-match).
+    let iWon: Bool?
+    /// Abandoned games only: whether you were the one who left.
+    let iAbandoned: Bool?
+    let bettingRaw: Int?
+    let bettingBucket: Int?
+
+    var id: String { gameId }
+
+    /// Signed tier from your perspective, e.g. "+3" / "-2"; nil when unsettled.
+    var signedTierLabel: String? {
+        guard let bucket = bettingBucket, let won = iWon else { return nil }
+        return ScorecardScoring.signed(won ? bucket : -bucket)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case gameId = "game_id"
+        case status
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case isBotGame = "is_bot_game"
+        case opponentUserId = "opponent_user_id"
+        case opponentDisplayName = "opponent_display_name"
+        case myScore = "my_score"
+        case opponentScore = "opponent_score"
+        case handsPlayed = "hands_played"
+        case iWon = "i_won"
+        case iAbandoned = "i_abandoned"
+        case bettingRaw = "betting_raw"
+        case bettingBucket = "betting_bucket"
+    }
+}
+
+/// Aggregates over completed human matches (practice-bot games excluded).
+struct AccountGameLogTotalsDTO: Codable, Equatable {
+    let completedGames: Int
+    let wins: Int
+    let losses: Int
+    let netBuckets: Int
+    let handsPlayed: Int
+
+    enum CodingKeys: String, CodingKey {
+        case completedGames = "completed_games"
+        case wins
+        case losses
+        case netBuckets = "net_buckets"
+        case handsPlayed = "hands_played"
+    }
+}
+
+struct AccountGameLogResponse: Codable, Equatable {
+    let games: [AccountGameLogEntryDTO]
+    let totals: AccountGameLogTotalsDTO
 }
 
 struct GameStateResponse: Codable {

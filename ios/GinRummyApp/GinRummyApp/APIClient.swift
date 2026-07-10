@@ -310,6 +310,11 @@ final class APIClient {
         try await request(path: "/account/profile", method: "GET", token: token)
     }
 
+    /// Finished matches for the signed-in player (opponent, result, score, tier, hands).
+    func fetchAccountGames(token: String) async throws -> AccountGameLogResponse {
+        try await request(path: "/account/games", method: "GET", token: token)
+    }
+
     func updateDisplayName(_ displayName: String, token: String) async throws -> DisplayNameUpdateResponse {
         let body = try JSONSerialization.data(withJSONObject: ["display_name": displayName])
         return try await request(path: "/account/display-name", method: "PATCH", token: token, body: body)

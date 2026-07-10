@@ -17,6 +17,8 @@ enum LobbyRoute: Hashable {
     case wait(code: String, isHost: Bool)
     case instructions
     case manualScore
+    /// Your profile: match record and game log, with a link into account settings.
+    case profile
     case account
 }
 
@@ -32,6 +34,12 @@ struct InstructionsView: View {
                 ruleParagraph(
                     "Form melds (sets or runs). Reduce deadwood toward zero. Win the hand going gin (25 plus opponent’s unmelded count), EO (50 plus opponent’s unmelded), or by knocking when your unmelded total is at most the down card’s value (face cards 10; ace down card means no knock)."
                 )
+
+                HStack(alignment: .top, spacing: 20) {
+                    meldExample(cards: ["5H", "6H", "7H"], caption: "Run — same suit,\nin sequence")
+                    meldExample(cards: ["9S", "9D", "9C"], caption: "Set — same rank")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text("Deal & turn")
                     .font(.headline)
@@ -54,6 +62,12 @@ struct InstructionsView: View {
                     "Declare gin when discarding lets you arrange all melds plus zero unmelded points. Knock when, after that discard, your unmelded points are greater than zero and at most the down card’s value. If the down card is any ace, no one may knock for that hand."
                 )
 
+                meldExample(
+                    cards: ["7D"],
+                    caption: "Down card 7♦ — knock only with\n7 or fewer unmelded points"
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Text("Match")
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.gold)
@@ -75,6 +89,21 @@ struct InstructionsView: View {
             .font(.subheadline)
             .foregroundStyle(mutedInstructions)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A tiny row of cards with a caption — worked examples beat prose.
+    private func meldExample(cards: [String], caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(cards, id: \.self) { c in
+                    PlayingCardView(card: c, width: 40, onTap: nil)
+                }
+            }
+            Text(caption)
+                .font(.caption2)
+                .foregroundStyle(mutedInstructions)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

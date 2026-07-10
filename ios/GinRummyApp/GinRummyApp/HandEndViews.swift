@@ -165,17 +165,15 @@ struct DeadwoodRow: View {
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                     .frame(maxWidth: .infinity)
             } else {
-                HStack(spacing: cardSpacing) {
-                    ForEach(MeldSolver.rankSorted(cards), id: \.self) { c in
-                        VStack(spacing: 2) {
-                            PlayingCardView(card: c, compact: true, width: cardWidth, onTap: nil)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: max(4, cardWidth * 0.08))
-                                        .stroke(HandEndStyle.deadwoodRed.opacity(0.9), lineWidth: max(1.5, cardWidth * 0.03))
-                                )
-                            Text("\(MeldSolver.deadwoodValue(c))")
-                                .font(badgeFont)
-                                .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
+                // Wrap large deadwood into balanced rows (matches CardMetrics.deadwoodRowWidth).
+                let sorted = MeldSolver.rankSorted(cards)
+                let perRow = CardMetrics.deadwoodCardsInWidestRow(cardCount: sorted.count)
+                VStack(spacing: 6) {
+                    ForEach(Array(stride(from: 0, to: sorted.count, by: perRow)), id: \.self) { start in
+                        HStack(spacing: cardSpacing) {
+                            ForEach(sorted[start ..< min(start + perRow, sorted.count)], id: \.self) { c in
+                                deadwoodCard(c)
+                            }
                         }
                     }
                 }
@@ -183,6 +181,19 @@ struct DeadwoodRow: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func deadwoodCard(_ c: String) -> some View {
+        VStack(spacing: 2) {
+            PlayingCardView(card: c, compact: true, width: cardWidth, onTap: nil)
+                .overlay(
+                    RoundedRectangle(cornerRadius: max(4, cardWidth * 0.08))
+                        .stroke(HandEndStyle.deadwoodRed.opacity(0.9), lineWidth: max(1.5, cardWidth * 0.03))
+                )
+            Text("\(MeldSolver.deadwoodValue(c))")
+                .font(badgeFont)
+                .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
+        }
     }
 }
 
@@ -229,7 +240,8 @@ struct HandRevealView: View {
             let cardWidth = CardMetrics.handEndCardWidth(
                 availableWidth: max(0, geo.size.width - horizontalInset),
                 meldCardCounts: revealMeldCounts,
-                maxDeadwoodCount: revealDeadwoodMax
+                maxDeadwoodCount: revealDeadwoodMax,
+                maxWidth: 74
             )
 
             ZStack {

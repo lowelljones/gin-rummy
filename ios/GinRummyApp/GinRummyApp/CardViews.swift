@@ -98,11 +98,21 @@ enum CardMetrics {
         return pad * 2 + cardWidth + step * CGFloat(cardCount - 1)
     }
 
-    /// Width of a deadwood card row (no overlap).
+    /// Deadwood wraps past this many cards so a no-meld hand fits narrow screens.
+    static let deadwoodMaxPerRow = 5
+
+    /// Cards in the widest wrapped deadwood row (balanced split past the wrap point).
+    static func deadwoodCardsInWidestRow(cardCount: Int) -> Int {
+        guard cardCount > deadwoodMaxPerRow else { return cardCount }
+        return Int((Double(cardCount) / 2).rounded(.up))
+    }
+
+    /// Width of a deadwood card row (no overlap), accounting for wrapping.
     static func deadwoodRowWidth(cardWidth: CGFloat, cardCount: Int) -> CGFloat {
-        guard cardCount > 0 else { return 0 }
+        let n = deadwoodCardsInWidestRow(cardCount: cardCount)
+        guard n > 0 else { return 0 }
         let spacing = max(4, cardWidth * 0.10)
-        return CGFloat(cardCount) * cardWidth + spacing * CGFloat(cardCount - 1)
+        return CGFloat(n) * cardWidth + spacing * CGFloat(n - 1)
     }
 
     /// Largest card width that keeps every hand-end row within `availableWidth`.
@@ -179,18 +189,40 @@ struct CardBackFace: View {
     private var corner: CGFloat { cornerRadius ?? max(5, width * 0.10) }
     private var pad: CGFloat { max(3, width * 0.06) }
 
+    private var goldStrong: Color { GinRummyPalette.gold.opacity(highlighted ? 0.62 : 0.42) }
+    private var goldSoft: Color { GinRummyPalette.gold.opacity(highlighted ? 0.42 : 0.22) }
+
     var body: some View {
         RoundedRectangle(cornerRadius: corner)
             .fill(GinRummyPalette.cardBackGradient)
             .frame(width: width, height: h)
             .overlay {
+                // Faint diagonal cross-hatch (guilloché), clipped to the card.
+                CardBackHatch(spacing: max(5, width * 0.12))
+                    .stroke(GinRummyPalette.gold.opacity(highlighted ? 0.16 : 0.10), lineWidth: 0.6)
+                    .padding(pad * 0.7)
+                    .clipShape(RoundedRectangle(cornerRadius: corner * 0.8))
+            }
+            .overlay {
+                // Inner hairline frame.
+                RoundedRectangle(cornerRadius: corner * 0.8)
+                    .stroke(goldSoft, lineWidth: 1)
+                    .padding(pad)
+            }
+            .overlay {
+                // Rhombus crest around the spade.
                 ZStack {
-                    RoundedRectangle(cornerRadius: corner * 0.8)
-                        .stroke(GinRummyPalette.gold.opacity(highlighted ? 0.42 : 0.20), lineWidth: 1)
-                        .padding(pad)
+                    Rectangle()
+                        .stroke(goldStrong, lineWidth: 1.4)
+                        .frame(width: width * 0.46, height: width * 0.46)
+                        .rotationEffect(.degrees(45))
+                    Rectangle()
+                        .stroke(goldSoft, lineWidth: 0.8)
+                        .frame(width: width * 0.56, height: width * 0.56)
+                        .rotationEffect(.degrees(45))
                     Image(systemName: "suit.spade.fill")
-                        .font(.system(size: width * 0.34))
-                        .foregroundStyle(GinRummyPalette.gold.opacity(highlighted ? 0.62 : 0.30))
+                        .font(.system(size: width * 0.26))
+                        .foregroundStyle(goldStrong)
                 }
             }
             .overlay {
@@ -214,6 +246,31 @@ struct CardBackFace: View {
                 radius: castsShadow ? (highlighted ? 10 : 3) : 0,
                 y: castsShadow ? (highlighted ? 6 : 2) : 0
             )
+    }
+}
+
+/// Diagonal cross-hatch used as a subtle guilloché on the card back.
+private struct CardBackHatch: Shape {
+    var spacing: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let step = max(3, spacing)
+        // Lines at +45°
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            p.move(to: CGPoint(x: x, y: rect.minY))
+            p.addLine(to: CGPoint(x: x + rect.height, y: rect.maxY))
+            x += step
+        }
+        // Lines at -45°
+        x = rect.minX
+        while x < rect.maxX + rect.height {
+            p.move(to: CGPoint(x: x, y: rect.minY))
+            p.addLine(to: CGPoint(x: x - rect.height, y: rect.maxY))
+            x += step
+        }
+        return p
     }
 }
 
@@ -266,39 +323,10 @@ struct PlayingCardView: View {
         )
         .shadow(color: .black.opacity(0.28), radius: selected ? 6 : 3, x: 0, y: selected ? 4 : 2)
         .onTapGesture { onTap?() }
-    }
-}
-
-// MARK: - Opponent (may include HIDDEN)
-
-struct OpponentHandRow: View {
-    let cardIds: [String]
-
-    var body: some View {
-        handRows(cardIds: cardIds) { c in
-            PlayingCardView(card: c, faceDown: c == "HIDDEN", compact: true, onTap: nil)
-        }
-    }
-}
-
-// MARK: - Tappable hand (order is local)
-
-struct MyHandCardGrid: View {
-    let displayOrder: [String]
-    @Binding var selected: String?
-
-    var body: some View {
-        handRows(cardIds: displayOrder) { c in
-            PlayingCardView(
-                card: c,
-                selected: selected == c,
-                faceDown: c == "HIDDEN",
-                compact: true,
-                onTap: {
-                    if c != "HIDDEN" { selected = selected == c ? nil : c }
-                }
-            )
-        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(faceDown ? "Face-down card" : GameNarration.cardName(card))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityAddTraits(onTap != nil ? [.isButton] : [])
     }
 }
 
@@ -357,23 +385,33 @@ private enum CardFanLayout {
 }
 
 /// Hand along the bottom of the row: same baseline, slight rotation, arc opens toward the table center.
-/// Drag a card to rearrange the hand (no long-press). Small movements still allow tap to select.
+/// Drag a card to rearrange the hand (no long-press); small movements still allow tap to select.
+/// When `onDragDiscard` is set, dragging a card up past the release threshold discards it.
 struct FannedHandRow: View {
     private enum HandReorderFeedback {
         static let lift = UIImpactFeedbackGenerator(style: .medium)
         static let slot = UIImpactFeedbackGenerator(style: .light)
     }
 
+    /// How far up (pt) a card must be dragged before release discards it.
+    private static let discardArmThreshold: CGFloat = 80
+
     let displayOrder: [String]
     @Binding var selected: String?
     var canReorder: Bool = false
     var onReorder: (([String]) -> Void)? = nil
+    /// Non-nil when a plain discard is currently legal (your turn, 11 cards):
+    /// drag a card up and release to discard it.
+    var onDragDiscard: ((String) -> Void)? = nil
+    /// Card just added to the hand — rendered with a short-lived gold glow.
+    var recentlyDrawn: String? = nil
 
     @State private var draggingId: String? = nil
     @State private var dragStartIndex: Int? = nil
     @State private var dragTranslation: CGSize = .zero
     @State private var liveOrder: [String]? = nil
     @State private var lastInsertionIndex: Int? = nil
+    @State private var dragDiscardArmed = false
 
     var body: some View {
         Group {
@@ -390,6 +428,18 @@ struct FannedHandRow: View {
                     ZStack(alignment: .bottom) {
                         ForEach(Array(effective.enumerated()), id: \.element) { pair in
                             cardCell(c: pair.element, i: pair.offset, n: n, width: geo.size.width, cardW: cardW, step: step)
+                        }
+                        if dragDiscardArmed {
+                            Text("Release to discard")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(GinRummyPalette.cream)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(GinRummyPalette.burgundy.opacity(0.92)))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                                .zIndex(200)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -414,6 +464,7 @@ struct FannedHandRow: View {
         }()
         let dragY: CGFloat = isDragging ? dragTranslation.height : 0
         let restRot = CardFanLayout.rotation(index: i, count: n)
+        let isGlowing = c == recentlyDrawn && c != "HIDDEN"
 
         PlayingCardView(
             card: c,
@@ -424,8 +475,17 @@ struct FannedHandRow: View {
                 if c != "HIDDEN" { selected = selected == c ? nil : c }
             }
         )
+        .overlay {
+            if isGlowing {
+                RoundedRectangle(cornerRadius: max(5, cardW * 0.10))
+                    .stroke(GinRummyPalette.goldAccentSoft, lineWidth: 2.2)
+                    .shadow(color: GinRummyPalette.goldAccent.opacity(0.85), radius: 7)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
         .rotationEffect(.degrees(isDragging ? 0 : restRot), anchor: .bottom)
-        .scaleEffect(isDragging ? 1.08 : 1.0, anchor: .center)
+        .scaleEffect(isDragging ? (dragDiscardArmed ? 1.14 : 1.08) : 1.0, anchor: .center)
         .offset(y: selected == c && !isDragging ? -14 : 0)
         .shadow(
             color: isDragging ? Color.black.opacity(0.28) : .clear,
@@ -435,9 +495,10 @@ struct FannedHandRow: View {
         .offset(x: baseX + dragX, y: dragY)
         .zIndex(isDragging ? 100 : Double(i))
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected == c)
+        .animation(.easeOut(duration: 0.3), value: isGlowing)
         .gesture(
             makeReorderGesture(cardId: c, step: step),
-            including: (canReorder && c != "HIDDEN") ? .all : .subviews
+            including: ((canReorder || onDragDiscard != nil) && c != "HIDDEN") ? .all : .subviews
         )
     }
 
@@ -472,7 +533,21 @@ struct FannedHandRow: View {
     private func updateDrag(translation: CGSize, step: CGFloat) {
         guard draggingId != nil, let from = dragStartIndex else { return }
         dragTranslation = translation
-        guard step > 0 else { return }
+
+        // Dragging up past the threshold arms discard-on-release (and pauses reordering).
+        let armed = onDragDiscard != nil && translation.height < -Self.discardArmThreshold
+        if armed != dragDiscardArmed {
+            HandReorderFeedback.lift.prepare()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                dragDiscardArmed = armed
+                if armed { liveOrder = displayOrder }
+            }
+            HandReorderFeedback.lift.impactOccurred()
+            if armed { lastInsertionIndex = from }
+        }
+        guard !armed else { return }
+
+        guard canReorder, step > 0 else { return }
         let n = displayOrder.count
         let raw = Double(from) + Double(translation.width) / Double(step)
         let proposed = max(0, min(n - 1, Int(raw.rounded())))
@@ -489,8 +564,15 @@ struct FannedHandRow: View {
     }
 
     private func commitDrag() {
-        guard draggingId != nil else {
+        guard let dragged = draggingId else {
             resetDragState()
+            return
+        }
+        if dragDiscardArmed, dragged != "HIDDEN" {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                resetDragState()
+            }
+            onDragDiscard?(dragged)
             return
         }
         let final = liveOrder
@@ -508,6 +590,7 @@ struct FannedHandRow: View {
         dragTranslation = .zero
         liveOrder = nil
         lastInsertionIndex = nil
+        dragDiscardArmed = false
     }
 }
 
@@ -547,28 +630,6 @@ struct FannedOpponentHandRow: View {
     }
 }
 
-@ViewBuilder
-private func handRows<C: View>(cardIds: [String], @ViewBuilder card: @escaping (String) -> C) -> some View {
-    let n = cardIds.count
-    let row1 = min(5, n)
-    VStack(alignment: .center, spacing: 5) {
-        HStack(spacing: 3) {
-            ForEach(0..<row1, id: \.self) { i in
-                card(cardIds[i])
-            }
-        }
-        if n > 5 {
-            HStack(spacing: 3) {
-                ForEach(5..<n, id: \.self) { i in
-                    card(cardIds[i])
-                }
-            }
-        }
-    }
-    .frame(maxWidth: .infinity)
-    .padding(.vertical, 4)
-}
-
 // MARK: - Seat + table
 
 struct SeatInfoBar: View {
@@ -582,49 +643,6 @@ struct SeatInfoBar: View {
 
     private var dealerLine: String {
         p.seat == p.dealer ? "You dealt" : "Opponent dealt"
-    }
-}
-
-struct TableStateStrip: View {
-    let p: PlayerPerspective
-    var compact: Bool = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            if let kc = p.knockCheckCard, !kc.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Hand knock (first upcard)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    PlayingCardView(card: kc, compact: true, onTap: nil)
-                    if !compact {
-                        if let v = PlayingCard.knockLimitValue(kc) {
-                            Text("Knock limit: unmelded ≤ \(v)")
-                                .font(.caption2)
-                        } else {
-                            Text("Ace first upcard: no knock this hand (house rule — not even with 1 deadwood).")
-                                .font(.caption2)
-                        }
-                        Text("This card never changes for the hand— even if you take it into your hand, it is still the knock value.")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Discard pile")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if p.discard.isEmpty {
-                    Text("—")
-                        .font(.title2)
-                } else {
-                    DiscardPileStackView(cards: p.discard)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 
@@ -767,98 +785,31 @@ struct StockAndDiscardPiles: View {
                 .buttonStyle(.plain)
                 .disabled(stockOnTap == nil || stockCount <= 1)
                 .opacity(stockOnTap == nil || stockCount <= 1 ? 0.55 : 1)
+                .tableFlightAnchor(.stock)
                 Text("Deck")
                     .font(.caption2)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
             }
             VStack(spacing: 6) {
-                if discard.isEmpty {
-                    RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
-                        .fill(GinRummyPalette.bgPanel.opacity(0.82))
-                        .frame(width: pileW, height: pileH)
-                        .overlay { Text("—").foregroundStyle(GinRummyPalette.sage.opacity(0.85)) }
-                } else {
-                    DiscardPileStackView(
-                        cards: discard,
-                        cardWidth: pileW,
-                        topOnTap: discardOnTap,
-                        highlightTop: discardOnTap != nil
-                    )
+                Group {
+                    if discard.isEmpty {
+                        RoundedRectangle(cornerRadius: max(5, pileW * 0.10))
+                            .fill(GinRummyPalette.bgPanel.opacity(0.82))
+                            .frame(width: pileW, height: pileH)
+                            .overlay { Text("—").foregroundStyle(GinRummyPalette.sage.opacity(0.85)) }
+                    } else {
+                        DiscardPileStackView(
+                            cards: discard,
+                            cardWidth: pileW,
+                            topOnTap: discardOnTap,
+                            highlightTop: discardOnTap != nil
+                        )
+                    }
                 }
+                .tableFlightAnchor(.discardPile)
                 Text("Discard")
                     .font(.caption2)
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.92))
-            }
-        }
-    }
-}
-
-struct OpponentActionBanner: View {
-    let text: String
-    var card: String?
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.orange)
-            Text(text)
-                .font(.subheadline.weight(.semibold))
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let c = card, !c.isEmpty {
-                PlayingCardView(card: c, compact: true, onTap: nil)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.orange.opacity(0.12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.orange.opacity(0.3))
-        )
-    }
-}
-
-// MARK: - Cut phase: card flies from spread toward a zone, then the zone shows the result
-
-struct CutCardFlyAnimationOverlay: View {
-    enum Target { case you, opponent }
-    let target: Target
-    var onArrived: () -> Void = {}
-
-    @State private var progress: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { g in
-            let w = g.size.width
-            let h = g.size.height
-            let from = CGPoint(x: w * 0.5, y: h * 0.88)
-            let to: CGPoint = target == .you
-                ? CGPoint(x: w * 0.2, y: h * 0.18)
-                : CGPoint(x: w * 0.8, y: h * 0.18)
-            let x = from.x + (to.x - from.x) * progress
-            let y = from.y + (to.y - from.y) * progress
-            PlayingCardView(
-                card: "AS",
-                faceDown: true,
-                compact: true,
-                onTap: nil
-            )
-            .position(x: x, y: y)
-            .rotationEffect(.degrees(Double(1 - progress) * 18 * (target == .you ? -1 : 1)))
-        }
-        .allowsHitTesting(false)
-        .onAppear {
-            progress = 0
-            withAnimation(.easeInOut(duration: 0.55)) {
-                progress = 1
-            }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 550_000_000)
-                onArrived()
             }
         }
     }
@@ -1090,78 +1041,103 @@ struct CutForDealTable: View {
     }
 }
 
-// MARK: - Staggered cut result
+// MARK: - Table anchors (real view positions for flight/deal animations)
 
-struct StaggeredCutResultBanner: View {
-    let last: PlayerPerspective.LastCutResult
-    let youAreSeat: Int
-    /// Large typography and cards for a full-screen interstitial.
-    var prominent: Bool = false
-    @State private var step = 0
-    @State private var doneTask: Task<Void, Never>?
+/// Zones a card can fly between on the table.
+enum TableFlightAnchor: String, CaseIterable {
+    case stock, discardPile, myHand, opponentHand
+}
+
+/// Collects the on-screen frames of the table zones (in the "gameTable"
+/// coordinate space) so animations land exactly on the piles and hands.
+struct TableAnchorFramesKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] { [:] }
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+extension View {
+    /// Publish this view's frame as a named flight anchor.
+    func tableFlightAnchor(_ anchor: TableFlightAnchor) -> some View {
+        background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: TableAnchorFramesKey.self,
+                    value: [anchor.rawValue: geo.frame(in: .named("gameTable"))]
+                )
+            }
+        )
+    }
+}
+
+// MARK: - Deal animation (card backs fly from the stock to each seat)
+
+/// Short non-blocking flourish at the start of each hand: card backs fly from
+/// the stock to the two hands, alternating seats with a small stagger.
+struct DealAnimationOverlay: View {
+    var anchorFrames: [String: CGRect] = [:]
+    var onFinished: () -> Void = {}
+
+    private static let cardsPerSeat = 4
+    private static let stagger: Double = 0.09
+    private static let flightDuration: Double = 0.38
 
     var body: some View {
-        VStack(alignment: .leading, spacing: prominent ? 20 : 10) {
-            Text("Cut")
-                .font(prominent ? .title2.weight(.semibold) : .headline)
-            if step >= 1 {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading) {
-                        Text(labelYou(0)).font(prominent ? .headline : .caption2)
-                        PlayingCardView(
-                            card: last.p0,
-                            compact: !prominent,
-                            onTap: nil
-                        )
-                    }
-                    if step >= 2 {
-                        VStack(alignment: .leading) {
-                            Text(labelYou(1)).font(prominent ? .headline : .caption2)
-                            PlayingCardView(
-                                card: last.p1,
-                                compact: !prominent,
-                                onTap: nil
-                            )
-                        }
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+        GeometryReader { g in
+            let w = g.size.width
+            let h = g.size.height
+            let from = anchorCenter(.stock) ?? CGPoint(x: w * 0.36, y: h * 0.45)
+            let toMe = anchorCenter(.myHand) ?? CGPoint(x: w * 0.5, y: h * 0.9)
+            let toOpp = anchorCenter(.opponentHand) ?? CGPoint(x: w * 0.5, y: h * 0.12)
+            ZStack {
+                ForEach(0 ..< (Self.cardsPerSeat * 2), id: \.self) { i in
+                    DealFlightCard(
+                        delay: Double(i) * Self.stagger,
+                        duration: Self.flightDuration,
+                        from: from,
+                        // Non-dealer style alternation: you, opponent, you, …
+                        to: i % 2 == 0 ? toMe : toOpp
+                    )
                 }
             }
-            if step >= 3 {
-                Text(winnerText)
-                    .font(prominent ? .title3 : .subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            let total = Double(Self.cardsPerSeat * 2) * Self.stagger + Self.flightDuration + 0.15
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(total * 1_000_000_000))
+                onFinished()
             }
         }
-        .padding(prominent ? 24 : 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: prominent ? 16 : 12).fill(Color.accentColor.opacity(0.12)))
-        .overlay(RoundedRectangle(cornerRadius: prominent ? 16 : 12).stroke(Color.accentColor.opacity(0.3)))
-        .onAppear { runSequence() }
-        .onDisappear { doneTask?.cancel() }
     }
 
-    private var winnerText: String {
-        // nonDealer had the higher cut; dealer is the other seat.
-        youAreSeat == last.nonDealer ? "Opponent deals." : "You deal."
+    private func anchorCenter(_ a: TableFlightAnchor) -> CGPoint? {
+        guard let rect = anchorFrames[a.rawValue], rect.width > 0 else { return nil }
+        return CGPoint(x: rect.midX, y: rect.midY)
     }
+}
 
-    private func labelYou(_ seat: Int) -> String {
-        youAreSeat == seat ? "You" : "Opponent"
-    }
+private struct DealFlightCard: View {
+    let delay: Double
+    let duration: Double
+    let from: CGPoint
+    let to: CGPoint
 
-    private func runSequence() {
-        step = 0
-        doneTask?.cancel()
-        doneTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            withAnimation { step = 1 }
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            withAnimation { step = 2 }
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            withAnimation { step = 3 }
-        }
+    @State private var progress: CGFloat = 0
+
+    var body: some View {
+        PlayingCardView(card: "AS", faceDown: true, compact: true, onTap: nil)
+            .position(
+                x: from.x + (to.x - from.x) * progress,
+                y: from.y + (to.y - from.y) * progress
+            )
+            .opacity(progress > 0.02 && progress < 0.97 ? 1 : 0)
+            .onAppear {
+                withAnimation(.timingCurve(0.25, 0.0, 0.3, 1.0, duration: duration).delay(delay)) {
+                    progress = 1
+                }
+            }
     }
 }
 
@@ -1178,6 +1154,8 @@ struct CardFlightAnimationOverlay: View {
 
     let route: Route
     let card: String
+    /// Measured table-zone frames; falls back to canonical points when empty.
+    var anchorFrames: [String: CGRect] = [:]
 
     @State private var progress: CGFloat = 0
 
@@ -1250,9 +1228,13 @@ struct CardFlightAnimationOverlay: View {
         }
     }
 
-    /// Normalized layout tuned for the redesigned portrait table: opponent strip
-    /// up top, stock/discard piles in the center, your hand along the bottom.
+    /// Real measured zone centers when available; otherwise the canonical
+    /// normalized layout for the portrait table (opponent strip up top,
+    /// stock/discard piles in the center, your hand along the bottom).
     private func point(fromAnchor a: Anchor, width: CGFloat, height: CGFloat) -> CGPoint {
+        if let rect = anchorFrames[flightAnchor(for: a).rawValue], rect.width > 0 {
+            return CGPoint(x: rect.midX, y: rect.midY)
+        }
         switch a {
         case .stock:
             return CGPoint(x: width * 0.36, y: height * 0.45)
@@ -1262,6 +1244,15 @@ struct CardFlightAnimationOverlay: View {
             return CGPoint(x: width * 0.5, y: height * 0.9)
         case .opponentHand:
             return CGPoint(x: width * 0.5, y: height * 0.12)
+        }
+    }
+
+    private func flightAnchor(for a: Anchor) -> TableFlightAnchor {
+        switch a {
+        case .stock: .stock
+        case .discardPile: .discardPile
+        case .myHand: .myHand
+        case .opponentHand: .opponentHand
         }
     }
 }

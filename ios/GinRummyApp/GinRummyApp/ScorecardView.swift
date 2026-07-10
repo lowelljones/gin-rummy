@@ -105,7 +105,7 @@ struct ScorecardView: View {
             let realMaxHands = matches.map(\.handScores.count).max() ?? 0
             let handRows = max(realMaxHands, 1)
             // tier header + 2 players + game row + we/they row + hands + 3 footer rows
-            let sectionRows: CGFloat = 3 + 2 + 1 + CGFloat(handRows) + 3
+            let sectionRows: CGFloat = 2 + 2 + 1 + CGFloat(handRows) + 3
             let metrics = GridMetrics(
                 contentWidth: contentWidth,
                 gridHeight: max(0, geo.size.height - 96),
@@ -164,12 +164,11 @@ struct ScorecardView: View {
         realMaxHands: Int,
         handRows: Int
     ) -> some View {
-        let playerRows = playerLabels(recap: recap, mySeat: mySeat)
-
         VStack(spacing: 0) {
             boxBettingSection(
                 matches: matches,
-                playerRows: playerRows,
+                mySeat: mySeat,
+                recap: recap,
                 metrics: metrics
             )
 
@@ -204,10 +203,12 @@ struct ScorecardView: View {
     @ViewBuilder
     private func boxBettingSection(
         matches: [SessionMatchRecapDTO],
-        playerRows: [(seat: Int, label: String)],
+        mySeat: Int,
+        recap: SessionRecapResponse,
         metrics: GridMetrics
     ) -> some View {
         let h = metrics.rowHeight
+        let youLabel = playerLabels(recap: recap, mySeat: mySeat).first(where: { $0.seat == mySeat })?.label ?? "You"
 
         gridRow(height: h) {
             labelCell("Players", width: metrics.labelWidth, height: h, bold: true)
@@ -221,11 +222,9 @@ struct ScorecardView: View {
             )
         }
 
-        ForEach(playerRows, id: \.seat) { row in
-            gridRow(height: h) {
-                labelCell(row.label, width: metrics.labelWidth, height: h, bold: true)
-                boxTotalsCell(matches: matches, seat: row.seat, width: metrics.gamesWidth, height: h)
-            }
+        gridRow(height: h) {
+            labelCell(youLabel, width: metrics.labelWidth, height: h, bold: true)
+            boxTotalsCell(matches: matches, seat: mySeat, width: metrics.gamesWidth, height: h)
         }
     }
 
@@ -243,7 +242,7 @@ struct ScorecardView: View {
             } else {
                 ForEach(Array(matches.enumerated()), id: \.element.id) { idx, match in
                     let slotW = slotWidth(index: idx, count: matches.count, totalWidth: width)
-                    let text = boxCellText(for: match, seat: seat, matchIndex: idx, matches: matches)
+                    let text = boxCellText(for: match, seat: seat)
                     numericText(text, style: scoreStyle(for: text))
                         .frame(width: slotW, height: height, alignment: .center)
                 }
@@ -260,12 +259,8 @@ struct ScorecardView: View {
         return index == count - 1 ? base + remainder : base
     }
 
-    private func boxCellText(for match: SessionMatchRecapDTO, seat: Int, matchIndex: Int, matches: [SessionMatchRecapDTO]) -> String {
-        if let total = ScorecardScoring.cumulativeBettingTotal(forSeat: seat, matches: matches, throughIndex: matchIndex) {
-            return ScorecardScoring.signed(total)
-        }
-        if match.isCurrent { return "…" }
-        return "—"
+    private func boxCellText(for match: SessionMatchRecapDTO, seat: Int) -> String {
+        ScorecardScoring.gameBettingBucketLabel(for: match, seat: seat)
     }
 
     // MARK: - Hand grid

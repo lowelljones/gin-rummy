@@ -2,13 +2,23 @@ import SwiftUI
 
 /// Private Club palette and reusable chrome for auth, lobby, and table.
 enum GinRummyPalette {
-    static let bgDeep = Color(red: 0.059, green: 0.165, blue: 0.133) // #0F2A22
-    static let bgPanel = Color(red: 0.094, green: 0.231, blue: 0.180) // #183B2E
+    // Felt — darkened toward near-black green for a richer table + lobby.
+    static let bgDeep = Color(red: 0.027, green: 0.078, blue: 0.063) // #07140F
+    static let bgPanel = Color(red: 0.055, green: 0.152, blue: 0.114) // #0E271D
+
     static let cream = Color(red: 0.965, green: 0.953, blue: 0.925) // #F6F3EC
+    /// Card-coupled gold (hairline frames + card back guilloché). DO NOT retune —
+    /// the card art depends on this exact value.
     static let gold = Color(red: 0.918, green: 0.886, blue: 0.831) // #EAE2D4
     static let sage = Color(red: 0.655, green: 0.698, blue: 0.624) // #A7B29F
     static let burgundy = Color(red: 0.357, green: 0.122, blue: 0.133) // #5B1F22
     static let navy = Color(red: 0.071, green: 0.137, blue: 0.227) // #12233A
+
+    /// Antique-gold CHROME accent (pills, crest, lobby detailing). Separate from
+    /// `gold` so it never touches card rendering.
+    static let goldAccent = Color(red: 0.761, green: 0.631, blue: 0.306) // #C2A14E
+    static let goldAccentSoft = Color(red: 0.847, green: 0.769, blue: 0.537) // #D8C489
+
     /// Face-down card back — warm wine tones that read clearly on green felt.
     static let cardBackLight = Color(red: 0.42, green: 0.13, blue: 0.15)
     static let cardBackDark = Color(red: 0.26, green: 0.08, blue: 0.10)
@@ -72,24 +82,44 @@ extension View {
     }
 }
 
+/// Logo lockup: an antique-gold rhombus crest around a white spade,
+/// the serif wordmark, a hairline rule, and a tracked subtitle.
 struct GinRummyLogoBlock: View {
     var subtitle: String?
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text("GIN RUMMY")
-                .font(GinRummyPalette.titleFont(size: 28))
-                .foregroundStyle(GinRummyPalette.cream)
-                .tracking(3)
+        VStack(spacing: 15) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(GinRummyPalette.burgundy.opacity(0.38))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(GinRummyPalette.goldAccent, lineWidth: 1.6)
+                    )
+                    .frame(width: 52, height: 52)
+                    .rotationEffect(.degrees(45))
+                    .shadow(color: GinRummyPalette.goldAccent.opacity(0.25), radius: 12)
 
-            Image(systemName: "suit.spade.fill")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(GinRummyPalette.gold)
+                Image(systemName: "suit.spade.fill")
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(GinRummyPalette.cream)
+            }
+            .frame(width: 74, height: 74)
 
-            if let subtitle {
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(GinRummyPalette.sage)
+            VStack(spacing: 9) {
+                Text("GIN RUMMY")
+                    .font(GinRummyPalette.titleFont(size: 34))
+                    .foregroundStyle(GinRummyPalette.cream)
+                    .tracking(5)
+
+                Rectangle()
+                    .fill(GinRummyPalette.goldAccent.opacity(0.6))
+                    .frame(width: 46, height: 1)
+
+                Text((subtitle ?? "“Get rid of the pretty ones”").uppercased())
+                    .font(.caption.weight(.semibold))
+                    .tracking(3)
+                    .foregroundStyle(GinRummyPalette.goldAccentSoft)
             }
         }
     }
@@ -101,9 +131,13 @@ struct GinPrimaryButtonStyle: ButtonStyle {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(GinRummyPalette.cream)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
+            .padding(.vertical, 15)
             .background(GinRummyPalette.burgundy.opacity(configuration.isPressed ? 0.85 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(GinRummyPalette.goldAccent.opacity(0.35), lineWidth: 1)
+            )
     }
 }
 
@@ -111,12 +145,12 @@ struct GinGhostButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(GinRummyPalette.gold)
+            .foregroundStyle(GinRummyPalette.goldAccentSoft)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(GinRummyPalette.gold.opacity(configuration.isPressed ? 0.5 : 0.55), lineWidth: 1.2)
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(GinRummyPalette.goldAccent.opacity(configuration.isPressed ? 0.4 : 0.5), lineWidth: 1.3)
             )
     }
 }
@@ -161,7 +195,7 @@ struct GinActionButtonStyle: ButtonStyle {
 struct GinStatusPill: View {
     let text: String
     var systemImage: String? = nil
-    var tint: Color = GinRummyPalette.gold
+    var tint: Color = GinRummyPalette.goldAccent
 
     var body: some View {
         HStack(spacing: 6) {
@@ -187,7 +221,7 @@ struct GinOutlinedFieldModifier: ViewModifier {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(GinRummyPalette.gold.opacity(0.32), lineWidth: 1)
+                    .stroke(GinRummyPalette.goldAccent.opacity(0.32), lineWidth: 1)
             )
             .foregroundStyle(GinRummyPalette.cream)
     }

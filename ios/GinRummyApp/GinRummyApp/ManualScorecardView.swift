@@ -94,10 +94,13 @@ struct ManualScorecardView: View {
             let columns = displayColumns()
             let contentWidth = max(0, geo.size.width - contentInset * 2)
             let handRows = store.maxHandRows()
-            let sectionRows: CGFloat = 3 + 2 + 1 + CGFloat(handRows) + 3
+            let sectionRows: CGFloat = 2 + 2 + 1 + CGFloat(handRows) + 3
+            let bottomInset = max(8, geo.safeAreaInsets.bottom)
+            let headerChrome: CGFloat = 8 + 12 + 72
+            let actionBarChrome: CGFloat = 12 + 50 + bottomInset
             let metrics = GridMetrics(
                 contentWidth: contentWidth,
-                gridHeight: max(0, geo.size.height - 96),
+                gridHeight: max(0, geo.size.height - headerChrome - actionBarChrome),
                 columnCount: columns.count,
                 sectionRows: sectionRows
             )
@@ -114,7 +117,7 @@ struct ManualScorecardView: View {
                 actionBar
                     .padding(.horizontal, contentInset)
                     .padding(.top, 12)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, bottomInset)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
@@ -206,20 +209,11 @@ struct ManualScorecardView: View {
             labelCell(store.session.weName, width: metrics.labelWidth, height: h, bold: true)
             boxStrip(side: .we, columns: columns, metrics: metrics, height: h)
         }
-        gridRow(height: h) {
-            labelCell(store.session.theyName, width: metrics.labelWidth, height: h, bold: true)
-            boxStrip(side: .they, columns: columns, metrics: metrics, height: h)
-        }
     }
 
-    /// Cumulative match tier total for a player through a completed game column.
+    /// Signed match tier (betting group 1–5+) for the We/They side in that column.
     private func gameTotalText(side: FocusField.Side, gameIndex: Int) -> String {
-        let forWe = side == .we
-        guard let total = store.cumulativeBettingTotal(forWePlayer: forWe, throughGameIndex: gameIndex) else {
-            let game = store.session.games[gameIndex]
-            return game.isLive ? "…" : "—"
-        }
-        return ScorecardScoring.signed(total)
+        ScorecardScoring.manualGameTierLabel(store.session.games[gameIndex], forWe: side == .we)
     }
 
     @ViewBuilder
@@ -373,11 +367,42 @@ struct ManualScorecardView: View {
 
     private var nameEditorSheet: some View {
         NavigationStack {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 16) {
                 TextField("We (your side)", text: $draftWeName)
                     .ginOutlinedField()
                 TextField("They (opponent)", text: $draftTheyName)
                     .ginOutlinedField()
+
+                let suggestions = KnownOpponentsStore.all()
+                    .filter { $0.lowercased() != draftTheyName.trimmingCharacters(in: .whitespaces).lowercased() }
+                    .prefix(8)
+                if !suggestions.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("PEOPLE YOU'VE PLAYED")
+                            .font(.caption2.weight(.bold))
+                            .tracking(2)
+                            .foregroundStyle(GinRummyPalette.sage)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(suggestions), id: \.self) { name in
+                                    Button {
+                                        draftTheyName = name
+                                    } label: {
+                                        Text(name)
+                                            .font(.footnote.weight(.medium))
+                                            .foregroundStyle(GinRummyPalette.cream)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 7)
+                                            .background(
+                                                Capsule().stroke(GinRummyPalette.goldAccent.opacity(0.45), lineWidth: 1)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
                 Spacer()
             }
             .padding(20)
