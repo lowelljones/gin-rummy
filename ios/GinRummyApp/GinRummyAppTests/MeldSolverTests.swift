@@ -51,4 +51,29 @@ final class MeldSolverTests: XCTestCase {
         XCTAssertNil(MeldSolver.upcardKnockValue("AS"))
         XCTAssertEqual(MeldSolver.upcardKnockValue("5S"), 5)
     }
+
+    func testBestDeadwoodMeldsFiveCardRunAsSingleMeld() {
+        // 5-card run (5H-9H) + set of Ks + 2C/3D deadwood: the run must not be
+        // split into a 4-card run that strands a card as deadwood.
+        let result = MeldSolver.bestDeadwood(
+            ["5H", "6H", "7H", "8H", "9H", "KC", "KD", "KS", "2C", "3D"]
+        )
+        XCTAssertEqual(result.sum, 5)
+        let run = result.partition.melds.first { $0.type == .run }
+        XCTAssertEqual(run.map { MeldSolver.rankSorted($0.cards) }, ["5H", "6H", "7H", "8H", "9H"])
+    }
+
+    func testIsBigGin11WithFiveCardRun() {
+        XCTAssertTrue(
+            MeldSolver.isBigGin11(["5H", "6H", "7H", "8H", "9H", "KC", "KD", "KS", "2C", "2D", "2H"])
+        )
+    }
+
+    func testKnockableWithFiveCardRunPlusSet() {
+        // 5-card run + 3-card set + 2 low deadwood: discarding one deadwood card
+        // leaves a knockable hand — would have been blocked by the 4-card cap.
+        let hand = ["5H", "6H", "7H", "8H", "9H", "KC", "KD", "KS", "2C", "3D", "4S"]
+        let e = MeldSolver.eligibility(forHand11: hand, knockCheckCard: "TS")
+        XCTAssertTrue(e.knockable.contains("4S"))
+    }
 }

@@ -95,15 +95,16 @@ private enum CardPipLayout {
     private static let lx: CGFloat = 0.28
     private static let rx: CGFloat = 0.72
     private static let cx: CGFloat = 0.50
-    // Three-row column positions (2–8).
-    private static let y1: CGFloat = 0.16
+    // Three-row column positions (2–8). Top/bottom rows are inset from the
+    // card edges so the outer pips clear the corner rank/suit indices.
+    private static let y1: CGFloat = 0.21
     private static let y3: CGFloat = 0.50
-    private static let y5: CGFloat = 0.84
+    private static let y5: CGFloat = 0.79
     // Four-row column positions (9s and 10s).
-    private static let q1: CGFloat = 0.16
-    private static let q2: CGFloat = 0.387
-    private static let q3: CGFloat = 0.613
-    private static let q4: CGFloat = 0.84
+    private static let q1: CGFloat = 0.21
+    private static let q2: CGFloat = 0.4033
+    private static let q3: CGFloat = 0.5967
+    private static let q4: CGFloat = 0.79
 
     /// Standard Anglo-American pip layouts: side columns plus centered
     /// "filler" pips; everything in the bottom half renders inverted.
@@ -418,8 +419,8 @@ struct PlayingCardFaceContent: View {
     private var ink: Color { PlayingCard.inkColor(card) }
     private var rank: Character? { PlayingCard.rankChar(card) }
     private var rankLabel: String { PlayingCard.displayRank(card) }
-    private var rankFont: Font { .system(size: width * 0.22, weight: .bold, design: .serif) }
-    private var cornerSuitSize: CGFloat { width * 0.17 }
+    private var rankFont: Font { .system(size: width * 0.185, weight: .bold, design: .serif) }
+    private var cornerSuitSize: CGFloat { width * 0.09 }
 
     private var isCourt: Bool {
         guard let rank else { return false }
@@ -432,10 +433,11 @@ struct PlayingCardFaceContent: View {
                 .stroke(ink.opacity(0.14), lineWidth: 0.8)
                 .padding(pad * 0.55)
 
-            // Court panel is inset enough that the corner indices stay clear.
+            // Court panel margin must clear the corner rank/suit glyphs, whose
+            // widest extent (serif K at 0.22×width) ends ~0.22× in from the edge.
             centerArt
-                .padding(.horizontal, isCourt ? pad * 1.2 : pad * 1.1)
-                .padding(.vertical, isCourt ? pad * 1.5 : pad * 1.55)
+                .padding(.horizontal, isCourt ? pad * 3.8 : pad * 2.0)
+                .padding(.vertical, isCourt ? pad * 1.5 : pad * 1.3)
 
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 0) {
@@ -470,7 +472,7 @@ struct PlayingCardFaceContent: View {
     }
 
     private func cornerIndex(inverted: Bool) -> some View {
-        VStack(spacing: width * 0.01) {
+        VStack(spacing: -width * 0.02) {
             Text(rankLabel)
                 .font(rankFont)
                 .minimumScaleFactor(0.65)
@@ -488,9 +490,12 @@ struct PlayingCardFaceContent: View {
             let pipSize = min(geo.size.width * 0.20, geo.size.height * 0.125)
             ZStack {
                 ForEach(Array(pips.enumerated()), id: \.offset) { _, pip in
+                    // Rotate about the pip itself, then place it — rotating after
+                    // .position spins the pip around the whole field's center and
+                    // teleports every inverted pip to its mirrored spot.
                     CardPipSymbol(card: card, size: pipSize)
-                        .position(x: geo.size.width * pip.x, y: geo.size.height * pip.y)
                         .rotationEffect(pip.inverted ? .degrees(180) : .zero)
+                        .position(x: geo.size.width * pip.x, y: geo.size.height * pip.y)
                 }
             }
         }

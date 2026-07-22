@@ -867,12 +867,14 @@ enum MeldSolver {
                 return
             }
 
-            for len in stride(from: min(4, remaining.count), through: 3, by: -1) {
+            // Runs may be any length (3...remaining.count); sets are capped at 4.
+            for len in stride(from: remaining.count, through: 3, by: -1) {
                 for combo in subsetsOfSize(remaining, k: len) {
                     let sortedCombo = combo.sorted()
-                    let setM = Meld(type: .set, cards: sortedCombo)
-                    let runM = Meld(type: .run, cards: sortedCombo)
-                    for meld in [setM, runM] {
+                    let candidates: [Meld] = len <= 4
+                        ? [Meld(type: .set, cards: sortedCombo), Meld(type: .run, cards: sortedCombo)]
+                        : [Meld(type: .run, cards: sortedCombo)]
+                    for meld in candidates {
                         if !isValidMeld(meld) { continue }
                         let used = Set(meld.cards)
                         let rest = remaining.filter { !used.contains($0) }
@@ -982,10 +984,14 @@ enum MeldSolver {
                 record(meldsSoFar, remaining)
                 return
             }
-            for len in stride(from: min(4, remaining.count), through: 3, by: -1) {
+            // Runs may be any length (3...remaining.count); sets are capped at 4.
+            for len in stride(from: remaining.count, through: 3, by: -1) {
                 for combo in subsetsOfSize(remaining, k: len) {
                     let sortedCombo = combo.sorted()
-                    for meld in [Meld(type: .set, cards: sortedCombo), Meld(type: .run, cards: sortedCombo)] {
+                    let candidates: [Meld] = len <= 4
+                        ? [Meld(type: .set, cards: sortedCombo), Meld(type: .run, cards: sortedCombo)]
+                        : [Meld(type: .run, cards: sortedCombo)]
+                    for meld in candidates {
                         if !isValidMeld(meld) { continue }
                         let used = Set(meld.cards)
                         dfs(remaining.filter { !used.contains($0) }, meldsSoFar + [meld])
@@ -1018,12 +1024,14 @@ enum MeldSolver {
         func canPartition(_ remaining: [String]) -> Bool {
             if remaining.isEmpty { return true }
             if remaining.count < 3 { return false }
-            for len in stride(from: min(remaining.count, 4), through: 3, by: -1) {
+            // Runs may be any length (3...remaining.count); sets are capped at 4.
+            for len in stride(from: remaining.count, through: 3, by: -1) {
                 for combo in subsetsOfSize(remaining, k: len) {
                     let sortedCombo = combo.sorted()
-                    let setM = Meld(type: .set, cards: sortedCombo)
-                    let runM = Meld(type: .run, cards: sortedCombo)
-                    for meld in [setM, runM] {
+                    let candidates: [Meld] = len <= 4
+                        ? [Meld(type: .set, cards: sortedCombo), Meld(type: .run, cards: sortedCombo)]
+                        : [Meld(type: .run, cards: sortedCombo)]
+                    for meld in candidates {
                         if !isValidMeld(meld) { continue }
                         let used = Set(meld.cards)
                         let rest = remaining.filter { !used.contains($0) }

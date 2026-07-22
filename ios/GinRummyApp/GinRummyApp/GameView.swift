@@ -36,6 +36,11 @@ struct GameView: View {
     @State private var tableAnchorFrames: [String: CGRect] = [:]
     /// Card dropped on the table via drag-to-discard, consumed by `DiscardHelper`.
     @State private var dragDiscardRequest: String?
+    /// Card the player just drag-discarded: shown on the pile (and hidden from the fan) immediately,
+    /// while the discard request is in flight, so releasing feels instant instead of waiting on the server.
+    @State private var pendingDiscardCard: String?
+    /// The next server-confirmed discard whose flight we've already played optimistically — skip re-animating it.
+    @State private var suppressDiscardFlightFor: String?
     /// Card just drawn into your hand — briefly glows gold in the fan.
     @State private var recentlyDrawnCard: String?
     @State private var drawnHighlightClearTask: Task<Void, Never>?
@@ -202,7 +207,8 @@ struct GameView: View {
 
     /// Drag-to-discard is live exactly when a discard is: your turn in play with 11 cards.
     private func canDragDiscard(surface: GamePlaySurface, p: PlayerPerspective) -> Bool {
-        surface == .play && p.currentTurn == p.seat && p.hands[p.seat].count == 11
+        pendingDiscardCard == nil
+            && surface == .play && p.currentTurn == p.seat && p.hands[p.seat].count == 11
     }
 
     private struct CutRevealModel: Equatable {
@@ -436,10 +442,15 @@ struct GameView: View {
             return
         }
         detectNewDeal(before: before, after: after)
+        detectYourTurnBuzz(before: before, after: after)
         detectMyDraw(before: before, after: after)
         detectRedealCompletion(before: before, after: after)
         detectPlayedThroughVoid(before: before, after: after)
         detectDownCardStateForDealer(before: before, after: after)
+        // Server confirmed our optimistic discard (the card has left our hand) — hand over to the real snapshot.
+        if let pending = pendingDiscardCard, !after.hands[after.seat].contains(pending) {
+            clearPendingDiscard()
+        }
         updateCardFlights(before: before, after: after)
         if let line = serverActionStatusLine(after) {
             setBottomLog(line)
@@ -458,6 +469,18 @@ struct GameView: View {
                     : "This hand · Down card — opponent’s turn"
             )
         }
+    }
+
+    /// Gently buzz the phone the moment control passes to us, so a player who set
+    /// their phone down knows it's their move. Only fires on the actual turn flip
+    /// (never on the initial load) and only in phases where we need to act.
+    private func detectYourTurnBuzz(before: PlayerPerspective?, after: PlayerPerspective) {
+        guard let b = before else { return }
+        let actionable = after.phase == "play" || after.phase == "upcardOffer"
+        guard actionable else { return }
+        guard after.currentTurn == after.seat, b.currentTurn != after.currentTurn else { return }
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
     }
 
     /// Builds the bottom-log line from the server-reported `lastAction` — the single
@@ -511,6 +534,27 @@ struct GameView: View {
 
     private func scheduleCardFlight(route: CardFlightAnimationOverlay.Route, card: String) {
         scheduleCardFlightSequence([(route, card)])
+    }
+
+    /// Instant feedback for a legal drag-discard: hide the card from the fan, drop it on the pile,
+    /// and fly it there right away — before the server round-trip. `updateCardFlights` then skips
+    /// re-animating the same discard once the server snapshot confirms it.
+    private func beginOptimisticDiscard(_ card: String) {
+        let c = CardIdValidation.normalize(card)
+        guard !c.isEmpty else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            pendingDiscardCard = c
+        }
+        suppressDiscardFlightFor = c
+        scheduleCardFlight(route: .discardFromHand(isOpponent: false), card: c)
+    }
+
+    /// Discard request resolved — drop the optimistic overlay so the server snapshot is the source of truth.
+    private func clearPendingDiscard() {
+        guard pendingDiscardCard != nil else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            pendingDiscardCard = nil
+        }
     }
 
     /// Plays one or more card flights in order with a small gap between them, so a single
@@ -573,10 +617,13 @@ struct GameView: View {
            b.hands[my].count == 11, a.hands[my].count == 10,
            let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
         {
-            scheduleCardFlight(
-                route: .discardFromHand(isOpponent: false),
-                card: CardIdValidation.normalize(newTop)
-            )
+            let normTop = CardIdValidation.normalize(newTop)
+            // We already flew this discard optimistically on release — don't replay it.
+            if suppressDiscardFlightFor == normTop {
+                suppressDiscardFlightFor = nil
+                return
+            }
+            scheduleCardFlight(route: .discardFromHand(isOpponent: false), card: normTop)
             return
         }
 
@@ -623,7 +670,10 @@ struct GameView: View {
             let oppDrewFromStock = a.stockCount < b.stockCount
 
             var steps: [(route: CardFlightAnimationOverlay.Route, card: String)] = []
-            if !yourDiscardNorm.isEmpty {
+            // Skip your discard's flight if we already played it optimistically on release.
+            if suppressDiscardFlightFor == yourDiscardNorm {
+                suppressDiscardFlightFor = nil
+            } else if !yourDiscardNorm.isEmpty {
                 steps.append((.discardFromHand(isOpponent: false), yourDiscardNorm))
             }
             if oppDrewFromStock {
@@ -1175,10 +1225,16 @@ struct GameView: View {
             EmptyView()
         case .downCard, .play:
             VStack(alignment: .leading, spacing: 8) {
-                if surface == .play, p.currentTurn != p.seat {
-                    Label("Opponent’s turn", systemImage: "hourglass")
-                        .font(.caption)
-                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                if surface == .play {
+                    if p.currentTurn == p.seat {
+                        Label("Your turn", systemImage: "hand.raised.fill")
+                            .font(.caption)
+                            .foregroundStyle(GinRummyPalette.goldAccent)
+                    } else {
+                        Label("Opponent’s turn", systemImage: "hourglass")
+                            .font(.caption)
+                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
+                    }
                 }
                 if let kc = p.knockCheckCard, !kc.isEmpty {
                     HStack(alignment: .center, spacing: 8) {
@@ -1192,7 +1248,7 @@ struct GameView: View {
                     Spacer(minLength: 0)
                     StockAndDiscardPiles(
                         stockCount: p.stockCount,
-                        discard: p.discard,
+                        discard: pendingDiscardCard.map { p.discard + [$0] } ?? p.discard,
                         discardOnTap: discardTapActionIfEnabled(gameId: gameId, p: p),
                         stockOnTap: drawStockActionIfEnabled(gameId: gameId, p: p)
                     )
@@ -2184,7 +2240,9 @@ struct GameView: View {
         handDisplayOrder = merged
     }
 
-    private func handDisplayFor(hand: [String]) -> [String] {
+    private func handDisplayFor(hand rawHand: [String]) -> [String] {
+        // Drop the optimistically-discarded card so the fan reflects the discard the instant it's released.
+        let hand = pendingDiscardCard.map { pending in rawHand.filter { $0 != pending } } ?? rawHand
         if hand.isEmpty { return [] }
         if handDisplayOrder.isEmpty { return PlayingCard.sortHand(hand) }
         if hand.count == handDisplayOrder.count, Set(hand) == Set(handDisplayOrder) { return handDisplayOrder }
@@ -2694,7 +2752,12 @@ struct GameView: View {
                             handleAfterPerspectiveUpdate(before: b, after: after)
                         }
                     },
-                    onAfterSuccessfulDiscard: nil
+                    onAfterSuccessfulDiscard: nil,
+                    onOptimisticDiscard: { beginOptimisticDiscard($0) },
+                    onDiscardFailed: {
+                        suppressDiscardFlightFor = nil
+                        clearPendingDiscard()
+                    }
                 )
                 }
             }
@@ -2859,6 +2922,10 @@ private struct DiscardHelper: View {
     @Binding var dragDiscardRequest: String?
     var onAfterSuccessfulMove: ((PlayerPerspective?, PlayerPerspective) -> Void)? = nil
     var onAfterSuccessfulDiscard: ((String, PlayerPerspective?, PlayerPerspective) -> Void)? = nil
+    /// Called the instant a legal drag-discard is released, so the parent can show it optimistically.
+    var onOptimisticDiscard: ((String) -> Void)? = nil
+    /// Called if a discard request fails, so the parent can roll back any optimistic UI.
+    var onDiscardFailed: (() -> Void)? = nil
 
     /// Cached per-discard-candidate eligibility, recomputed only when the 11-card hand changes
     /// or the knock card changes. Computed by running the same DFS the server uses, just locally.
@@ -2949,6 +3016,7 @@ private struct DiscardHelper: View {
         let c = CardIdValidation.normalize(dropped)
         selectedCard = c
         if eligibility.plain.contains(c) {
+            onOptimisticDiscard?(c)
             Task { await submit(plain: true) }
         }
     }
@@ -3064,6 +3132,7 @@ private struct DiscardHelper: View {
             }
         } catch {
             await MainActor.run {
+                onDiscardFailed?()
                 feedbackText = UserFeedback.from(error)
                 feedbackIsError = true
             }

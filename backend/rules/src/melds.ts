@@ -96,11 +96,18 @@ export function bestDeadwood(hand: CardId[]): { sum: number; partition: Partitio
       return;
     }
 
-    for (let len = Math.min(4, remaining.length); len >= 3; len--) {
+    // Runs may be any length (3..remaining.length); sets are capped at 4.
+    for (let len = remaining.length; len >= 3; len--) {
       for (const combo of subsetsOfSize(remaining, len)) {
-        const setM: Meld = { type: "set", cards: sortCards(combo) };
-        const runM: Meld = { type: "run", cards: sortCards(combo) };
-        for (const meld of [setM, runM]) {
+        const sorted = sortCards(combo);
+        const candidates: Meld[] =
+          len <= 4
+            ? [
+                { type: "set", cards: sorted },
+                { type: "run", cards: sorted },
+              ]
+            : [{ type: "run", cards: sorted }];
+        for (const meld of candidates) {
           if (!isValidMeld(meld)) continue;
           const used = new Set(meld.cards);
           const rest = remaining.filter((c) => !used.has(c));
@@ -155,11 +162,18 @@ export function isBigGin11(hand11: CardId[]): boolean {
   function canPartition(remaining: CardId[]): boolean {
     if (remaining.length === 0) return true;
     if (remaining.length < 3) return false;
-    for (let len = Math.min(remaining.length, 4); len >= 3; len--) {
+    // Runs may be any length (3..remaining.length); sets are capped at 4.
+    for (let len = remaining.length; len >= 3; len--) {
       for (const combo of subsetsOfSize(remaining, len)) {
-        const setM: Meld = { type: "set", cards: sortCards(combo) };
-        const runM: Meld = { type: "run", cards: sortCards(combo) };
-        for (const meld of [setM, runM]) {
+        const sorted = sortCards(combo);
+        const candidates: Meld[] =
+          len <= 4
+            ? [
+                { type: "set", cards: sorted },
+                { type: "run", cards: sorted },
+              ]
+            : [{ type: "run", cards: sorted }];
+        for (const meld of candidates) {
           if (!isValidMeld(meld)) continue;
           const used = new Set(meld.cards);
           const rest = remaining.filter((c) => !used.has(c));

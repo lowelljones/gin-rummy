@@ -54,6 +54,25 @@ describe("bestDeadwood", () => {
     expect(sum).toBe(31);
   });
 
+  it("melds a 5-card run as a single meld (not capped at 4)", () => {
+    /* 5-card run 5H-9H + set of three Ks + 2C/3D deadwood.
+       Naive 4-card cap would strand a run card as deadwood. */
+    const { sum, partition } = bestDeadwood([
+      "5H", "6H", "7H", "8H", "9H", "KC", "KD", "KS", "2C", "3D",
+    ]);
+    expect(sum).toBe(5);
+    const run = partition.melds.find((m) => m.type === "run");
+    expect(run?.cards).toEqual(["5H", "6H", "7H", "8H", "9H"]);
+    expect(partition.deadwood.sort()).toEqual(["2C", "3D"]);
+  });
+
+  it("recognizes gin from a 5-card run plus a 5-card run", () => {
+    const { sum } = bestDeadwood([
+      "2C", "3C", "4C", "5C", "6C", "8D", "9D", "TD", "JD", "QD",
+    ]);
+    expect(sum).toBe(0);
+  });
+
   it("throws on duplicate cards", () => {
     expect(() => bestDeadwood(["5S", "5S", "6S"])).toThrow(/duplicate/i);
   });
@@ -85,6 +104,12 @@ describe("isBigGin11", () => {
     expect(
       isBigGin11(["AS", "2S", "3S", "4S", "7H", "8H", "9H", "KC", "KD", "KH", "2C"]),
     ).toBe(false);
+  });
+
+  it("true with a 5-card run plus two sets", () => {
+    expect(
+      isBigGin11(["5H", "6H", "7H", "8H", "9H", "KC", "KD", "KS", "2C", "2D", "2H"]),
+    ).toBe(true);
   });
 });
 
