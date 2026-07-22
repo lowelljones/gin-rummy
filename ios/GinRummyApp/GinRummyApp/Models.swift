@@ -125,6 +125,29 @@ struct PlayerPerspective: Codable, Equatable {
     }
 }
 
+/// Orders a two-seat, seat-indexed stat (score, hands won, etc.) so the viewing
+/// player's own value is always shown first, regardless of its value. When
+/// `mySeat` is nil or out of range (e.g. a spectator) the natural seat order is kept.
+func viewerFirstPair(_ values: [Int], mySeat: Int?) -> (mine: Int, theirs: Int) {
+    guard let mySeat, values.indices.contains(mySeat), values.indices.contains(1 - mySeat) else {
+        let first = values.indices.contains(0) ? values[0] : 0
+        let second = values.indices.contains(1) ? values[1] : 0
+        return (first, second)
+    }
+    return (values[mySeat], values[1 - mySeat])
+}
+
+extension PlayerPerspective {
+    /// The viewing player's own match score.
+    var myScore: Int { viewerFirstPair(scores, mySeat: seat).mine }
+    /// The opponent's match score.
+    var opponentScore: Int { viewerFirstPair(scores, mySeat: seat).theirs }
+    /// Hands won by the viewing player this match.
+    var myHandsWon: Int { viewerFirstPair(handsWon, mySeat: seat).mine }
+    /// Hands won by the opponent this match.
+    var opponentHandsWon: Int { viewerFirstPair(handsWon, mySeat: seat).theirs }
+}
+
 struct LobbyInvitePreviewResponse: Codable {
     let invite_code: String
     let status: String

@@ -728,10 +728,10 @@ struct GameView: View {
                 Text(matchWinnerHeadline(p))
                     .font(.title3.bold())
                     .foregroundStyle(GinRummyPalette.cream)
-            Text("Final score · \(p.scores[0]) – \(p.scores[1])")
+            Text("Final score · \(p.myScore) – \(p.opponentScore)")
                 .font(.headline.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.cream)
-            Text("Hands won · \(p.handsWon[0]) – \(p.handsWon[1])")
+            Text("Hands won · \(p.myHandsWon) – \(p.opponentHandsWon)")
                 .font(.subheadline)
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             if let b = app.lastBetting, let bucket = b.bucket,
@@ -942,7 +942,7 @@ struct GameView: View {
         let yourTurn = p.currentTurn == p.seat
         HStack(spacing: 8) {
             GinStatusPill(
-                text: "\(p.scores[0]) – \(p.scores[1])",
+                text: "\(p.myScore) – \(p.opponentScore)",
                 systemImage: "rosette",
                 tint: GinRummyPalette.gold
             )
@@ -976,7 +976,7 @@ struct GameView: View {
                     .foregroundStyle(GinRummyPalette.cream)
                     .multilineTextAlignment(.center)
                 HStack(spacing: 10) {
-                    GinStatusPill(text: "\(p.scores[0]) – \(p.scores[1])", systemImage: "rosette")
+                    GinStatusPill(text: "\(p.myScore) – \(p.opponentScore)", systemImage: "rosette")
                     GinStatusPill(text: "Game to \(p.raceTarget)", tint: GinRummyPalette.sage)
                 }
                 .padding(.top, 2)
@@ -1200,7 +1200,7 @@ struct GameView: View {
             HStack(alignment: .firstTextBaseline) {
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text("\(p.scores[0]) – \(p.scores[1])")
+                    Text("\(p.myScore) – \(p.opponentScore)")
                         .font(.headline.monospacedDigit())
                         .foregroundStyle(GinRummyPalette.cream)
                     Text("Race \(p.raceTarget)")

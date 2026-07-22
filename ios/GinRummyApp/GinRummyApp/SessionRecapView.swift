@@ -83,7 +83,8 @@ struct SessionRecapView: View {
             Text("\(playerName(recap: recap, seat: 0)) vs \(playerName(recap: recap, seat: 1))")
                 .font(.title3.bold())
                 .foregroundStyle(GinRummyPalette.cream)
-            Text("Match wins · \(recap.totals.matchWins[0]) – \(recap.totals.matchWins[1])")
+            let matchWinsPair = viewerFirstPair(recap.totals.matchWins, mySeat: recap.players.first(where: { $0.isSelf })?.seat)
+            Text("Match wins · \(matchWinsPair.mine) – \(matchWinsPair.theirs)")
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             if recap.totals.completedMatches > 0 {
@@ -109,10 +110,13 @@ struct SessionRecapView: View {
                 statusBadge(match)
             }
 
-            Text("Score · \(match.scores[0]) – \(match.scores[1])")
+            let mySeat = players.first(where: { $0.isSelf })?.seat
+            let scorePair = viewerFirstPair(match.scores, mySeat: mySeat)
+            let handsPair = viewerFirstPair(match.handsWon, mySeat: mySeat)
+            Text("Score · \(scorePair.mine) – \(scorePair.theirs)")
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.cream.opacity(0.95))
-            Text("Hands won · \(match.handsWon[0]) – \(match.handsWon[1])")
+            Text("Hands won · \(handsPair.mine) – \(handsPair.theirs)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
 
@@ -207,7 +211,8 @@ struct SessionRecapView: View {
                 .foregroundStyle(GinRummyPalette.cream)
             Text("Matches completed · \(recap.totals.completedMatches)")
                 .font(.caption)
-            Text("Match wins · \(recap.totals.matchWins[0]) – \(recap.totals.matchWins[1])")
+            let matchWinsPair = viewerFirstPair(recap.totals.matchWins, mySeat: recap.players.first(where: { $0.isSelf })?.seat)
+            Text("Match wins · \(matchWinsPair.mine) – \(matchWinsPair.theirs)")
                 .font(.caption.monospacedDigit())
             Text("Combined tiers · \(recap.totals.totalBuckets) · \(recap.totals.totalBettingRaw) match pts")
                 .font(.caption.monospacedDigit())

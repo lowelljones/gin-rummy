@@ -309,7 +309,7 @@ struct HandRevealView: View {
                 Text(headlineTitle)
                     .font(.headline)
                     .foregroundStyle(GinRummyPalette.cream)
-                Text("\(pointsLine) · Score \(p.scores[0]) – \(p.scores[1])")
+                Text("\(pointsLine) · Score \(p.myScore) – \(p.opponentScore)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
             }
