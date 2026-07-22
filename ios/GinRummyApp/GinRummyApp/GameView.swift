@@ -479,7 +479,7 @@ struct GameView: View {
         let actionable = after.phase == "play" || after.phase == "upcardOffer"
         guard actionable else { return }
         guard after.currentTurn == after.seat, b.currentTurn != after.currentTurn else { return }
-        let generator = UIImpactFeedbackGenerator(style: .light)
+        let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
     }
 
@@ -954,7 +954,7 @@ struct GameView: View {
             GinStatusPill(
                 text: yourTurn ? "Your turn" : "Their turn",
                 systemImage: yourTurn ? "hand.raised.fill" : "hourglass",
-                tint: yourTurn ? GinRummyPalette.sage : GinRummyPalette.navy
+                tint: yourTurn ? GinRummyPalette.goldAccent : GinRummyPalette.navy
             )
         }
         .padding(.horizontal, 14)
@@ -1225,16 +1225,10 @@ struct GameView: View {
             EmptyView()
         case .downCard, .play:
             VStack(alignment: .leading, spacing: 8) {
-                if surface == .play {
-                    if p.currentTurn == p.seat {
-                        Label("Your turn", systemImage: "hand.raised.fill")
-                            .font(.caption)
-                            .foregroundStyle(GinRummyPalette.goldAccent)
-                    } else {
-                        Label("Opponent’s turn", systemImage: "hourglass")
-                            .font(.caption)
-                            .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                    }
+                if surface == .play, p.currentTurn != p.seat {
+                    Label("Opponent’s turn", systemImage: "hourglass")
+                        .font(.caption)
+                        .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                 }
                 if let kc = p.knockCheckCard, !kc.isEmpty {
                     HStack(alignment: .center, spacing: 8) {
