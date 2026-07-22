@@ -73,13 +73,13 @@ struct LobbyView: View {
                     Button("Join with code") {
                         path.append(LobbyRoute.joinEnter)
                     }
-                    .buttonStyle(GinGhostButtonStyle())
+                    .buttonStyle(GinGhostButtonStyle(textColor: GinRummyPalette.gold, strokeColor: GinRummyPalette.gold))
                     .disabled(busy || app.accessToken == nil)
 
                     Button(busy ? "Starting…" : "Play bot") {
                         Task { await playAgainstBot() }
                     }
-                    .buttonStyle(GinGhostButtonStyle())
+                    .buttonStyle(GinGhostButtonStyle(textColor: GinRummyPalette.gold, strokeColor: GinRummyPalette.gold))
                     .disabled(busy || app.accessToken == nil)
                 }
             }

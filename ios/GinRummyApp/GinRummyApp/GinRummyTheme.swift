@@ -142,15 +142,18 @@ struct GinPrimaryButtonStyle: ButtonStyle {
 }
 
 struct GinGhostButtonStyle: ButtonStyle {
+    var textColor: Color = GinRummyPalette.goldAccentSoft
+    var strokeColor: Color = GinRummyPalette.goldAccent
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(GinRummyPalette.goldAccentSoft)
+            .foregroundStyle(textColor)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(GinRummyPalette.goldAccent.opacity(configuration.isPressed ? 0.4 : 0.5), lineWidth: 1.3)
+                    .stroke(strokeColor.opacity(configuration.isPressed ? 0.4 : 0.5), lineWidth: 1.3)
             )
     }
 }
