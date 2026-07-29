@@ -199,6 +199,27 @@ struct DeadwoodRow: View {
 
 // MARK: - End-of-hand reveal
 
+/// Height of the scrolling hand layout plus how far it has been scrolled
+/// (0 at the top, negative once the player scrolls down).
+private struct RevealScrollMetrics: Equatable {
+    var contentHeight: CGFloat = 0
+    var offset: CGFloat = 0
+}
+
+private struct RevealScrollMetricsKey: PreferenceKey {
+    static var defaultValue: RevealScrollMetrics? { nil }
+    static func reduce(value: inout RevealScrollMetrics?, nextValue: () -> RevealScrollMetrics?) {
+        value = nextValue() ?? value
+    }
+}
+
+private struct RevealViewportHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat? { nil }
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        value = nextValue() ?? value
+    }
+}
+
 /// Full-table reveal after a hand ends: opponent's layout on the top half, yours on
 /// the bottom, unmelded cards highlighted with their points. Plays a short sequence
 /// (table → flashed points overlay → ready-up Continue with waiting banners).
@@ -218,6 +239,14 @@ struct HandRevealView: View {
     @State private var stage: Stage = .table
     @State private var sequenceTask: Task<Void, Never>?
     @State private var youTappedContinue = false
+    @State private var scrollMetrics = RevealScrollMetrics()
+    @State private var viewportHeight: CGFloat = 0
+    /// Latches once the player scrolls, so the hint never flickers back later.
+    @State private var hasScrolled = false
+    @State private var hintBounce = false
+
+    private static let scrollSpace = "handRevealScroll"
+    private static let bottomAnchor = "handRevealBottom"
 
     private var mySeat: Int { p.seat }
     private var oppSeat: Int { 1 - p.seat }
@@ -245,11 +274,17 @@ struct HandRevealView: View {
             )
 
             ZStack {
-                ScrollView {
-                    revealBody(cardWidth: cardWidth)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 8)
+                // Outcome and the ready-up controls stay pinned; only the hands scroll,
+                // so Continue is reachable without hunting for it below the fold.
+                VStack(spacing: 12) {
+                    headline
+                    if stage == .ready {
+                        readyArea
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    handsScroller(cardWidth: cardWidth)
                 }
+                .padding(.horizontal, 8)
 
                 if stage == .flash {
                     flashOverlay
@@ -264,10 +299,78 @@ struct HandRevealView: View {
         .onDisappear { sequenceTask?.cancel() }
     }
 
+    /// Both layouts at full card size, so they routinely run past the bottom of the
+    /// screen. A fade and a tappable hint tell first-time players there is more below.
     @ViewBuilder
-    private func revealBody(cardWidth: CGFloat) -> some View {
+    private func handsScroller(cardWidth: CGFloat) -> some View {
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        handsBody(cardWidth: cardWidth)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                GeometryReader { g in
+                                    Color.clear.preference(
+                                        key: RevealScrollMetricsKey.self,
+                                        value: RevealScrollMetrics(
+                                            contentHeight: g.size.height,
+                                            offset: g.frame(in: .named(Self.scrollSpace)).minY
+                                        )
+                                    )
+                                }
+                            )
+                        // Sits outside the measured height so it never itself reads as
+                        // "more below", but lets the last row clear the fade and hint.
+                        Color.clear
+                            .frame(height: 48)
+                            .id(Self.bottomAnchor)
+                    }
+                }
+                .coordinateSpace(name: Self.scrollSpace)
+                .background(
+                    GeometryReader { g in
+                        Color.clear.preference(key: RevealViewportHeightKey.self, value: g.size.height)
+                    }
+                )
+                .onPreferenceChange(RevealScrollMetricsKey.self) { metrics in
+                    guard let metrics else { return }
+                    scrollMetrics = metrics
+                    if metrics.offset < -28 { hasScrolled = true }
+                }
+                .onPreferenceChange(RevealViewportHeightKey.self) { height in
+                    viewportHeight = height ?? 0
+                }
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [GinRummyPalette.bgDeep.opacity(0), GinRummyPalette.bgDeep.opacity(0.9)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 56)
+                    .allowsHitTesting(false)
+                    .opacity(hasMoreBelow ? 1 : 0)
+                }
+
+                if showsScrollHint {
+                    scrollHint {
+                        hasScrolled = true
+                        withAnimation(.easeInOut(duration: 0.45)) {
+                            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: hasMoreBelow)
+            .animation(.easeInOut(duration: 0.25), value: showsScrollHint)
+        }
+    }
+
+    @ViewBuilder
+    private func handsBody(cardWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            headline
             seatSection(
                 title: opponentName.uppercased(),
                 side: oppSide,
@@ -291,9 +394,40 @@ struct HandRevealView: View {
                 .foregroundStyle(HandEndStyle.layoffBlue.opacity(0.95))
                 .frame(maxWidth: .infinity)
             }
-            if stage == .ready {
-                readyArea
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// True while there is still hand layout hidden below the fold.
+    private var hasMoreBelow: Bool {
+        guard viewportHeight > 0, scrollMetrics.contentHeight > 0 else { return false }
+        return scrollMetrics.contentHeight + scrollMetrics.offset > viewportHeight + 6
+    }
+
+    private var showsScrollHint: Bool {
+        stage != .flash && hasMoreBelow && !hasScrolled
+    }
+
+    private func scrollHint(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text("See both hands")
+                    .font(.caption.weight(.semibold))
+                Image(systemName: "chevron.compact.down")
+                    .font(.system(size: 15, weight: .bold))
+                    .offset(y: hintBounce ? 2.5 : -1.5)
+            }
+            .foregroundStyle(GinRummyPalette.bgDeep)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(GinRummyPalette.gold.opacity(0.95)))
+            .overlay(Capsule().stroke(GinRummyPalette.goldAccent.opacity(0.8), lineWidth: 1))
+            .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scroll to see both hands")
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+                hintBounce = true
             }
         }
     }
