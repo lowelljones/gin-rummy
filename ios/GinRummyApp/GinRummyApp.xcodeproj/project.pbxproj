@@ -17,8 +17,6 @@
 		E90100000000000000000008 /* LobbyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000008 /* LobbyView.swift */; };
 		E90100000000000000000009 /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000009 /* GameView.swift */; };
 		E9010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000A /* Assets.xcassets */; };
-		E90100000000000000000023 /* CourtCards.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000023 /* CourtCards.xcassets */; };
-		E90100000000000000000024 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000024 /* ProfileView.swift */; };
 		E9010000000000000000000B /* PlayerFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000D /* PlayerFeedback.swift */; };
 		E9010000000000000000000C /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000E /* CardViews.swift */; };
 		E9010000000000000000000D /* GinRummyTableTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000000F /* GinRummyTableTheme.swift */; };
@@ -36,6 +34,13 @@
 		E9010000000000000000001B /* GameTablePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001B /* GameTablePolicy.swift */; };
 		E9010000000000000000001C /* GameNarration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001C /* GameNarration.swift */; };
 		E9010000000000000000001D /* GameSignalSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001D /* GameSignalSocket.swift */; };
+		E9010000000000000000001E /* CardFaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001E /* CardFaceViews.swift */; };
+		E9010000000000000000001F /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001F /* AccountSettingsView.swift */; };
+		E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* PrivacyInfo.xcprivacy */; };
+		E90100000000000000000021 /* AppleSignInNonce.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000021 /* AppleSignInNonce.swift */; };
+		E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000022 /* GinAppleSignInButton.swift */; };
+		E90100000000000000000023 /* CourtCards.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000023 /* CourtCards.xcassets */; };
+		E90100000000000000000024 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000024 /* ProfileView.swift */; };
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
 		EA0100000000000000000003 /* MeldSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000003 /* MeldSolverTests.swift */; };
@@ -43,11 +48,6 @@
 		EA0100000000000000000005 /* RedealAndAbandonmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */; };
 		EA0100000000000000000006 /* GameNarrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000006 /* GameNarrationTests.swift */; };
 		EA0100000000000000000007 /* CardMetricsHandEndTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000007 /* CardMetricsHandEndTests.swift */; };
-		E9010000000000000000001E /* CardFaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001E /* CardFaceViews.swift */; };
-		E9010000000000000000001F /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8010000000000000000001F /* AccountSettingsView.swift */; };
-		E90100000000000000000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000020 /* PrivacyInfo.xcprivacy */; };
-		E90100000000000000000021 /* AppleSignInNonce.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000021 /* AppleSignInNonce.swift */; };
-		E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000022 /* GinAppleSignInButton.swift */; };
 		EA0100000000000000000008 /* AppleSignInNonceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000008 /* AppleSignInNonceTests.swift */; };
 		EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000009 /* PasswordResetURLTests.swift */; };
 		EA010000000000000000000A /* ScorecardScoringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000A /* ScorecardScoringTests.swift */; };
@@ -76,8 +76,6 @@
 		E80100000000000000000008 /* LobbyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyView.swift; sourceTree = "<group>"; };
 		E80100000000000000000009 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
 		E8010000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		E80100000000000000000023 /* CourtCards.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = CourtCards.xcassets; sourceTree = "<group>"; };
-		E80100000000000000000024 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		E8010000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E8010000000000000000000C /* GinRummyApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GinRummyApp.entitlements; sourceTree = "<group>"; };
 		E8010000000000000000000D /* PlayerFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerFeedback.swift; sourceTree = "<group>"; };
@@ -97,6 +95,13 @@
 		E8010000000000000000001B /* GameTablePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameTablePolicy.swift; sourceTree = "<group>"; };
 		E8010000000000000000001C /* GameNarration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameNarration.swift; sourceTree = "<group>"; };
 		E8010000000000000000001D /* GameSignalSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameSignalSocket.swift; sourceTree = "<group>"; };
+		E8010000000000000000001E /* CardFaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardFaceViews.swift; sourceTree = "<group>"; };
+		E8010000000000000000001F /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
+		E80100000000000000000020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		E80100000000000000000021 /* AppleSignInNonce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonce.swift; sourceTree = "<group>"; };
+		E80100000000000000000022 /* GinAppleSignInButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinAppleSignInButton.swift; sourceTree = "<group>"; };
+		E80100000000000000000023 /* CourtCards.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = CourtCards.xcassets; sourceTree = "<group>"; };
+		E80100000000000000000024 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
@@ -105,11 +110,6 @@
 		EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedealAndAbandonmentTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000006 /* GameNarrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameNarrationTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000007 /* CardMetricsHandEndTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMetricsHandEndTests.swift; sourceTree = "<group>"; };
-		E8010000000000000000001E /* CardFaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardFaceViews.swift; sourceTree = "<group>"; };
-		E8010000000000000000001F /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
-		E80100000000000000000020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		E80100000000000000000021 /* AppleSignInNonce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonce.swift; sourceTree = "<group>"; };
-		E80100000000000000000022 /* GinAppleSignInButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinAppleSignInButton.swift; sourceTree = "<group>"; };
 		EA0200000000000000000008 /* AppleSignInNonceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInNonceTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000009 /* PasswordResetURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordResetURLTests.swift; sourceTree = "<group>"; };
 		EA020000000000000000000A /* ScorecardScoringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardScoringTests.swift; sourceTree = "<group>"; };
@@ -141,24 +141,6 @@
 				EA0300000000000000000001 /* GinRummyAppTests */,
 				E70300000000000000000003 /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		EA0300000000000000000001 /* GinRummyAppTests */ = {
-			isa = PBXGroup;
-			children = (
-				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
-				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
-				EA0200000000000000000003 /* MeldSolverTests.swift */,
-				EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */,
-				EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */,
-				EA0200000000000000000006 /* GameNarrationTests.swift */,
-				EA0200000000000000000007 /* CardMetricsHandEndTests.swift */,
-				EA0200000000000000000008 /* AppleSignInNonceTests.swift */,
-				EA0200000000000000000009 /* PasswordResetURLTests.swift */,
-				EA020000000000000000000A /* ScorecardScoringTests.swift */,
-				EA020000000000000000000B /* ProfileGameLogTests.swift */,
-			);
-			path = GinRummyAppTests;
 			sourceTree = "<group>";
 		};
 		E70300000000000000000002 /* GinRummyApp */ = {
@@ -211,6 +193,24 @@
 				EA0000000000000000000001 /* GinRummyAppTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		EA0300000000000000000001 /* GinRummyAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */,
+				EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */,
+				EA0200000000000000000003 /* MeldSolverTests.swift */,
+				EA0200000000000000000004 /* BettingSettlementBreakdownTests.swift */,
+				EA0200000000000000000005 /* RedealAndAbandonmentTests.swift */,
+				EA0200000000000000000006 /* GameNarrationTests.swift */,
+				EA0200000000000000000007 /* CardMetricsHandEndTests.swift */,
+				EA0200000000000000000008 /* AppleSignInNonceTests.swift */,
+				EA0200000000000000000009 /* PasswordResetURLTests.swift */,
+				EA020000000000000000000A /* ScorecardScoringTests.swift */,
+				EA020000000000000000000B /* ProfileGameLogTests.swift */,
+			);
+			path = GinRummyAppTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -422,7 +422,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -445,7 +445,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

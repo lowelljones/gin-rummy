@@ -346,6 +346,9 @@ private enum CardFanLayout {
 
     static let rotationPerCard: Double = 1.6
 
+    /// How far the tapped card rises out of the fan.
+    static let selectionLift: CGFloat = 14
+
     /// Extra horizontal room a rotated edge card needs beyond half its width, so
     /// the tilted top corners (where the rank/suit live) never clip off-screen.
     static func edgeInset(n: Int, cardW: CGFloat) -> CGFloat {
@@ -384,6 +387,55 @@ private enum CardFanLayout {
     }
 }
 
+/// Where a single card physically sits on the table, so an animation can start
+/// from the exact spot the player last saw it instead of a zone's center.
+struct CardLiftOrigin: Equatable {
+    /// Card center in the "gameTable" coordinate space.
+    var point: CGPoint
+    /// Tilt (degrees) the card is currently drawn at.
+    var rotation: Double = 0
+    /// On-screen width, so a flight can start at the size the card left at.
+    var width: CGFloat = CardMetrics.compactWidth
+}
+
+/// Snapshot of the player's fan as it's laid out right now. Published up the
+/// view tree so a discard can fly out of the discarded card's own slot.
+struct HandFanGeometry: Equatable {
+    var rowFrame: CGRect = .zero
+    var order: [String] = []
+    var cardWidth: CGFloat = 0
+    /// Tapped card, which sits raised above the rest of the fan.
+    var selected: String?
+
+    /// Resting position of `card` in the fan, or nil if it isn't in the hand.
+    func origin(of card: String) -> CardLiftOrigin? {
+        guard cardWidth > 0, rowFrame.width > 0, let i = order.firstIndex(of: card) else { return nil }
+        let n = order.count
+        let cardH = cardWidth * CardMetrics.aspect
+        let degrees = CardFanLayout.rotation(index: i, count: n)
+        let radians = degrees * .pi / 180
+        // Cards are bottom-aligned in the row and pivot about their bottom edge.
+        let pivotX = rowFrame.minX + CardFanLayout.centerX(index: i, n: n, width: rowFrame.width, cardW: cardWidth)
+        let pivotY = rowFrame.maxY - (card == selected ? CardFanLayout.selectionLift : 0)
+        return CardLiftOrigin(
+            point: CGPoint(
+                x: pivotX + (cardH / 2) * sin(radians),
+                y: pivotY - (cardH / 2) * cos(radians)
+            ),
+            rotation: degrees,
+            width: cardWidth
+        )
+    }
+}
+
+struct HandFanGeometryKey: PreferenceKey {
+    static var defaultValue: HandFanGeometry { HandFanGeometry() }
+    static func reduce(value: inout HandFanGeometry, nextValue: () -> HandFanGeometry) {
+        let next = nextValue()
+        if next.rowFrame.width > 0 { value = next }
+    }
+}
+
 /// Hand along the bottom of the row: same baseline, slight rotation, arc opens toward the table center.
 /// Drag a card to rearrange the hand (no long-press); small movements still allow tap to select.
 /// When `onDragDiscard` is set, dragging a card up past the release threshold discards it.
@@ -401,8 +453,8 @@ struct FannedHandRow: View {
     var canReorder: Bool = false
     var onReorder: (([String]) -> Void)? = nil
     /// Non-nil when a plain discard is currently legal (your turn, 11 cards):
-    /// drag a card up and release to discard it.
-    var onDragDiscard: ((String) -> Void)? = nil
+    /// drag a card up and release to discard it. Receives where the card was let go.
+    var onDragDiscard: ((String, CardLiftOrigin) -> Void)? = nil
     /// Card just added to the hand — rendered with a short-lived gold glow.
     var recentlyDrawn: String? = nil
 
@@ -425,9 +477,18 @@ struct FannedHandRow: View {
                     let n = effective.count
                     let cardW = CardFanLayout.cardWidth(n: n, width: geo.size.width, height: geo.size.height)
                     let step = CardFanLayout.step(n: n, width: geo.size.width, cardW: cardW)
+                    let rowFrame = geo.frame(in: .named("gameTable"))
                     ZStack(alignment: .bottom) {
                         ForEach(Array(effective.enumerated()), id: \.element) { pair in
-                            cardCell(c: pair.element, i: pair.offset, n: n, width: geo.size.width, cardW: cardW, step: step)
+                            cardCell(
+                                c: pair.element,
+                                i: pair.offset,
+                                n: n,
+                                width: geo.size.width,
+                                cardW: cardW,
+                                step: step,
+                                rowFrame: rowFrame
+                            )
                         }
                         if dragDiscardArmed {
                             Text("Release to discard")
@@ -443,6 +504,15 @@ struct FannedHandRow: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .preference(
+                        key: HandFanGeometryKey.self,
+                        value: HandFanGeometry(
+                            rowFrame: rowFrame,
+                            order: effective,
+                            cardWidth: cardW,
+                            selected: selected
+                        )
+                    )
                 }
             }
         }
@@ -454,7 +524,15 @@ struct FannedHandRow: View {
     }
 
     @ViewBuilder
-    private func cardCell(c: String, i: Int, n: Int, width: CGFloat, cardW: CGFloat, step: CGFloat) -> some View {
+    private func cardCell(
+        c: String,
+        i: Int,
+        n: Int,
+        width: CGFloat,
+        cardW: CGFloat,
+        step: CGFloat,
+        rowFrame: CGRect
+    ) -> some View {
         let isDragging = (c == draggingId)
         // Offset from the ZStack's horizontal center to this card's target center.
         let baseX = CardFanLayout.centerX(index: i, n: n, width: width, cardW: cardW) - width / 2
@@ -486,7 +564,7 @@ struct FannedHandRow: View {
         }
         .rotationEffect(.degrees(isDragging ? 0 : restRot), anchor: .bottom)
         .scaleEffect(isDragging ? (dragDiscardArmed ? 1.14 : 1.08) : 1.0, anchor: .center)
-        .offset(y: selected == c && !isDragging ? -14 : 0)
+        .offset(y: selected == c && !isDragging ? -CardFanLayout.selectionLift : 0)
         .shadow(
             color: isDragging ? Color.black.opacity(0.28) : .clear,
             radius: isDragging ? 10 : 0,
@@ -497,14 +575,34 @@ struct FannedHandRow: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected == c)
         .animation(.easeOut(duration: 0.3), value: isGlowing)
         .gesture(
-            makeReorderGesture(cardId: c, step: step),
+            makeReorderGesture(
+                cardId: c,
+                step: step,
+                lift: { translation in
+                    // A dragged card is upright and slightly enlarged, sitting wherever the finger left it.
+                    let cardH = cardW * CardMetrics.aspect
+                    let centerX = CardFanLayout.centerX(index: i, n: n, width: width, cardW: cardW)
+                    return CardLiftOrigin(
+                        point: CGPoint(
+                            x: rowFrame.minX + centerX + translation.width,
+                            y: rowFrame.maxY - cardH / 2 + translation.height
+                        ),
+                        rotation: 0,
+                        width: cardW * 1.14
+                    )
+                }
+            ),
             including: ((canReorder || onDragDiscard != nil) && c != "HIDDEN") ? .all : .subviews
         )
     }
 
     private static let reorderDragMinimumDistance: CGFloat = 10
 
-    private func makeReorderGesture(cardId: String, step: CGFloat) -> some Gesture {
+    private func makeReorderGesture(
+        cardId: String,
+        step: CGFloat,
+        lift: @escaping (CGSize) -> CardLiftOrigin
+    ) -> some Gesture {
         DragGesture(minimumDistance: Self.reorderDragMinimumDistance)
             .onChanged { value in
                 if draggingId == nil {
@@ -512,8 +610,8 @@ struct FannedHandRow: View {
                 }
                 updateDrag(translation: value.translation, step: step)
             }
-            .onEnded { _ in
-                commitDrag()
+            .onEnded { value in
+                commitDrag(lift: lift(value.translation))
             }
     }
 
@@ -563,16 +661,18 @@ struct FannedHandRow: View {
         HandReorderFeedback.slot.impactOccurred()
     }
 
-    private func commitDrag() {
+    private func commitDrag(lift: CardLiftOrigin) {
         guard let dragged = draggingId else {
             resetDragState()
             return
         }
         if dragDiscardArmed, dragged != "HIDDEN" {
+            // Hand off the release point before clearing drag state so the flight
+            // picks up where the card was let go instead of snapping back first.
+            onDragDiscard?(dragged, lift)
             withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                 resetDragState()
             }
-            onDragDiscard?(dragged)
             return
         }
         let final = liveOrder
@@ -648,10 +748,23 @@ struct SeatInfoBar: View {
 
 // MARK: - Messy discard pile (face-up cards peek through like a real toss)
 
-/// Deterministic, slightly wonky stack geometry so the pile feels tossed but stable between renders.
+/// Deterministic stack geometry: a card's resting place depends only on the card and
+/// the slot it was tossed into, never on what lands on top of it later, so nothing in
+/// the pile ever moves once it has landed.
 private enum DiscardPileLayout {
     /// Face-up cards drawn in the pile (deepest = earliest discard still peeking through).
-    static let maxVisibleCards = 5
+    /// Deep enough that a peeking corner survives most of a hand.
+    static let maxVisibleCards = 14
+
+    /// Farthest a toss lands from the pile center, as a fraction of card width.
+    private static let maxDrift: CGFloat = 0.075
+    /// Largest tilt of a tossed card, in degrees.
+    private static let maxTilt: Double = 12
+
+    /// Spacing of successive tosses around the pile center. The golden angle keeps
+    /// consecutive cards from landing on the same few spots, which is what made
+    /// each new discard hide whichever corner was peeking through.
+    private static let goldenAngle: Double = 137.507764
 
     struct CardTransform {
         var offsetX: CGFloat = 0
@@ -659,40 +772,30 @@ private enum DiscardPileLayout {
         var rotation: Double = 0
     }
 
-    static func transform(pileIndex: Int, totalCount: Int, card: String, cardWidth: CGFloat) -> CardTransform {
+    static func transform(pileIndex: Int, card: String, cardWidth: CGFloat) -> CardTransform {
+        // First upcard / pile foundation: perfectly flat and centered.
+        guard pileIndex > 0 else { return CardTransform() }
+
         let seed = stableHash(card: card, salt: pileIndex)
 
-        // First upcard / pile foundation: perfectly flat and centered.
-        if pileIndex == 0 {
-            return CardTransform()
-        }
+        let heading = (Double(pileIndex) * goldenAngle + Double(pseudo(seed, 1)) * 20) * .pi / 180
+        let drift = cardWidth * maxDrift * (0.55 + 0.45 * abs(pseudo(seed, 2)))
 
-        let isTop = pileIndex == totalCount - 1
-        let depth = pileIndex // 1 = second card, 2 = third, …
+        // Spread tilts over the full range with the same low-discrepancy trick, so
+        // neighbouring cards lean differently and expose different corners.
+        let tilt = frac(Double(pileIndex) * 0.618_033_988_7 + Double(abs(pseudo(seed, 3))) * 0.11)
 
-        // Barely-there nudge — just enough for one corner to peek (~3–7 pt).
-        let nudge = cardWidth * (0.028 + 0.010 * CGFloat(min(depth - 1, 3)))
-        let wobbleX = pseudo(seed, 1) * cardWidth * 0.010
-        let wobbleY = pseudo(seed, 2) * cardWidth * 0.008
-
-        let (ox, oy): (CGFloat, CGFloat) = switch pileIndex % 4 {
-        case 0: (nudge * 0.50 + wobbleX, nudge * 0.32 + wobbleY)
-        case 1: (-nudge * 0.46 + wobbleX, nudge * 0.28 + wobbleY)
-        case 2: (nudge * 0.42 + wobbleX, -nudge * 0.22 + wobbleY)
-        default: (-nudge * 0.44 + wobbleX, -nudge * 0.20 + wobbleY)
-        }
-
-        // Tilt ramps up with each toss; top card gets a little extra lean.
-        let baseRot = 4.0 + Double(min(depth, 4)) * 2.0
-        let rotWobble = pseudo(seed, 3) * 2.4
-        let sign: Double = pileIndex % 2 == 0 ? 1 : -1
-        let topBoost = isTop ? 1.8 + abs(pseudo(seed, 4)) * 1.2 : 0
-        let rotation = sign * (baseRot + rotWobble + topBoost)
-
-        return CardTransform(offsetX: ox, offsetY: oy, rotation: rotation)
+        return CardTransform(
+            offsetX: drift * CGFloat(cos(heading)),
+            offsetY: drift * CGFloat(sin(heading)) * 0.82,
+            rotation: (tilt * 2 - 1) * maxTilt
+        )
     }
 
-    static func stackSpread(for cardWidth: CGFloat) -> CGFloat { cardWidth * 0.11 }
+    /// Padding around the pile so drifted, tilted corners stay inside its footprint.
+    static func stackSpread(for cardWidth: CGFloat) -> CGFloat { cardWidth * 0.14 }
+
+    private static func frac(_ x: Double) -> Double { x - x.rounded(.down) }
 
     private static func stableHash(card: String, salt: Int) -> UInt64 {
         var h = UInt64(bitPattern: Int64(salt &* 0x9E37))
@@ -719,18 +822,27 @@ struct DiscardPileStackView: View {
     private var cornerRadius: CGFloat { max(5, cardWidth * 0.10) }
     private var spread: CGFloat { DiscardPileLayout.stackSpread(for: cardWidth) }
 
-    private var visibleSlice: [(pileIndex: Int, card: String)] {
+    /// A card in the pile, identified by the slot it was tossed into so that its view
+    /// identity never transfers to another card as the pile grows.
+    private struct TossedCard: Identifiable {
+        let pileIndex: Int
+        let card: String
+        var id: Int { pileIndex }
+    }
+
+    private var visibleSlice: [TossedCard] {
         let start = max(0, cards.count - DiscardPileLayout.maxVisibleCards)
-        return Array(cards.enumerated()).suffix(from: start).map { ($0.offset, $0.element) }
+        return cards.enumerated()
+            .dropFirst(start)
+            .map { TossedCard(pileIndex: $0.offset, card: $0.element) }
     }
 
     var body: some View {
         ZStack {
-            ForEach(Array(visibleSlice.enumerated()), id: \.offset) { zIndex, entry in
+            ForEach(visibleSlice) { entry in
                 let isTop = entry.pileIndex == cards.count - 1
                 let t = DiscardPileLayout.transform(
                     pileIndex: entry.pileIndex,
-                    totalCount: cards.count,
                     card: entry.card,
                     cardWidth: cardWidth
                 )
@@ -740,16 +852,16 @@ struct DiscardPileStackView: View {
                     width: cardWidth,
                     onTap: isTop ? topOnTap : nil
                 )
-                .rotationEffect(.degrees(t.rotation))
-                .offset(x: t.offsetX, y: t.offsetY)
-                .zIndex(Double(zIndex))
-                .allowsHitTesting(isTop)
                 .overlay {
                     if isTop, highlightTop {
                         RoundedRectangle(cornerRadius: cornerRadius)
                             .stroke(GinRummyPalette.gold.opacity(0.72), lineWidth: 2)
                     }
                 }
+                .rotationEffect(.degrees(t.rotation))
+                .offset(x: t.offsetX, y: t.offsetY)
+                .zIndex(Double(entry.pileIndex))
+                .allowsHitTesting(isTop)
             }
         }
         .frame(width: cardWidth + spread * 2, height: cardHeight + spread * 2)
@@ -1156,6 +1268,9 @@ struct CardFlightAnimationOverlay: View {
     let card: String
     /// Measured table-zone frames; falls back to canonical points when empty.
     var anchorFrames: [String: CGRect] = [:]
+    /// Exact spot the card left from — its own slot in the fan, or where a drag
+    /// released it. Without one the flight starts at the zone's center.
+    var origin: CardLiftOrigin? = nil
 
     @State private var progress: CGFloat = 0
 
@@ -1177,12 +1292,16 @@ struct CardFlightAnimationOverlay: View {
         GeometryReader { g in
             let w = g.size.width
             let h = g.size.height
-            let from = point(fromAnchor: fromAnchor, width: w, height: h)
+            let from = origin?.point ?? point(fromAnchor: fromAnchor, width: w, height: h)
             let to = point(fromAnchor: toAnchor, width: w, height: h)
             let cx = from.x + (to.x - from.x) * progress
             let cy = from.y + (to.y - from.y) * progress
             // Subtle settle as the card lands; no spin or arc.
             let settle = 1 + 0.05 * sin(.pi * Double(progress))
+            // Start at the size and tilt the card had in the hand, then even out in flight.
+            let startScale = (origin?.width ?? CardMetrics.compactWidth) / CardMetrics.compactWidth
+            let sizing = startScale + (1 - startScale) * progress
+            let tilt = (origin?.rotation ?? 0) * (1 - Double(progress))
 
             PlayingCardView(
                 card: displayCard,
@@ -1190,18 +1309,29 @@ struct CardFlightAnimationOverlay: View {
                 compact: true,
                 onTap: nil
             )
+            .rotationEffect(.degrees(tilt))
+            .scaleEffect(sizing * settle)
             .position(x: cx, y: cy)
-            .scaleEffect(settle)
             .shadow(color: Color.black.opacity(0.22), radius: 6, y: 4)
-            .opacity(progress < 0.03 ? 0 : 1)
-        }
-        .allowsHitTesting(false)
-        .onAppear {
-            progress = 0
-            withAnimation(.timingCurve(0.2, 0.0, 0.1, 1.0, duration: 0.5)) {
-                progress = 1
+            .opacity(origin != nil || progress >= 0.03 ? 1 : 0)
+            .onAppear {
+                progress = 0
+                withAnimation(
+                    .timingCurve(0.2, 0.0, 0.1, 1.0, duration: duration(from: from, to: to, height: h))
+                ) {
+                    progress = 1
+                }
             }
         }
+        .allowsHitTesting(false)
+    }
+
+    /// Releasing a card right next to the pile shouldn't take as long as one
+    /// leaving from the far end of the hand — pace the flight by distance.
+    private func duration(from: CGPoint, to: CGPoint, height: CGFloat) -> Double {
+        let reference = max(height * 0.45, 1)
+        let travelled = min(1, Double(hypot(to.x - from.x, to.y - from.y) / reference))
+        return 0.22 + 0.28 * travelled
     }
 
     private enum Anchor {

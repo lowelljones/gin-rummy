@@ -34,8 +34,10 @@ struct GameView: View {
     /// Measured frames of the table zones (stock, discard, hands) so flight and
     /// deal animations land exactly on the real views.
     @State private var tableAnchorFrames: [String: CGRect] = [:]
+    /// Current layout of your fan, so a discard flies out of the card's own slot.
+    @State private var handFanGeometry = HandFanGeometry()
     /// Card dropped on the table via drag-to-discard, consumed by `DiscardHelper`.
-    @State private var dragDiscardRequest: String?
+    @State private var dragDiscardRequest: DragDiscardRequest?
     /// Card the player just drag-discarded: shown on the pile (and hidden from the fan) immediately,
     /// while the discard request is in flight, so releasing feels instant instead of waiting on the server.
     @State private var pendingDiscardCard: String?
@@ -115,6 +117,14 @@ struct GameView: View {
         let id = UUID()
         let route: CardFlightAnimationOverlay.Route
         let card: String
+        /// Where the card left from, when we know it (your own discards).
+        var origin: CardLiftOrigin?
+    }
+
+    private struct CardFlightStep {
+        let route: CardFlightAnimationOverlay.Route
+        let card: String
+        var origin: CardLiftOrigin?
     }
 
     /// Derived presentation segment: one active surface at a time so controls and chrome stay isolated.
@@ -532,21 +542,29 @@ struct GameView: View {
         bottomLogText = t
     }
 
-    private func scheduleCardFlight(route: CardFlightAnimationOverlay.Route, card: String) {
-        scheduleCardFlightSequence([(route, card)])
+    private func scheduleCardFlight(
+        route: CardFlightAnimationOverlay.Route,
+        card: String,
+        origin: CardLiftOrigin? = nil
+    ) {
+        scheduleCardFlightSequence([CardFlightStep(route: route, card: card, origin: origin)])
     }
 
     /// Instant feedback for a legal drag-discard: hide the card from the fan, drop it on the pile,
     /// and fly it there right away — before the server round-trip. `updateCardFlights` then skips
     /// re-animating the same discard once the server snapshot confirms it.
-    private func beginOptimisticDiscard(_ card: String) {
+    private func beginOptimisticDiscard(_ card: String, from lift: CardLiftOrigin?) {
         let c = CardIdValidation.normalize(card)
         guard !c.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.18)) {
             pendingDiscardCard = c
         }
         suppressDiscardFlightFor = c
-        scheduleCardFlight(route: .discardFromHand(isOpponent: false), card: c)
+        scheduleCardFlight(
+            route: .discardFromHand(isOpponent: false),
+            card: c,
+            origin: lift ?? handFanGeometry.origin(of: c)
+        )
     }
 
     /// Discard request resolved — drop the optimistic overlay so the server snapshot is the source of truth.
@@ -560,20 +578,22 @@ struct GameView: View {
     /// Plays one or more card flights in order with a small gap between them, so a single
     /// "collapsed" snapshot can still surface multi-step actions (e.g. your discard → opp
     /// draw → opp discard when the bot turn round-trips inside one /move response).
-    private func scheduleCardFlightSequence(
-        _ steps: [(route: CardFlightAnimationOverlay.Route, card: String)]
-    ) {
+    private func scheduleCardFlightSequence(_ steps: [CardFlightStep]) {
         cardFlightClearTask?.cancel()
         guard let first = steps.first else {
             cardFlight = nil
             return
         }
-        cardFlight = CardFlightModel(route: first.route, card: first.card)
+        cardFlight = CardFlightModel(route: first.route, card: first.card, origin: first.origin)
         cardFlightClearTask = Task { @MainActor in
             for i in 1 ..< steps.count {
                 try? await Task.sleep(nanoseconds: 680_000_000)
                 if Task.isCancelled { return }
-                cardFlight = CardFlightModel(route: steps[i].route, card: steps[i].card)
+                cardFlight = CardFlightModel(
+                    route: steps[i].route,
+                    card: steps[i].card,
+                    origin: steps[i].origin
+                )
             }
             try? await Task.sleep(nanoseconds: 680_000_000)
             if Task.isCancelled { return }
@@ -623,7 +643,11 @@ struct GameView: View {
                 suppressDiscardFlightFor = nil
                 return
             }
-            scheduleCardFlight(route: .discardFromHand(isOpponent: false), card: normTop)
+            scheduleCardFlight(
+                route: .discardFromHand(isOpponent: false),
+                card: normTop,
+                origin: handFanGeometry.origin(of: normTop)
+            )
             return
         }
 
@@ -645,15 +669,20 @@ struct GameView: View {
            let newTop = a.discard.last, !newTop.isEmpty, newTop != b.discard.last
         {
             let oppDrewFromStock = a.stockCount < b.stockCount
-            var steps: [(route: CardFlightAnimationOverlay.Route, card: String)] = []
+            var steps: [CardFlightStep] = []
             if oppDrewFromStock {
-                steps.append((.drawFromStock(toOpponent: true), "AS"))
+                steps.append(CardFlightStep(route: .drawFromStock(toOpponent: true), card: "AS"))
             } else {
                 let pickedUp = b.discard.last ?? ""
                 let pickedUpNorm = CardIdValidation.normalize(pickedUp)
-                steps.append((.drawFromDiscard(toOpponent: true), pickedUpNorm))
+                steps.append(CardFlightStep(route: .drawFromDiscard(toOpponent: true), card: pickedUpNorm))
             }
-            steps.append((.discardFromHand(isOpponent: true), CardIdValidation.normalize(newTop)))
+            steps.append(
+                CardFlightStep(
+                    route: .discardFromHand(isOpponent: true),
+                    card: CardIdValidation.normalize(newTop)
+                )
+            )
             scheduleCardFlightSequence(steps)
             return
         }
@@ -669,21 +698,32 @@ struct GameView: View {
             let yourDiscardNorm = CardIdValidation.normalize(yourDiscardRaw)
             let oppDrewFromStock = a.stockCount < b.stockCount
 
-            var steps: [(route: CardFlightAnimationOverlay.Route, card: String)] = []
+            var steps: [CardFlightStep] = []
             // Skip your discard's flight if we already played it optimistically on release.
             if suppressDiscardFlightFor == yourDiscardNorm {
                 suppressDiscardFlightFor = nil
             } else if !yourDiscardNorm.isEmpty {
-                steps.append((.discardFromHand(isOpponent: false), yourDiscardNorm))
+                steps.append(
+                    CardFlightStep(
+                        route: .discardFromHand(isOpponent: false),
+                        card: yourDiscardNorm,
+                        origin: handFanGeometry.origin(of: yourDiscardNorm)
+                    )
+                )
             }
             if oppDrewFromStock {
-                steps.append((.drawFromStock(toOpponent: true), "AS"))
+                steps.append(CardFlightStep(route: .drawFromStock(toOpponent: true), card: "AS"))
             } else {
                 // Opp drew from discard: the only face-up card they could have taken is the one
                 // you just placed there (your discard is the new top before opp acts).
-                steps.append((.drawFromDiscard(toOpponent: true), yourDiscardNorm))
+                steps.append(CardFlightStep(route: .drawFromDiscard(toOpponent: true), card: yourDiscardNorm))
             }
-            steps.append((.discardFromHand(isOpponent: true), CardIdValidation.normalize(discarded)))
+            steps.append(
+                CardFlightStep(
+                    route: .discardFromHand(isOpponent: true),
+                    card: CardIdValidation.normalize(discarded)
+                )
+            )
             scheduleCardFlightSequence(steps)
         }
     }
@@ -1039,7 +1079,7 @@ struct GameView: View {
                 canReorder: canReorderHand(for: surface),
                 onReorder: { handDisplayOrder = $0 },
                 onDragDiscard: canDragDiscard(surface: surface, p: p)
-                    ? { dragDiscardRequest = $0 }
+                    ? { card, lift in dragDiscardRequest = DragDiscardRequest(card: card, lift: lift) }
                     : nil,
                 recentlyDrawn: recentlyDrawnCard
             )
@@ -1398,9 +1438,15 @@ struct GameView: View {
         }
         .coordinateSpace(name: "gameTable")
         .onPreferenceChange(TableAnchorFramesKey.self) { tableAnchorFrames = $0 }
+        .onPreferenceChange(HandFanGeometryKey.self) { handFanGeometry = $0 }
         .overlay {
             if let cf = cardFlight, surface == .play || surface == .downCard {
-                CardFlightAnimationOverlay(route: cf.route, card: cf.card, anchorFrames: tableAnchorFrames)
+                CardFlightAnimationOverlay(
+                    route: cf.route,
+                    card: cf.card,
+                    anchorFrames: tableAnchorFrames,
+                    origin: cf.origin
+                )
                     .id(cf.id)
                     .allowsHitTesting(false)
                     .transition(.opacity)
@@ -2225,6 +2271,15 @@ struct GameView: View {
             handDisplayOrder = PlayingCard.sortHand(newHand)
             return
         }
+        // In-play changes only ever draw (10->11) or discard (11->10) a single card, so one hand is
+        // always a subset of the other. A fresh deal (re-deal, next hand, or deck void) replaces the
+        // whole hand, so neither is a subset; start those hands sorted rather than in server deal order.
+        let oldSet = Set(handDisplayOrder)
+        let newSet = Set(newHand)
+        if !oldSet.isSubset(of: newSet) && !newSet.isSubset(of: oldSet) {
+            handDisplayOrder = PlayingCard.sortHand(newHand)
+            return
+        }
         var merged = handDisplayOrder.filter { newHand.contains($0) }
         for c in newHand where !merged.contains(c) { merged.append(c) }
         if merged.count != newHand.count || Set(merged) != Set(newHand) {
@@ -2747,7 +2802,7 @@ struct GameView: View {
                         }
                     },
                     onAfterSuccessfulDiscard: nil,
-                    onOptimisticDiscard: { beginOptimisticDiscard($0) },
+                    onOptimisticDiscard: { card, lift in beginOptimisticDiscard(card, from: lift) },
                     onDiscardFailed: {
                         suppressDiscardFlightFor = nil
                         clearPendingDiscard()
@@ -2902,6 +2957,13 @@ private struct CutForDealView: View {
     }
 }
 
+/// A card released past the drag-to-discard threshold, along with where the
+/// player let go of it so the discard flight can start from that spot.
+private struct DragDiscardRequest: Equatable {
+    let card: String
+    let lift: CardLiftOrigin
+}
+
 private struct DiscardHelper: View {
     let gameId: String
     let hand: [String]
@@ -2913,11 +2975,11 @@ private struct DiscardHelper: View {
     @Binding var feedbackIsError: Bool
     @Binding var selectedCard: String?
     /// Card dropped via drag-to-discard in the fan; consumed (set back to nil) here.
-    @Binding var dragDiscardRequest: String?
+    @Binding var dragDiscardRequest: DragDiscardRequest?
     var onAfterSuccessfulMove: ((PlayerPerspective?, PlayerPerspective) -> Void)? = nil
     var onAfterSuccessfulDiscard: ((String, PlayerPerspective?, PlayerPerspective) -> Void)? = nil
     /// Called the instant a legal drag-discard is released, so the parent can show it optimistically.
-    var onOptimisticDiscard: ((String) -> Void)? = nil
+    var onOptimisticDiscard: ((String, CardLiftOrigin) -> Void)? = nil
     /// Called if a discard request fails, so the parent can roll back any optimistic UI.
     var onDiscardFailed: (() -> Void)? = nil
 
@@ -3005,12 +3067,12 @@ private struct DiscardHelper: View {
 
     /// Drag-to-discard: submit the plain discard directly when it's legal;
     /// otherwise select the card so the inline hint explains why it isn't.
-    private func handleDragDiscard(_ dropped: String) {
+    private func handleDragDiscard(_ dropped: DragDiscardRequest) {
         recomputeIfNeeded()
-        let c = CardIdValidation.normalize(dropped)
+        let c = CardIdValidation.normalize(dropped.card)
         selectedCard = c
         if eligibility.plain.contains(c) {
-            onOptimisticDiscard?(c)
+            onOptimisticDiscard?(c, dropped.lift)
             Task { await submit(plain: true) }
         }
     }
