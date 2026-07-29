@@ -14,6 +14,7 @@ struct ManualScorecardView: View {
     private let contentInset: CGFloat = 16
     private let minDisplayGameColumns = 4
     private let cellPaddingH: CGFloat = 6
+    private let sectionDividerThickness: CGFloat = 1.5
 
     private struct DisplayColumn: Identifiable {
         let id: Int
@@ -81,9 +82,21 @@ struct ManualScorecardView: View {
         .sheet(isPresented: $showNameEditor) {
             nameEditorSheet
         }
+        .onDisappear {
+            // Leaving with a live focus strands the keyboard's safe-area inset,
+            // which then shifts whatever screen comes next.
+            focusedField = nil
+        }
         .alert("Reset this score sheet?", isPresented: $showResetConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset", role: .destructive) { store.resetSession() }
+            Button("Reset", role: .destructive) {
+                // Reset replaces every game and hand, so any focused cell is about
+                // to vanish from the hierarchy. Drop focus first, otherwise the
+                // orphaned field leaves the keyboard inset applied.
+                editText = ""
+                focusedField = nil
+                store.resetSession()
+            }
         } message: {
             Text("Clears all games, hands, and match point totals. This can't be undone.")
         }
@@ -94,26 +107,48 @@ struct ManualScorecardView: View {
             let columns = displayColumns()
             let contentWidth = max(0, geo.size.width - contentInset * 2)
             let handRows = store.maxHandRows()
-            let sectionRows: CGFloat = 2 + 2 + 1 + CGFloat(handRows) + 3
+            // 2 box rows + 2 hand headers + hands + 3 totals, plus a row of slack
+            // so the grid breathes rather than packing tight when it fits.
+            let contentRows = CGFloat(7 + handRows)
+            let sectionRows = contentRows + 1
             let bottomInset = max(8, geo.safeAreaInsets.bottom)
             let headerChrome: CGFloat = 8 + 12 + 72
             let actionBarChrome: CGFloat = 12 + 50 + bottomInset
+            let availableGridHeight = max(0, geo.size.height - headerChrome - actionBarChrome)
+
+            // Rows stretch to fill the screen while everything fits. Past a
+            // readable minimum they stop shrinking and the grid grows taller than
+            // the screen, at which point the surrounding ScrollView takes over.
+            let minRowHeight: CGFloat = 40
+            let rowHeight = max(minRowHeight, floor(availableGridHeight / max(sectionRows, 1)))
+            let naturalGridHeight = rowHeight * contentRows + sectionDividerThickness * 2
+
             let metrics = GridMetrics(
                 contentWidth: contentWidth,
-                gridHeight: max(0, geo.size.height - headerChrome - actionBarChrome),
+                gridHeight: max(availableGridHeight, naturalGridHeight),
                 columnCount: columns.count,
-                sectionRows: sectionRows
+                rowHeight: rowHeight
             )
 
+            // One layout for both cases: branching on a height-derived flag would
+            // swap view identity every time the keyboard resizes the screen, tearing
+            // down the focused text field and stranding the keyboard safe-area inset.
             VStack(spacing: 0) {
-                headerBlock
-                    .padding(.horizontal, contentInset)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        headerBlock
+                            .padding(.horizontal, contentInset)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
 
-                scoreGrid(columns: columns, metrics: metrics, handRows: handRows)
-                    .padding(.horizontal, contentInset)
+                        scoreGrid(columns: columns, metrics: metrics, handRows: handRows)
+                            .padding(.horizontal, contentInset)
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
 
+                // Pinned below the scroll view so keyboard avoidance parks it just
+                // above the keyboard instead of flinging it up the screen.
                 actionBar
                     .padding(.horizontal, contentInset)
                     .padding(.top, 12)
@@ -153,18 +188,27 @@ struct ManualScorecardView: View {
         }
     }
 
+    private var addHandTargetId: UUID? {
+        (store.session.games.first(where: \.isLive) ?? store.session.games.last)?.id
+    }
+
+    private var canAddHand: Bool {
+        guard let id = addHandTargetId else { return false }
+        return store.canAddHand(to: id)
+    }
+
     private var actionBar: some View {
         HStack(spacing: 10) {
             Button {
-                if let live = store.session.games.first(where: \.isLive) {
-                    store.addHand(to: live.id)
-                } else if let last = store.session.games.last {
-                    store.addHand(to: last.id)
+                if let id = addHandTargetId {
+                    store.addHand(to: id)
                 }
             } label: {
                 Label("Add hand", systemImage: "plus")
             }
             .buttonStyle(GinGhostButtonStyle())
+            .disabled(!canAddHand)
+            .opacity(canAddHand ? 1 : 0.4)
 
             Button {
                 store.addGame()
@@ -190,6 +234,8 @@ struct ManualScorecardView: View {
             boxSection(columns: columns, metrics: metrics)
             sectionDivider
             handSection(columns: columns, metrics: metrics, handRows: handRows)
+            // Absorbs the slack row when the grid fits; collapses to zero once the
+            // grid is taller than the screen and the totals follow the hands directly.
             Spacer(minLength: 0)
             sectionDivider
             totalsSection(columns: columns, metrics: metrics)
@@ -583,9 +629,11 @@ struct ManualScorecardView: View {
     }
 
     private func advanceFrom(_ field: FocusField) {
-        // The focus onChange handler commits the current cell and loads the next.
-        // `nextField` may append a new hand row, so defer focusing until the new
-        // cell exists in the hierarchy.
+        // Commit the current cell up front so the add-hand guard in `nextField`
+        // sees the value the user just typed (otherwise a fresh row would look
+        // blank and wouldn't be created). The focus onChange handler re-commits
+        // idempotently and loads the next cell's buffer.
+        commit(field, text: editText)
         guard let next = nextField(after: field) else {
             focusedField = nil
             return
@@ -604,6 +652,9 @@ struct ManualScorecardView: View {
             if nextIdx >= store.session.games[gameIdx].hands.count {
                 store.addHand(to: gameId)
             }
+            // The guard in `addHand` may decline to add a trailing blank row; if
+            // there's still nowhere to advance, just dismiss the keyboard.
+            guard nextIdx < store.session.games[gameIdx].hands.count else { return nil }
             let nextHand = store.session.games[gameIdx].hands[nextIdx]
             return .hand(gameId: gameId, handId: nextHand.id, side: side)
 
@@ -640,7 +691,7 @@ struct ManualScorecardView: View {
         let halfColumnWidth: CGFloat
         let rowHeight: CGFloat
 
-        init(contentWidth: CGFloat, gridHeight: CGFloat, columnCount: Int, sectionRows: CGFloat) {
+        init(contentWidth: CGFloat, gridHeight: CGFloat, columnCount: Int, rowHeight: CGFloat) {
             let safeWidth = max(0, contentWidth)
             let safeHeight = max(0, gridHeight)
             gridWidth = safeWidth
@@ -649,7 +700,7 @@ struct ManualScorecardView: View {
             gamesWidth = max(0, safeWidth - labelWidth)
             gameColumnWidth = max(0, floor(gamesWidth / CGFloat(max(columnCount, 1))))
             halfColumnWidth = max(0, floor(gameColumnWidth / 2))
-            rowHeight = max(36, floor(safeHeight / max(sectionRows, 1)))
+            self.rowHeight = max(36, rowHeight)
         }
     }
 
@@ -802,7 +853,7 @@ struct ManualScorecardView: View {
         Rectangle().fill(lineColor.opacity(0.28)).frame(height: 1).allowsHitTesting(false)
     }
     private var sectionDivider: some View {
-        Rectangle().fill(lineColor.opacity(0.42)).frame(height: 1.5).allowsHitTesting(false)
+        Rectangle().fill(lineColor.opacity(0.42)).frame(height: sectionDividerThickness).allowsHitTesting(false)
     }
     private var gridOuterBorder: some View {
         Rectangle().strokeBorder(lineColor.opacity(0.5), lineWidth: 1.5).allowsHitTesting(false)

@@ -146,8 +146,23 @@ final class ManualScoreStore: ObservableObject {
 
     func addHand(to gameId: UUID) {
         guard let gi = session.games.firstIndex(where: { $0.id == gameId }) else { return }
+        // Keep at most one blank trailing hand per game: never stack empty rows
+        // ahead of what's actually been scored. This is per-game so a new game
+        // starts fresh without inheriting the previous game's extra rows.
+        if let last = session.games[gi].hands.last,
+           last.wePoints == nil, last.theyPoints == nil {
+            return
+        }
         session.games[gi].hands.append(.fresh())
         touch()
+    }
+
+    /// Whether a fresh blank hand can be appended to this game (i.e. the last
+    /// hand already carries a score). Drives the "Add hand" button state.
+    func canAddHand(to gameId: UUID) -> Bool {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }) else { return false }
+        guard let last = session.games[gi].hands.last else { return true }
+        return last.wePoints != nil || last.theyPoints != nil
     }
 
     func addGame() {
