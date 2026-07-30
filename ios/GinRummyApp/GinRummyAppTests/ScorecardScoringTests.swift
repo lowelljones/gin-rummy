@@ -111,4 +111,106 @@ final class ScorecardScoringTests: XCTestCase {
         XCTAssertEqual(ScorecardScoring.gameBettingBucketLabel(for: matches[1], seat: 0), "+2")
         XCTAssertEqual(ScorecardScoring.gameBettingBucketLabel(for: matches[1], seat: 1), "-2")
     }
+
+    // MARK: - Manual sheet game lifecycle
+
+    @MainActor
+    private func freshStore() -> ManualScoreStore {
+        let store = ManualScoreStore()
+        store.resetSession()
+        return store
+    }
+
+    @MainActor
+    private func liveGame(_ store: ManualScoreStore) throws -> ManualScoreGame {
+        try XCTUnwrap(store.session.games.first(where: \.isLive))
+    }
+
+    @MainActor
+    func testNewGameBlockedUntilARaceTargetIsReached() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        let hand = game.hands[0].id
+
+        store.setHandPoints(gameId: game.id, handId: hand, we: 124, they: 0)
+        XCTAssertFalse(store.canAddGame())
+
+        store.setHandPoints(gameId: game.id, handId: hand, we: 125, they: 0)
+        XCTAssertTrue(store.canAddGame())
+    }
+
+    @MainActor
+    func testRaceTargetCountsEitherSide() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        store.setHandPoints(gameId: game.id, handId: game.hands[0].id, we: 0, they: 130)
+        XCTAssertTrue(store.canAddGame())
+    }
+
+    @MainActor
+    func testAddGameIsIgnoredBeforeTheRaceTarget() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        store.setHandPoints(gameId: game.id, handId: game.hands[0].id, we: 100, they: 0)
+
+        store.addGame()
+
+        XCTAssertEqual(store.session.games.count, 1)
+    }
+
+    /// Hitting "Next" instead of "Done" leaves an unplayed row behind; closing the
+    /// game out should drop it rather than carry it into the finished sheet.
+    @MainActor
+    func testNewGameDropsAnUnscoredTrailingHand() throws {
+        let store = freshStore()
+        let first = try liveGame(store)
+        store.setHandPoints(gameId: first.id, handId: first.hands[0].id, we: 130, they: 0)
+        store.addHand(to: first.id)
+        XCTAssertEqual(try liveGame(store).hands.count, 2)
+
+        store.addGame()
+
+        let closed = try XCTUnwrap(store.session.games.first { $0.number == 1 })
+        XCTAssertEqual(closed.hands.count, 1)
+        XCTAssertEqual(closed.totalWe(), 130)
+        XCTAssertFalse(closed.isLive)
+        XCTAssertEqual(store.session.games.count, 2)
+    }
+
+    @MainActor
+    func testAddHandWontStackBlankRows() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        XCTAssertEqual(game.hands.count, 1)
+
+        store.addHand(to: game.id)
+        XCTAssertEqual(try liveGame(store).hands.count, 1)
+
+        store.setHandPoints(gameId: game.id, handId: game.hands[0].id, we: 10, they: 0)
+        store.addHand(to: game.id)
+        XCTAssertEqual(try liveGame(store).hands.count, 2)
+    }
+
+    /// A new game starts clean — the previous game's rows don't carry over.
+    @MainActor
+    func testNewGameStartsWithItsOwnSingleBlankHand() throws {
+        let store = freshStore()
+        let first = try liveGame(store)
+        store.setHandPoints(gameId: first.id, handId: first.hands[0].id, we: 130, they: 0)
+        store.addHand(to: first.id)
+        store.setHandPoints(
+            gameId: first.id,
+            handId: try liveGame(store).hands[1].id,
+            we: 0,
+            they: 15
+        )
+
+        store.addGame()
+
+        let second = try liveGame(store)
+        XCTAssertEqual(second.number, 2)
+        XCTAssertEqual(second.hands.count, 1)
+        XCTAssertEqual(second.totalWe(), 0)
+        XCTAssertFalse(store.canAddGame())
+    }
 }

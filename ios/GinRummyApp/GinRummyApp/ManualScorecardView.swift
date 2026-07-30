@@ -10,6 +10,8 @@ struct ManualScorecardView: View {
     @State private var showNameEditor = false
     @State private var draftWeName = ""
     @State private var draftTheyName = ""
+    @State private var scrollViewport: CGSize = .zero
+    @State private var keyboardOverlap: CGFloat = 0
 
     private let contentInset: CGFloat = 16
     private let minDisplayGameColumns = 4
@@ -48,7 +50,8 @@ struct ManualScorecardView: View {
                         draftTheyName = store.session.theyName
                         showNameEditor = true
                     }
-                    Button("New game") { store.addGame() }
+                    Button("New game") { startNewGame() }
+                        .disabled(!store.canAddGame())
                     Button("Reset sheet", role: .destructive) { showResetConfirm = true }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -56,17 +59,12 @@ struct ManualScorecardView: View {
                 }
             }
             ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
                 if let field = focusedField {
-                    Text(editingPrompt)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(GinRummyPalette.sage)
-                    Spacer()
                     Button("Next") {
                         advanceFrom(field)
                     }
                     .foregroundStyle(GinRummyPalette.gold)
-                } else {
-                    Spacer()
                 }
                 Button("Done") {
                     finishEditing()
@@ -81,6 +79,12 @@ struct ManualScorecardView: View {
         }
         .sheet(isPresented: $showNameEditor) {
             nameEditorSheet
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            updateKeyboardOverlap(note)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardOverlap = 0
         }
         .onDisappear {
             // Leaving with a live focus strands the keyboard's safe-area inset,
@@ -103,69 +107,82 @@ struct ManualScorecardView: View {
     }
 
     private var scorecardLayout: some View {
-        GeometryReader { geo in
-            let columns = displayColumns()
-            let contentWidth = max(0, geo.size.width - contentInset * 2)
-            let handRows = store.maxHandRows()
-            // 2 box rows + 2 hand headers + hands + 3 totals, plus a row of slack
-            // so the grid breathes rather than packing tight when it fits.
-            let contentRows = CGFloat(7 + handRows)
-            let sectionRows = contentRows + 1
-            let bottomInset = max(8, geo.safeAreaInsets.bottom)
-            let headerChrome: CGFloat = 8 + 12 + 72
-            let actionBarChrome: CGFloat = 12 + 50 + bottomInset
-            let availableGridHeight = max(0, geo.size.height - headerChrome - actionBarChrome)
+        let columns = displayColumns()
+        let handRows = store.maxHandRows()
+        // 2 box rows + 2 hand headers + hands + 3 totals, plus a row of slack
+        // so the grid breathes rather than packing tight when it fits.
+        let contentRows = CGFloat(7 + handRows)
+        let sectionRows = contentRows + 1
+        let headerChrome: CGFloat = 8 + 72 + 12
+        // Everything is sized from the scroll viewport. Wrapping this screen in a
+        // GeometryReader instead would report a height that excludes the keyboard
+        // but not its accessory toolbar, and lags a frame behind the keyboard
+        // animation besides.
+        let contentWidth = max(0, scrollViewport.width - contentInset * 2)
+        // Sized against the viewport as it is with the keyboard down. The bottom
+        // padding we apply is exactly `keyboardOverlap`, so adding it back undoes
+        // the shrink — otherwise raising the keyboard would squeeze out the gap
+        // above the totals and resize every row mid-edit.
+        let restingViewportHeight = scrollViewport.height + keyboardOverlap
+        let availableGridHeight = max(0, restingViewportHeight - headerChrome)
 
-            // Rows stretch to fill the screen while everything fits. Past a
-            // readable minimum they stop shrinking and the grid grows taller than
-            // the screen, at which point the surrounding ScrollView takes over.
-            let minRowHeight: CGFloat = 40
-            let rowHeight = max(minRowHeight, floor(availableGridHeight / max(sectionRows, 1)))
-            let naturalGridHeight = rowHeight * contentRows + sectionDividerThickness * 2
+        // Rows stretch to fill the viewport while everything fits. Past a
+        // readable minimum they stop shrinking and the grid grows taller than
+        // the viewport, at which point the ScrollView takes over.
+        let minRowHeight: CGFloat = 40
+        let rowHeight = max(minRowHeight, floor(availableGridHeight / max(sectionRows, 1)))
+        let naturalGridHeight = rowHeight * contentRows + sectionDividerThickness * 2
 
-            let metrics = GridMetrics(
-                contentWidth: contentWidth,
-                gridHeight: max(availableGridHeight, naturalGridHeight),
-                columnCount: columns.count,
-                rowHeight: rowHeight
-            )
+        let metrics = GridMetrics(
+            contentWidth: contentWidth,
+            gridHeight: max(availableGridHeight, naturalGridHeight),
+            columnCount: columns.count,
+            rowHeight: rowHeight
+        )
 
-            // One layout for both cases: branching on a height-derived flag would
-            // swap view identity every time the keyboard resizes the screen, tearing
-            // down the focused text field and stranding the keyboard safe-area inset.
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        headerBlock
-                            .padding(.horizontal, contentInset)
-                            .padding(.top, 8)
-                            .padding(.bottom, 12)
+        // Deliberately unframed. Pinning this stack to a measured screen height
+        // makes it refuse to shrink while the keyboard animates in, so UIKit
+        // shoves the whole hierarchy upward to reveal the focused cell — on top
+        // of the shrinking the safe area already did.
+        return VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    headerBlock
+                        .padding(.horizontal, contentInset)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
 
-                        scoreGrid(columns: columns, metrics: metrics, handRows: handRows)
-                            .padding(.horizontal, contentInset)
-                    }
+                    scoreGrid(columns: columns, metrics: metrics, handRows: handRows)
+                        .padding(.horizontal, contentInset)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-
-                // Pinned below the scroll view so keyboard avoidance parks it just
-                // above the keyboard instead of flinging it up the screen.
-                actionBar
-                    .padding(.horizontal, contentInset)
-                    .padding(.top, 12)
-                    .padding(.bottom, bottomInset)
+                // Tapping anywhere off a cell ends editing. Cells are text fields,
+                // which take the tap themselves, so they still focus normally.
+                .contentShape(Rectangle())
+                .onTapGesture { finishEditing() }
             }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-        }
-    }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { scrollViewport = proxy.size }
+                        .onChange(of: proxy.size) { _, size in scrollViewport = size }
+                }
+            }
 
-    private var editingPrompt: String {
-        guard let field = focusedField else { return "Score" }
-        switch field {
-        case let .hand(_, _, side):
-            return side == .we ? store.session.weName : store.session.theyName
-        case let .box(_, side):
-            return side == .we ? "\(store.session.weName) total" : "\(store.session.theyName) total"
+            // Pinned below the scroll view so it lands just above the keyboard
+            // instead of being flung up the screen.
+            actionBar
+                .padding(.horizontal, contentInset)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
         }
+        // The system's own keyboard inset is inconsistent: the first presentation
+        // measures the keyboard alone, later ones add the floating Next/Done
+        // toolbar, so the bar would hop up partway through editing. Measuring the
+        // keyboard directly keeps it still — the toolbar simply floats over it.
+        .padding(.bottom, keyboardOverlap)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 
     // MARK: - Header & actions
@@ -186,6 +203,35 @@ struct ManualScorecardView: View {
                 .font(.system(size: 34, weight: .medium))
                 .foregroundStyle(GinRummyPalette.gold)
         }
+    }
+
+    /// How far the keys themselves cover the view, excluding both the
+    /// home-indicator inset the layout already sits above and the Next/Done
+    /// toolbar, which is allowed to float over the action bar.
+    private func updateKeyboardOverlap(_ note: Notification) {
+        guard let endFrame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+              let scene = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene }).first,
+              let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first
+        else { return }
+        let covered = max(0, window.bounds.maxY - endFrame.minY)
+        let toolbar = firstResponderAccessoryHeight(in: window)
+        keyboardOverlap = max(0, covered - window.safeAreaInsets.bottom - toolbar)
+    }
+
+    /// Height the keyboard's reported frame devotes to the accessory toolbar
+    /// rather than the keys.
+    private func firstResponderAccessoryHeight(in view: UIView) -> CGFloat {
+        guard let responder = firstResponder(in: view) else { return 0 }
+        return responder.inputAccessoryView?.bounds.height ?? 0
+    }
+
+    private func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for sub in view.subviews {
+            if let found = firstResponder(in: sub) { return found }
+        }
+        return nil
     }
 
     private var addHandTargetId: UUID? {
@@ -211,11 +257,13 @@ struct ManualScorecardView: View {
             .opacity(canAddHand ? 1 : 0.4)
 
             Button {
-                store.addGame()
+                startNewGame()
             } label: {
                 Label("New game", systemImage: "square.grid.3x1.folder.fill.badge.plus")
             }
             .buttonStyle(GinPrimaryButtonStyle())
+            .disabled(!store.canAddGame())
+            .opacity(store.canAddGame() ? 1 : 0.4)
         }
     }
 
@@ -570,6 +618,14 @@ struct ManualScorecardView: View {
         var text = displayText(for: field)
         if text.hasPrefix("+") { text = String(text.dropFirst()) }
         return text
+    }
+
+    /// Commit first: a score just typed shouldn't be mistaken for an unplayed
+    /// hand and dropped, and focus must not outlive the row it points at.
+    private func startNewGame() {
+        if let field = focusedField { commit(field, text: editText) }
+        focusedField = nil
+        store.addGame()
     }
 
     private func finishEditing() {

@@ -39,6 +39,23 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
         )
     }
 
+    /// First side to reach this score wins the game.
+    static let raceTarget = 125
+
+    /// True once a side has reached the race target — the only point at which
+    /// the game is over and another one can start.
+    var isComplete: Bool {
+        totalWe() >= Self.raceTarget || totalThey() >= Self.raceTarget
+    }
+
+    /// A hand nobody scored was never played, so it shouldn't be left on the
+    /// sheet when the game is closed out.
+    mutating func dropTrailingBlankHands() {
+        while let last = hands.last, last.wePoints == nil, last.theyPoints == nil {
+            hands.removeLast()
+        }
+    }
+
     func totalWe() -> Int {
         hands.compactMap(\.wePoints).reduce(0, +)
     }
@@ -165,8 +182,16 @@ final class ManualScoreStore: ObservableObject {
         return last.wePoints != nil || last.theyPoints != nil
     }
 
+    /// Another game only makes sense once the current one has been won.
+    func canAddGame() -> Bool {
+        guard let game = session.games.first(where: \.isLive) ?? session.games.last else { return true }
+        return game.isComplete
+    }
+
     func addGame() {
+        guard canAddGame() else { return }
         for i in session.games.indices {
+            session.games[i].dropTrailingBlankHands()
             session.games[i].isLive = false
         }
         let n = (session.games.map(\.number).max() ?? 0) + 1
