@@ -505,8 +505,8 @@ struct GameView: View {
         switch act.type {
         case "passUpcard":
             if act.seat == a.nonDealer {
-                let chooser = a.dealer == a.seat ? "You choose" : "Opponent chooses"
-                return "This hand · \(who) passed the down card — \(chooser) next"
+                let chooser = a.dealer == a.seat ? "you choose" : "opponent chooses"
+                return "This hand · \(who) passed — \(chooser) next"
             }
             let leader = a.nonDealer == a.seat ? "You lead" : "Opponent leads"
             return "This hand · \(who) passed — \(leader) from the deck"
@@ -895,6 +895,10 @@ struct GameView: View {
         Text(bottomLogText.isEmpty ? " " : bottomLogText)
             .font(.subheadline.weight(.medium))
             .foregroundStyle(GinRummyPalette.cream)
+            .multilineTextAlignment(.leading)
+            .lineLimit(3)
+            .minimumScaleFactor(0.82)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1065,7 +1069,9 @@ struct GameView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(GinRummyPalette.sage)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 14)
             }
@@ -1759,8 +1765,8 @@ struct GameView: View {
            b.currentTurn != a.currentTurn
         {
             let decliner = b.currentTurn == my ? "You" : "Opponent"
-            let other = a.currentTurn == my ? "You" : "Opponent"
-            return "This hand · \(decliner) passed the down card — \(other) chooses next"
+            let other = a.currentTurn == my ? "you" : "opponent"
+            return "This hand · \(decliner) passed — \(other) chooses next"
         }
 
         // Second chooser rejects -> action back to first chooser (draw from deck).
