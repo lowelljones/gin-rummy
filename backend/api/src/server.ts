@@ -642,6 +642,77 @@ app.get("/reset-password", async (_req, reply) => {
   return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
 });
 
+function renderEmailConfirmedPage(): string {
+  /* Bare scheme link: the app has no "confirmed" route to handle, and none is needed —
+   * Supabase already verified the address server-side before redirecting here. This
+   * just launches the app so the user can sign in. */
+  const appLink = "ginrummy://";
+  const title = "Email confirmed";
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} — Gin Rummy</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at top, #14352a 0%, #0b211a 65%, #081711 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #f3ecd9;
+  }
+  .card {
+    max-width: 420px; width: calc(100% - 48px); padding: 36px 28px; text-align: center;
+    background: rgba(10, 30, 23, 0.82); border: 1px solid rgba(212, 175, 55, 0.45);
+    border-radius: 18px; box-shadow: 0 18px 60px rgba(0,0,0,0.5);
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { color: #b9c9b3; font-size: 15px; line-height: 1.5; margin: 0 0 22px; }
+  .btn {
+    display: block; width: 100%; box-sizing: border-box; padding: 15px 18px; margin-bottom: 12px;
+    border-radius: 12px; font-size: 17px; font-weight: 600; text-decoration: none; cursor: pointer; border: none;
+    background: #d4af37; color: #1c1604;
+  }
+  .hint { font-size: 13px; color: #8fa388; margin-top: 14px; margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1 id="heading">${title}</h1>
+    <p id="status">Your email address is confirmed. Open Gin Rummy and sign in to start playing.</p>
+    <a class="btn" id="openApp" href="${appLink}">Open the Gin Rummy app</a>
+    <p class="hint" id="hint">Nothing happening? Open Gin Rummy manually and sign in with the email and password you just registered.</p>
+    <script>
+      (function () {
+        /* Supabase reports a bad or expired link via the fragment (#error=…), not a
+         * non-200 status — the redirect itself always succeeds. */
+        var hash = window.location.hash || "";
+        if (hash.indexOf("error=") !== -1) {
+          document.getElementById("heading").textContent = "Link expired";
+          document.getElementById("status").textContent =
+            "This confirmation link is no longer valid. Open Gin Rummy and sign in — if it still asks you to confirm, request a new link.";
+          document.getElementById("hint").textContent = "";
+          return;
+        }
+        setTimeout(function () { window.location.href = "${appLink}"; }, 350);
+      })();
+    </script>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * Signup-confirmation landing page. Supabase's Site URL points here, so tapping
+ * "Confirm your mail" lands on a real page instead of the default localhost:3000.
+ * The address is already verified server-side by the time we render.
+ */
+app.get("/auth/confirmed", async (_req, reply) => {
+  const html = renderEmailConfirmedPage();
+  return reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(html);
+});
+
 app.get("/join/:code", async (req, reply) => {
   const raw = (req.params as { code: string }).code.toUpperCase().trim();
   const code = INVITE_CODE_RE.test(raw) ? raw : "";
