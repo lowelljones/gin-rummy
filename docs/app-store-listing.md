@@ -1,9 +1,43 @@
-# App Store Connect — iOS App Version page (v1.1)
+# App Store Connect — iOS App Version page (v1.0)
 
-Copy/paste fields for the **1.1** version page. Facts pulled from the current build:
-bundle ID `com.lowelljones.GinRummyApp`, `MARKETING_VERSION = 1.1`, iPhone-only
-(`TARGETED_DEVICE_FAMILY = 1`), portrait only, iOS 17.0+, backend at
-`https://gin-rummy-production.up.railway.app`.
+Copy/paste fields for the **1.0** version page. Facts pulled from the current build:
+bundle ID `com.lowelljones.GinRummyApp`, `MARKETING_VERSION = 1.0`,
+`CURRENT_PROJECT_VERSION = 10`, iPhone-only (`TARGETED_DEVICE_FAMILY = 1`), portrait only,
+iOS 17.0+, backend at `https://gin-rummy-production.up.railway.app`.
+
+---
+
+## Resubmission status
+
+1.0 (9) was **rejected** on 12 Aug 2026 under guideline 4 (Design) — "portions of the buttons
+are cut off screen", reviewed on an iPad Air 11" (M3) running iPadOS 26.5.2. Submission ID
+`35483edc-b3e0-43c8-a236-2a7a3a306ccb`.
+
+A rejection leaves the 1.0 version page editable in place, so **this is still the 1.0 page** —
+don't create a 1.1. Swap build 9 for build 10, reply in the Messages thread, and resubmit.
+There is no "What's New" field to fill in; that only appears for updates to a released version.
+
+Fixed in build 10:
+
+- On iPadOS this iPhone-only app runs in a compatibility window with a **375 × 721 pt** canvas
+  — shorter than any modern iPhone. The play table's fixed heights overflowed it and pushed the
+  bottom bar off-screen. Every vertical dimension now derives from the available height.
+- Propose redeal moved into the pinned action bar; it used to be a second bar stacked beneath.
+- Layoff screen: the unmelded-card row now wraps (it was laying out ~630 pt wide in a 375 pt
+  window), and "Done — lock it in" is pinned instead of below the fold.
+- Same overflow affected **iPhone SE** (375 × 667). Verified fixed on both.
+
+Suggested reply to App Review:
+
+```
+Thanks for the detail — the screenshot made this easy to reproduce. On iPadOS our iPhone-only
+app runs in a compatibility window with a 375 x 721 pt canvas, and our table layout used fixed
+heights tuned for a taller iPhone, so the bottom controls overflowed. Build 10 sizes the whole
+table from the available height, and the buttons that were stacked at the bottom are now a
+single bar. Verified on iPad Air 11" (iPadOS 26) and iPhone SE.
+
+To test a full game solo, tap "Play bot" on the home screen — no second player needed.
+```
 
 ---
 
@@ -83,26 +117,20 @@ Text a friend a link and you're dealt in. Real gin rummy, house rules intact, no
 
 ## App Store screenshots
 
-**Not yet produced — this is the one item on your list that still needs work.**
+**Done** — captured on device and checked in under `docs/app-store/screenshots/`:
 
-Required for this app (iPhone-only, portrait):
+| Size class | Pixels (portrait) | Files | Required? |
+|---|---|---|---|
+| 6.9" (iPhone 17 Pro Max / 16 Pro Max) | 1290 × 2796 | 4, in `6.9-inch/` | **Yes** |
+| 6.5" (iPhone 11 Pro Max style) | 1242 × 2688 | 4, in `6.5-inch/` | Optional — Apple scales the 6.9" set down |
+| iPad | — | — | Not needed, `TARGETED_DEVICE_FAMILY = 1` |
 
-| Size class | Pixels (portrait) | Required? |
-|---|---|---|
-| 6.9" (iPhone 17 Pro Max / 16 Pro Max) | 1320 × 2868 or 1290 × 2796 | **Yes** |
-| 6.5" (iPhone 11 Pro Max style) | 1242 × 2688 | Optional — Apple scales the 6.9" set down |
-| iPad | — | Not needed, `TARGETED_DEVICE_FAMILY = 1` |
+Both sets, in upload order: `01-table`, `02-down-card`, `03-match-end`, `04-scorecard`.
 
-Three to five shots is plenty. Suggested order:
-
-1. **The table mid-hand** — your hand fanned out, discard pile, opponent across the table. This is the money shot.
-2. **Home screen** — "Create a table / Join with code / Play bot", showing how quickly a game starts.
-3. **Hand end / scorecard** — the outcome pinned above the scoring breakdown.
-4. **Manual scorecard** — the in-person scoring feature; it differentiates the app.
-5. **Profile / game log** — win rate and match history.
-
-I can capture these from the Simulator (iPhone 17 Pro Max gives 1320 × 2868 natively) once
-there's a demo account to sign in with — say the word and I'll build, launch, and grab them.
+These predate build 10 and are still accurate: the layout work only changed how the table
+sizes itself on short canvases, and on a 6.9" phone it renders the same. Propose redeal now
+sits inside the action bar rather than in a strip below it — same position on screen, so the
+shots don't mislead. No reshoot needed for this submission.
 
 ## App icon
 
@@ -193,10 +221,9 @@ identifiers are collected.
 
 ## Not on the version page, but worth checking before you submit
 
-- **App name and subtitle** live on the *App Information* page, not here. The build's
-  `PRODUCT_NAME` resolves to `GinRummyApp`, and there's no `CFBundleDisplayName` — so the
-  home-screen name under the icon will read "GinRummyApp", not "Gin Rummy". Worth setting
-  `CFBundleDisplayName` to `Gin Rummy` in `Info.plist` before the build you submit.
+- **App name and subtitle** live on the *App Information* page, not here. ~~The build's
+  `PRODUCT_NAME` resolves to `GinRummyApp` and there's no `CFBundleDisplayName`~~ — **done**,
+  `Info.plist` sets `CFBundleDisplayName` to `Gin Rummy`, so that's what appears under the icon.
 - **Age rating** — the in-game chat means you'll answer "yes" to unrestricted web/user
   content questions; expect 12+ or higher. Answer the gambling questions **No**: there is no
   real-money or simulated-currency gambling.
@@ -206,3 +233,11 @@ identifiers are collected.
   `https://gin-rummy-production.up.railway.app/privacy` — verified live, and its contents
   line up with the nutrition labels above (email, display name, gameplay/chat data; manual
   scorecard stays on-device).
+- **Export compliance** — no longer prompts on upload. `Info.plist` declares
+  `ITSAppUsesNonExemptEncryption = false`; the app uses only standard HTTPS, which is exempt.
+- **Build number** — `CFBundleVersion` is bound to `CURRENT_PROJECT_VERSION` in the pbxproj.
+  Bump it there for every upload. It was previously bound to `MARKETING_VERSION`, which built
+  as "1.0" and would have been rejected on arrival as not greater than the existing build 9.
+- **Terms agreement** — both account-creation paths (Sign in with Apple on the landing screen,
+  and the email sign-up form) now show "By continuing, you agree to our Terms of Service and
+  Privacy Policy" with tappable links, for the user-generated-content guideline.
