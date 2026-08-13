@@ -9,6 +9,7 @@ struct GinRummyApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appModel)
+                .task { LayoutPreview.seedIfRequested(appModel) }
                 .onChange(of: scenePhase) { _, newPhase in
                     /* iOS suspends background Tasks; on foreground, top up the access token
                      * immediately so the user's first interaction never hits a 401. */

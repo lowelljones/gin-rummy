@@ -388,6 +388,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+        /// Drops the app straight onto a canned game table for layout QA. See `LayoutPreview`.
+        /// A nil perspective signs in without a game, landing on the lobby.
+        func seedForLayoutPreview(perspective: PlayerPerspective?, opponentDisplayName: String) {
+            accessToken = "layout-preview"
+            displayName = "You"
+            self.opponentDisplayName = opponentDisplayName
+            lastPerspective = perspective
+            activeGameId = perspective == nil ? nil : "layout-preview"
+        }
+    #endif
+
     private func startBackgroundRefreshLoop() {
         refreshTimerTask?.cancel()
         refreshTimerTask = Task { @MainActor [weak self] in

@@ -41,6 +41,7 @@
 		E90100000000000000000022 /* GinAppleSignInButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000022 /* GinAppleSignInButton.swift */; };
 		E90100000000000000000023 /* CourtCards.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000023 /* CourtCards.xcassets */; };
 		E90100000000000000000024 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000024 /* ProfileView.swift */; };
+		E90100000000000000000025 /* LayoutPreviewHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80100000000000000000025 /* LayoutPreviewHarness.swift */; };
 		EA0100000000000000000001 /* LobbyToGameTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */; };
 		EA0100000000000000000002 /* InviteLinkRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */; };
 		EA0100000000000000000003 /* MeldSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000003 /* MeldSolverTests.swift */; };
@@ -52,6 +53,7 @@
 		EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0200000000000000000009 /* PasswordResetURLTests.swift */; };
 		EA010000000000000000000A /* ScorecardScoringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000A /* ScorecardScoringTests.swift */; };
 		EA010000000000000000000B /* ProfileGameLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000B /* ProfileGameLogTests.swift */; };
+		EA010000000000000000000C /* TableLayoutMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA020000000000000000000C /* TableLayoutMetricsTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +104,7 @@
 		E80100000000000000000022 /* GinAppleSignInButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GinAppleSignInButton.swift; sourceTree = "<group>"; };
 		E80100000000000000000023 /* CourtCards.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = CourtCards.xcassets; sourceTree = "<group>"; };
 		E80100000000000000000024 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		E80100000000000000000025 /* LayoutPreviewHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutPreviewHarness.swift; sourceTree = "<group>"; };
 		EA0000000000000000000001 /* GinRummyAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GinRummyAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0200000000000000000001 /* LobbyToGameTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LobbyToGameTransitionTests.swift; sourceTree = "<group>"; };
 		EA0200000000000000000002 /* InviteLinkRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteLinkRoundTripTests.swift; sourceTree = "<group>"; };
@@ -114,6 +117,7 @@
 		EA0200000000000000000009 /* PasswordResetURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordResetURLTests.swift; sourceTree = "<group>"; };
 		EA020000000000000000000A /* ScorecardScoringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardScoringTests.swift; sourceTree = "<group>"; };
 		EA020000000000000000000B /* ProfileGameLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileGameLogTests.swift; sourceTree = "<group>"; };
+		EA020000000000000000000C /* TableLayoutMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableLayoutMetricsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,6 +159,7 @@
 				E80100000000000000000022 /* GinAppleSignInButton.swift */,
 				E8010000000000000000001F /* AccountSettingsView.swift */,
 				E80100000000000000000024 /* ProfileView.swift */,
+				E80100000000000000000025 /* LayoutPreviewHarness.swift */,
 				E80100000000000000000005 /* APIClient.swift */,
 				E80100000000000000000006 /* AppConfig.swift */,
 				E80100000000000000000007 /* Models.swift */,
@@ -209,6 +214,7 @@
 				EA0200000000000000000009 /* PasswordResetURLTests.swift */,
 				EA020000000000000000000A /* ScorecardScoringTests.swift */,
 				EA020000000000000000000B /* ProfileGameLogTests.swift */,
+				EA020000000000000000000C /* TableLayoutMetricsTests.swift */,
 			);
 			path = GinRummyAppTests;
 			sourceTree = "<group>";
@@ -313,6 +319,7 @@
 				E90100000000000000000004 /* AuthView.swift in Sources */,
 				E9010000000000000000001F /* AccountSettingsView.swift in Sources */,
 				E90100000000000000000024 /* ProfileView.swift in Sources */,
+				E90100000000000000000025 /* LayoutPreviewHarness.swift in Sources */,
 				E90100000000000000000005 /* APIClient.swift in Sources */,
 				E90100000000000000000006 /* AppConfig.swift in Sources */,
 				E90100000000000000000007 /* Models.swift in Sources */,
@@ -355,6 +362,7 @@
 				EA0100000000000000000009 /* PasswordResetURLTests.swift in Sources */,
 				EA010000000000000000000A /* ScorecardScoringTests.swift in Sources */,
 				EA010000000000000000000B /* ProfileGameLogTests.swift in Sources */,
+				EA010000000000000000000C /* TableLayoutMetricsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -414,7 +422,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GinRummyApp/GinRummyApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = BDDQS574XW;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GinRummyApp/Info.plist;
@@ -422,7 +430,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -437,7 +445,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GinRummyApp/GinRummyApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = BDDQS574XW;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GinRummyApp/Info.plist;
@@ -445,7 +453,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lowelljones.GinRummyApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -1,5 +1,66 @@
 import SwiftUI
 
+/// The terms/privacy line shown wherever an account can be created — the email
+/// sign-up form and the landing screen (Sign in with Apple creates an account on
+/// first use, so it needs the same disclosure).
+///
+/// App Review guideline 1.2 expects apps with user-generated content — this one
+/// has chat and player-chosen display names — to have terms the user agrees to
+/// before using the app, not just a link sitting somewhere in the UI.
+struct LegalConsentText: View {
+    /// Verb for the action the button next to this line performs.
+    var action: String = "continuing"
+
+    /// Built as an `AttributedString` rather than markdown in a `Text`, because a
+    /// `foregroundStyle` on the whole `Text` repaints the links in the body color
+    /// and they stop looking tappable. Colouring the link runs directly survives it.
+    private var sentence: AttributedString? {
+        let terms = AppConfig.termsOfServiceURL
+        let privacy = AppConfig.privacyPolicyURL
+        guard terms != nil || privacy != nil else { return nil }
+
+        var out = plain("By \(action), you agree to our ")
+        switch (terms, privacy) {
+        case let (terms?, privacy?):
+            out += link("Terms of Service", terms)
+            out += plain(" and ")
+            out += link("Privacy Policy", privacy)
+        case let (terms?, nil):
+            out += link("Terms of Service", terms)
+        case let (nil, privacy?):
+            out += link("Privacy Policy", privacy)
+        case (nil, nil):
+            return nil
+        }
+        out += plain(".")
+        return out
+    }
+
+    private func plain(_ text: String) -> AttributedString {
+        var s = AttributedString(text)
+        s.foregroundColor = GinRummyPalette.sage.opacity(0.85)
+        return s
+    }
+
+    private func link(_ text: String, _ url: URL) -> AttributedString {
+        var s = AttributedString(text)
+        s.link = url
+        s.foregroundColor = GinRummyPalette.gold
+        s.underlineStyle = .single
+        return s
+    }
+
+    var body: some View {
+        if let sentence {
+            Text(sentence)
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
 /// Landing screen: choose to sign in or create an account. Each choice pushes a
 /// dedicated form so the first tap isn't gated behind filling in fields.
 struct AuthView: View {
@@ -49,7 +110,8 @@ struct AuthView: View {
             }
             .padding(.horizontal, 24)
 
-            legalLinksView
+            LegalConsentText()
+                .padding(.horizontal, 24)
                 .padding(.bottom, 8)
 
             Spacer()
@@ -63,22 +125,6 @@ struct AuthView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("")
-    }
-
-    private var legalLinksView: some View {
-        HStack(spacing: 10) {
-            if let privacyURL = AppConfig.privacyPolicyURL {
-                Link("Privacy Policy", destination: privacyURL)
-            }
-            if AppConfig.privacyPolicyURL != nil, AppConfig.termsOfServiceURL != nil {
-                Text("·")
-            }
-            if let termsURL = AppConfig.termsOfServiceURL {
-                Link("Terms of Service", destination: termsURL)
-            }
-        }
-        .font(.footnote)
-        .foregroundStyle(GinRummyPalette.sage.opacity(0.85))
     }
 
     private func authDivider(label: String) -> some View {
@@ -193,6 +239,11 @@ struct AuthFormView: View {
                 .disabled(!canSubmit)
                 .opacity(formBusy ? 0.7 : 1)
                 .padding(.top, 4)
+
+                if mode == .signUp {
+                    LegalConsentText(action: "creating an account")
+                        .padding(.top, 2)
+                }
 
                 if !message.isEmpty {
                     FeedbackLine(text: message, isError: messageIsError, privateClubStyle: true)

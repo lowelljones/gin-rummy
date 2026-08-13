@@ -872,16 +872,20 @@ struct DiscardPileStackView: View {
 struct StockAndDiscardPiles: View {
     let stockCount: Int
     let discard: [String]
+    /// Shrinks with the table on short windows — see `TableLayoutMetrics`.
+    var cardWidth: CGFloat = CardMetrics.compactWidth
     /// When set, tapping the face-up discard takes that card (down card: your turn; play: your turn, 10 cards).
     var discardOnTap: (() -> Void)? = nil
     /// When set, tapping the stock draws (play or upcard dealer draw).
     var stockOnTap: (() -> Void)? = nil
 
-    private var pileW: CGFloat { CardMetrics.compactWidth }
+    private var pileW: CGFloat { cardWidth }
     private var pileH: CGFloat { CardMetrics.height(for: pileW) }
+    /// Keep the two piles from drifting apart as the cards shrink.
+    private var pileGap: CGFloat { max(18, pileW * 0.48) }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 28) {
+        HStack(alignment: .center, spacing: pileGap) {
             VStack(spacing: 6) {
                 Button {
                     stockOnTap?()

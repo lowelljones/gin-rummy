@@ -163,23 +163,29 @@ struct GinGhostButtonStyle: ButtonStyle {
 struct GinActionButtonStyle: ButtonStyle {
     var filled: Bool = true
     var tint: Color = GinRummyPalette.burgundy
+    /// Secondary actions that share a bar with a primary one. Still clears the
+    /// 44 pt minimum tap target.
+    var compact: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Inner(configuration: configuration, filled: filled, tint: tint)
+        Inner(configuration: configuration, filled: filled, tint: tint, compact: compact)
     }
 
     private struct Inner: View {
         let configuration: Configuration
         let filled: Bool
         let tint: Color
+        let compact: Bool
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
             configuration.label
-                .font(.callout.weight(.semibold))
+                .font((compact ? Font.subheadline : Font.callout).weight(.semibold))
                 .foregroundStyle(filled ? GinRummyPalette.cream : tint)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, minHeight: compact ? 30 : 22)
+                .padding(.vertical, compact ? 8 : 13)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(filled ? tint.opacity(configuration.isPressed ? 0.82 : 1) : Color.clear)

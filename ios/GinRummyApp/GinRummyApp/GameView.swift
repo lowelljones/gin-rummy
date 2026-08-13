@@ -1048,51 +1048,59 @@ struct GameView: View {
     }
 
     /// Fixed, scroll-free single-screen layout for the play and down-card surfaces.
+    ///
+    /// Sized off the height it is actually handed rather than off constants tuned
+    /// for one phone, so the pinned action bar can never be pushed off the bottom
+    /// of a short window (iPad compatibility windows, iPhone SE).
     private func playingTable(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
-        VStack(spacing: 8) {
-            compactStatusRow(surface: surface, p: p)
+        GeometryReader { geo in
+            let metrics = TableLayoutMetrics.fit(availableHeight: geo.size.height)
+            VStack(spacing: metrics.rowSpacing) {
+                compactStatusRow(surface: surface, p: p)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            FannedOpponentHandRow(cardCount: p.hands[1 - p.seat].count)
-                .frame(height: 74)
-                .padding(.horizontal, 4)
-                .tableFlightAnchor(.opponentHand)
+                FannedOpponentHandRow(cardCount: p.hands[1 - p.seat].count)
+                    .frame(height: metrics.opponentFanHeight)
+                    .padding(.horizontal, 4)
+                    .tableFlightAnchor(.opponentHand)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            centerTableForSurface(gameId: gameId, surface: surface, p: p)
-                .padding(.horizontal, 14)
-
-            if !bottomLogText.isEmpty {
-                Text(bottomLogText)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(GinRummyPalette.sage)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity)
+                centerTableForSurface(gameId: gameId, surface: surface, p: p, metrics: metrics)
                     .padding(.horizontal, 14)
+
+                if !bottomLogText.isEmpty {
+                    Text(bottomLogText)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(GinRummyPalette.sage)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(metrics.statusLogLineLimit)
+                        .minimumScaleFactor(0.82)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 14)
+                }
+
+                Spacer(minLength: 0)
+
+                // Full-bleed hand: no horizontal padding so cards reach both edges.
+                FannedHandRow(
+                    displayOrder: handDisplayFor(hand: p.hands[p.seat]),
+                    selected: $selectedHandCard,
+                    canReorder: canReorderHand(for: surface),
+                    onReorder: { handDisplayOrder = $0 },
+                    onDragDiscard: canDragDiscard(surface: surface, p: p)
+                        ? { card, lift in dragDiscardRequest = DragDiscardRequest(card: card, lift: lift) }
+                        : nil,
+                    recentlyDrawn: recentlyDrawnCard
+                )
+                .frame(height: metrics.handHeight)
+                .tableFlightAnchor(.myHand)
+
+                tableActionBar(gameId: gameId, surface: surface, p: p)
             }
-
-            Spacer(minLength: 0)
-
-            // Full-bleed hand: no horizontal padding so cards reach both edges.
-            FannedHandRow(
-                displayOrder: handDisplayFor(hand: p.hands[p.seat]),
-                selected: $selectedHandCard,
-                canReorder: canReorderHand(for: surface),
-                onReorder: { handDisplayOrder = $0 },
-                onDragDiscard: canDragDiscard(surface: surface, p: p)
-                    ? { card, lift in dragDiscardRequest = DragDiscardRequest(card: card, lift: lift) }
-                    : nil,
-                recentlyDrawn: recentlyDrawnCard
-            )
-            .frame(height: 152)
-            .tableFlightAnchor(.myHand)
-
-            tableActionBar(gameId: gameId, surface: surface, p: p)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1134,15 +1142,16 @@ struct GameView: View {
                 }
             }
 
-            if GameTablePolicy.proposeRedealAllowed(phase: p.phase) {
-                proposeRedealFooter(
+            if GameTablePolicy.proposeRedealAllowed(phase: p.phase), !isPendingRedeal(p) {
+                proposeRedealButton(
                     gameId: gameId,
-                    p: p,
                     feedbackText: feedbackText,
                     feedbackIsError: feedbackIsError
                 )
                 .padding(.horizontal, 14)
+                .padding(.top, 6)
                 .padding(.bottom, 8)
+                .background(GinRummyPalette.bgDeep.opacity(0.9))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1150,8 +1159,13 @@ struct GameView: View {
 
     /// Pinned bottom action bar — context buttons for the current surface, always
     /// on screen so the player never has to scroll to act.
+    ///
+    /// Propose redeal lives here too. It used to be a second bar underneath, added
+    /// with `safeAreaInset`; two stacked bars is what ran off the bottom of the
+    /// window on iPad and got 1.0 (9) rejected. One bar, one budget.
     @ViewBuilder
     private func tableActionBar(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
+        let showsRedeal = !isPendingRedeal(p) && proposeRedealAllowed(for: p)
         VStack(spacing: 8) {
             if feedbackIsError, !feedbackText.isEmpty {
                 FeedbackLine(text: feedbackText, isError: true, privateClubStyle: true)
@@ -1179,11 +1193,21 @@ struct GameView: View {
                     Label("Waiting for \(app.opponentDisplayName)…", systemImage: "hourglass")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(GinRummyPalette.sage)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 4)
                 }
             default:
                 EmptyView()
+            }
+
+            if showsRedeal {
+                proposeRedealButton(
+                    gameId: gameId,
+                    feedbackText: $feedbackText,
+                    feedbackIsError: $feedbackIsError
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -1262,7 +1286,12 @@ struct GameView: View {
     }
 
     @ViewBuilder
-    private func centerTableForSurface(gameId: String, surface: GamePlaySurface, p: PlayerPerspective) -> some View {
+    private func centerTableForSurface(
+        gameId: String,
+        surface: GamePlaySurface,
+        p: PlayerPerspective,
+        metrics: TableLayoutMetrics = .fit(availableHeight: TableLayoutMetrics.referenceHeight)
+    ) -> some View {
         switch surface {
         case .cutForDeal:
             // Handled by the dedicated, non-scrolling `cutForDealScreen`.
@@ -1270,18 +1299,20 @@ struct GameView: View {
         case .postCutReveal:
             EmptyView()
         case .downCard, .play:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: metrics.rowSpacing) {
                 if surface == .play, p.currentTurn != p.seat {
                     Label("Opponent’s turn", systemImage: "hourglass")
                         .font(.caption)
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                 }
-                if let kc = p.knockCheckCard, !kc.isEmpty {
+                if let kc = p.knockCheckCard, !kc.isEmpty, metrics.showsKnockLimitCard {
                     HStack(alignment: .center, spacing: 8) {
                         Text("Knock limit card")
                             .font(.caption)
                             .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
-                        PlayingCardView(card: kc, compact: true, onTap: nil)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        PlayingCardView(card: kc, compact: true, width: metrics.knockCardWidth, onTap: nil)
                     }
                 }
                 HStack {
@@ -1289,6 +1320,7 @@ struct GameView: View {
                     StockAndDiscardPiles(
                         stockCount: p.stockCount,
                         discard: pendingDiscardCard.map { p.discard + [$0] } ?? p.discard,
+                        cardWidth: metrics.pileCardWidth,
                         discardOnTap: discardTapActionIfEnabled(gameId: gameId, p: p),
                         stockOnTap: drawStockActionIfEnabled(gameId: gameId, p: p)
                     )
@@ -1469,25 +1501,6 @@ struct GameView: View {
                 .id(token)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if exitState == nil,
-               voidFlashKind == nil,
-               cutReveal == nil,
-               (surface == .play || surface == .downCard),
-               !isPendingRedeal(p),
-               proposeRedealAllowed(for: p)
-            {
-                proposeRedealFooter(
-                    gameId: gameId,
-                    p: p,
-                    feedbackText: $feedbackText,
-                    feedbackIsError: $feedbackIsError
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(GinRummyPalette.bgDeep.opacity(0.96))
-            }
-        }
         .onAppear {
             mergeHandOrder(with: p.hands[p.seat])
             chatMessages = []
@@ -1502,6 +1515,8 @@ struct GameView: View {
              * perspective refresh during that window was dropping the overlay and
              * letting the player keep acting on a game they had already forfeited. */
             guard exitState == nil else { return }
+            /* Layout-QA harness owns the perspective — never let polling overwrite it. */
+            guard !LayoutPreview.isActive else { return }
             pollTask?.cancel()
             pollTask = Task { await pollLoop(gameId: gameId) }
             connectGameSignals(gameId: gameId)
@@ -2390,10 +2405,11 @@ struct GameView: View {
         }
     }
 
+    /// Secondary action; sits inside the pinned action bar so it shares that bar's
+    /// height budget instead of adding a second one below it.
     @ViewBuilder
-    private func proposeRedealFooter(
+    private func proposeRedealButton(
         gameId: String,
-        p: PlayerPerspective,
         feedbackText: Binding<String>,
         feedbackIsError: Binding<Bool>
     ) -> some View {
@@ -2409,7 +2425,7 @@ struct GameView: View {
                 )
             }
         }
-        .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold))
+        .buttonStyle(GinActionButtonStyle(filled: false, tint: GinRummyPalette.gold, compact: true))
     }
 
     @ViewBuilder

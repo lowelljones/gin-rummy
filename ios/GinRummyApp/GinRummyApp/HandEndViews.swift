@@ -285,13 +285,14 @@ struct HandRevealView: View {
                     handsScroller(cardWidth: cardWidth)
                 }
                 .padding(.horizontal, 8)
+                // Blur only what sits behind the flash — the flash card itself stays sharp.
+                .blur(radius: stage == .flash ? 2.5 : 0)
 
                 if stage == .flash {
                     flashOverlay
                         .transition(.scale(scale: 0.86).combined(with: .opacity))
                 }
             }
-            .blur(radius: stage == .flash ? 2.5 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: stage)
@@ -300,7 +301,7 @@ struct HandRevealView: View {
     }
 
     /// Both layouts at full card size, so they routinely run past the bottom of the
-    /// screen. A fade and a tappable hint tell first-time players there is more below.
+    /// screen. A tappable hint tells first-time players there is more below.
     @ViewBuilder
     private func handsScroller(cardWidth: CGFloat) -> some View {
         ScrollViewReader { proxy in
@@ -321,7 +322,7 @@ struct HandRevealView: View {
                                 }
                             )
                         // Sits outside the measured height so it never itself reads as
-                        // "more below", but lets the last row clear the fade and hint.
+                        // "more below", but lets the last row clear the hint.
                         Color.clear
                             .frame(height: 48)
                             .id(Self.bottomAnchor)
@@ -341,17 +342,6 @@ struct HandRevealView: View {
                 .onPreferenceChange(RevealViewportHeightKey.self) { height in
                     viewportHeight = height ?? 0
                 }
-                .overlay(alignment: .bottom) {
-                    LinearGradient(
-                        colors: [GinRummyPalette.bgDeep.opacity(0), GinRummyPalette.bgDeep.opacity(0.9)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 56)
-                    .allowsHitTesting(false)
-                    .opacity(hasMoreBelow ? 1 : 0)
-                }
-
                 if showsScrollHint {
                     scrollHint {
                         hasScrolled = true
@@ -363,7 +353,6 @@ struct HandRevealView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: hasMoreBelow)
             .animation(.easeInOut(duration: 0.25), value: showsScrollHint)
         }
     }
@@ -967,10 +956,26 @@ struct LayoffArrangementView: View {
                 maxDeadwoodCount: layoutDeadwoodMax
             )
 
-            ScrollView {
-                layoffBody(cardWidth: cardWidth)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 8)
+            /* Done is the only way off this screen, so it is pinned rather than
+             * left at the bottom of the scroll where a short window hides it. */
+            VStack(spacing: 0) {
+                ScrollView {
+                    layoffBody(cardWidth: cardWidth)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 8)
+                }
+                footer
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                    .background(
+                        GinRummyPalette.bgDeep.opacity(0.92)
+                            .overlay(alignment: .top) {
+                                Rectangle()
+                                    .fill(GinRummyPalette.gold.opacity(0.18))
+                                    .frame(height: 1)
+                            }
+                    )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -991,7 +996,6 @@ struct LayoffArrangementView: View {
             knockerSection(cardWidth: cardWidth)
             Divider().overlay(GinRummyPalette.gold.opacity(0.35))
             yourSection(cardWidth: cardWidth)
-            footer
         }
     }
 
@@ -1097,19 +1101,28 @@ struct LayoffArrangementView: View {
                         .foregroundStyle(GinRummyPalette.sage.opacity(0.95))
                         .frame(maxWidth: .infinity)
                 } else {
-                    HStack(spacing: cardSpacing) {
-                        ForEach(remainingCards, id: \.self) { c in
-                            VStack(spacing: 2) {
-                                PlayingCardView(
-                                    card: c,
-                                    selected: selectedCard == c,
-                                    compact: true,
-                                    width: cardWidth,
-                                    onTap: { selectedCard = selectedCard == c ? nil : c }
-                                )
-                                Text("\(MeldSolver.deadwoodValue(c))")
-                                    .font(badgeFont)
-                                    .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
+                    /* Must wrap on the same schedule as `CardMetrics.deadwoodRowWidth`,
+                     * which is what sized `cardWidth` above. A flat row here meant a
+                     * ten-card hand laid out ~630 pt wide inside a 375 pt window and
+                     * dragged the rest of the screen off the right edge with it. */
+                    let perRow = CardMetrics.deadwoodCardsInWidestRow(cardCount: remainingCards.count)
+                    VStack(spacing: 6) {
+                        ForEach(Array(stride(from: 0, to: remainingCards.count, by: perRow)), id: \.self) { start in
+                            HStack(spacing: cardSpacing) {
+                                ForEach(remainingCards[start ..< min(start + perRow, remainingCards.count)], id: \.self) { c in
+                                    VStack(spacing: 2) {
+                                        PlayingCardView(
+                                            card: c,
+                                            selected: selectedCard == c,
+                                            compact: true,
+                                            width: cardWidth,
+                                            onTap: { selectedCard = selectedCard == c ? nil : c }
+                                        )
+                                        Text("\(MeldSolver.deadwoodValue(c))")
+                                            .font(badgeFont)
+                                            .foregroundStyle(HandEndStyle.deadwoodRed.opacity(0.95))
+                                    }
+                                }
                             }
                         }
                     }
@@ -1144,6 +1157,8 @@ struct LayoffArrangementView: View {
             Text("You'll score \(remainingPoints) unmelded vs their \(knockerDeadwoodPoints). Tie or lower undercuts the knock for a 25-point bonus.")
                 .font(.caption2)
                 .foregroundStyle(GinRummyPalette.sage.opacity(0.9))
+                .lineLimit(3)
+                .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
