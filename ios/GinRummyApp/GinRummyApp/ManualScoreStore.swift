@@ -51,7 +51,7 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
     /// A hand nobody scored was never played, so it shouldn't be left on the
     /// sheet when the game is closed out.
     mutating func dropTrailingBlankHands() {
-        while let last = hands.last, last.wePoints == nil, last.theyPoints == nil {
+        while let last = hands.last, last.isBlank {
             hands.removeLast()
         }
     }
@@ -64,13 +64,15 @@ struct ManualScoreGame: Codable, Equatable, Identifiable {
         hands.compactMap(\.theyPoints).reduce(0, +)
     }
 
-    /// A hand is won by whoever scored points in it.
-    func weBoxesWon() -> Int { hands.filter { ($0.wePoints ?? 0) > 0 }.count }
-    func theyBoxesWon() -> Int { hands.filter { ($0.theyPoints ?? 0) > 0 }.count }
+    /// A hand is won by whichever side scored more in it. Comparing the two
+    /// sides rather than testing each against zero keeps a hand that somehow
+    /// carries points on both sides from counting as a win for both.
+    func weBoxesWon() -> Int { hands.filter { $0.winnerIsWe == true }.count }
+    func theyBoxesWon() -> Int { hands.filter { $0.winnerIsWe == false }.count }
     /// Net hands won from the We player's perspective (+ means We are up).
     func netBoxes() -> Int { weBoxesWon() - theyBoxesWon() }
     /// True once at least one scored hand exists.
-    var hasScoredHand: Bool { weBoxesWon() + theyBoxesWon() > 0 }
+    var hasScoredHand: Bool { hands.contains(where: \.isScored) }
 
     /// Score margin + 25× net hands won (excludes win bonus and shutout).
     func interimNetForWe() -> Int? {
@@ -101,6 +103,28 @@ struct ManualScoreHand: Codable, Equatable, Identifiable {
     static func fresh() -> ManualScoreHand {
         ManualScoreHand(id: UUID(), wePoints: nil, theyPoints: nil)
     }
+
+    /// True for a We win, false for a They win, nil when the hand was never
+    /// played or carries no points for either side.
+    var winnerIsWe: Bool? {
+        let we = wePoints ?? 0
+        let they = theyPoints ?? 0
+        if we > they { return true }
+        if they > we { return false }
+        return nil
+    }
+
+    /// A hand somebody actually scored in. A row of zeroes is on the sheet but
+    /// counts for nobody.
+    var isScored: Bool { winnerIsWe != nil }
+
+    /// Nothing has been typed into either side yet.
+    var isBlank: Bool { wePoints == nil && theyPoints == nil }
+}
+
+/// Which half of a hand row a score belongs to.
+enum ManualScoreSide {
+    case we, they
 }
 
 /// Names of people you've played — online opponents (recorded when the profile
@@ -166,8 +190,7 @@ final class ManualScoreStore: ObservableObject {
         // Keep at most one blank trailing hand per game: never stack empty rows
         // ahead of what's actually been scored. This is per-game so a new game
         // starts fresh without inheriting the previous game's extra rows.
-        if let last = session.games[gi].hands.last,
-           last.wePoints == nil, last.theyPoints == nil {
+        if let last = session.games[gi].hands.last, last.isBlank {
             return
         }
         session.games[gi].hands.append(.fresh())
@@ -179,7 +202,7 @@ final class ManualScoreStore: ObservableObject {
     func canAddHand(to gameId: UUID) -> Bool {
         guard let gi = session.games.firstIndex(where: { $0.id == gameId }) else { return false }
         guard let last = session.games[gi].hands.last else { return true }
-        return last.wePoints != nil || last.theyPoints != nil
+        return !last.isBlank
     }
 
     /// Another game only makes sense once the current one has been won.
@@ -204,6 +227,49 @@ final class ManualScoreStore: ObservableObject {
               let hi = session.games[gi].hands.firstIndex(where: { $0.id == handId }) else { return }
         session.games[gi].hands[hi].wePoints = we
         session.games[gi].hands[hi].theyPoints = they
+        touch()
+    }
+
+    /// Writes one half of a hand row.
+    ///
+    /// Scoring points on a side is a claim that that side won the hand, so the
+    /// other side is zeroed. A 0 is not such a claim: it only fills in the
+    /// side that didn't score, and must leave the opponent's points alone —
+    /// otherwise merely tabbing through the loser's `0` cell of an already
+    /// scored hand would erase the winner's points, dropping the hand out of
+    /// the net-hands count and out of the game total.
+    func setHandScore(gameId: UUID, handId: UUID, side: ManualScoreSide, value: Int) {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }),
+              let hi = session.games[gi].hands.firstIndex(where: { $0.id == handId }) else { return }
+        switch side {
+        case .we:
+            session.games[gi].hands[hi].wePoints = value
+            if value > 0 { session.games[gi].hands[hi].theyPoints = 0 }
+        case .they:
+            session.games[gi].hands[hi].theyPoints = value
+            if value > 0 { session.games[gi].hands[hi].wePoints = 0 }
+        }
+        touch()
+    }
+
+    /// Clears one half of a hand row. A hand whose only remaining value is the
+    /// auto-filled 0 was never really scored, so it goes back to fully blank
+    /// and the trailing-row cleanup can drop it.
+    func clearHandScore(gameId: UUID, handId: UUID, side: ManualScoreSide) {
+        guard let gi = session.games.firstIndex(where: { $0.id == gameId }),
+              let hi = session.games[gi].hands.firstIndex(where: { $0.id == handId }) else { return }
+        switch side {
+        case .we:
+            session.games[gi].hands[hi].wePoints = nil
+            if (session.games[gi].hands[hi].theyPoints ?? 0) == 0 {
+                session.games[gi].hands[hi].theyPoints = nil
+            }
+        case .they:
+            session.games[gi].hands[hi].theyPoints = nil
+            if (session.games[gi].hands[hi].wePoints ?? 0) == 0 {
+                session.games[gi].hands[hi].wePoints = nil
+            }
+        }
         touch()
     }
 

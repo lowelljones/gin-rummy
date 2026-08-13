@@ -6,6 +6,9 @@ struct ManualScorecardView: View {
 
     @FocusState private var focusedField: FocusField?
     @State private var editText: String = ""
+    /// Field already written by `advanceFrom`/`startNewGame`, so the focus-change
+    /// handler doesn't write it a second time from a buffer that may have moved on.
+    @State private var committedField: FocusField?
     @State private var showResetConfirm = false
     @State private var showNameEditor = false
     @State private var draftWeName = ""
@@ -30,7 +33,11 @@ struct ManualScorecardView: View {
         case hand(gameId: UUID, handId: UUID, side: Side)
         case box(gameId: UUID, side: Side)
 
-        enum Side: String { case we, they }
+        enum Side: String {
+            case we, they
+
+            var storeSide: ManualScoreSide { self == .we ? .we : .they }
+        }
 
         var allowsNegative: Bool {
             if case .box = self { return true }
@@ -74,7 +81,13 @@ struct ManualScorecardView: View {
         }
         .onChange(of: focusedField) { old, new in
             // Commit the cell we just left, then load the buffer for the new one.
-            if let old { commit(old, text: editText) }
+            // "Next" hands off focus a runloop turn later — the old field is still
+            // first responder until then, so a keystroke that lands in the gap
+            // appends to the buffer we already committed. Skipping the second
+            // write keeps that stray digit from being tacked onto the score just
+            // entered (a "10" then "8" becoming a single 108).
+            if let old, old != committedField { commit(old, text: editText) }
+            committedField = nil
             editText = new.map { editableText(for: $0) } ?? ""
         }
         .sheet(isPresented: $showNameEditor) {
@@ -385,7 +398,7 @@ struct ManualScorecardView: View {
     private func handLabel(row: Int) -> String {
         let hasMultipleHands = store.maxHandRows() > 1
         let allEmpty = store.session.games.allSatisfy { game in
-            game.hands.allSatisfy { $0.wePoints == nil && $0.theyPoints == nil }
+            game.hands.allSatisfy(\.isBlank)
         }
         if row == 0, !hasMultipleHands, allEmpty {
             return "Hands"
@@ -602,7 +615,7 @@ struct ManualScorecardView: View {
     }
 
     private func handIsEntered(_ hand: ManualScoreHand) -> Bool {
-        hand.wePoints != nil || hand.theyPoints != nil
+        !hand.isBlank
     }
 
     /// Empty string → dot placeholder; scored hands show 0 on the non-scoring side.
@@ -623,7 +636,10 @@ struct ManualScorecardView: View {
     /// Commit first: a score just typed shouldn't be mistaken for an unplayed
     /// hand and dropped, and focus must not outlive the row it points at.
     private func startNewGame() {
-        if let field = focusedField { commit(field, text: editText) }
+        if let field = focusedField {
+            commit(field, text: editText)
+            committedField = field
+        }
         focusedField = nil
         store.addGame()
     }
@@ -645,10 +661,7 @@ struct ManualScorecardView: View {
 
         switch field {
         case let .hand(gameId, handId, side):
-            switch side {
-            case .we: store.setHandPoints(gameId: gameId, handId: handId, we: value, they: 0)
-            case .they: store.setHandPoints(gameId: gameId, handId: handId, we: 0, they: value)
-            }
+            store.setHandScore(gameId: gameId, handId: handId, side: side.storeSide, value: value)
         case let .box(gameId, side):
             let game = store.session.games.first(where: { $0.id == gameId })
             switch side {
@@ -660,8 +673,8 @@ struct ManualScorecardView: View {
 
     private func clear(_ field: FocusField) {
         switch field {
-        case let .hand(gameId, handId, _):
-            store.setHandPoints(gameId: gameId, handId: handId, we: nil, they: nil)
+        case let .hand(gameId, handId, side):
+            store.clearHandScore(gameId: gameId, handId: handId, side: side.storeSide)
         case let .box(gameId, side):
             let game = store.session.games.first(where: { $0.id == gameId })
             switch side {
@@ -687,9 +700,10 @@ struct ManualScorecardView: View {
     private func advanceFrom(_ field: FocusField) {
         // Commit the current cell up front so the add-hand guard in `nextField`
         // sees the value the user just typed (otherwise a fresh row would look
-        // blank and wouldn't be created). The focus onChange handler re-commits
-        // idempotently and loads the next cell's buffer.
+        // blank and wouldn't be created), and mark it committed so the focus
+        // onChange handler only loads the next cell's buffer.
         commit(field, text: editText)
+        committedField = field
         guard let next = nextField(after: field) else {
             focusedField = nil
             return

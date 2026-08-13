@@ -191,6 +191,79 @@ final class ScorecardScoringTests: XCTestCase {
         XCTAssertEqual(try liveGame(store).hands.count, 2)
     }
 
+    // MARK: - Per-side hand entry
+
+    /// Tapping into the losing side's `0` cell and leaving it alone (the buffer
+    /// preloads that 0 and commits it back) must not wipe the winner's points —
+    /// that silently dropped the hand from both the total and the net-hands count.
+    @MainActor
+    func testCommittingAZeroLeavesTheOtherSideAlone() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        let hand = game.hands[0].id
+
+        store.setHandScore(gameId: game.id, handId: hand, side: .we, value: 57)
+        store.setHandScore(gameId: game.id, handId: hand, side: .they, value: 0)
+
+        let live = try liveGame(store)
+        XCTAssertEqual(live.totalWe(), 57)
+        XCTAssertEqual(live.netBoxes(), 1)
+    }
+
+    /// Scoring a side is still a claim that it won the hand, so a correction
+    /// typed into the other cell moves the win across instead of doubling it.
+    @MainActor
+    func testScoringTheOtherSideMovesTheHandWin() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        let hand = game.hands[0].id
+
+        store.setHandScore(gameId: game.id, handId: hand, side: .we, value: 57)
+        store.setHandScore(gameId: game.id, handId: hand, side: .they, value: 12)
+
+        let live = try liveGame(store)
+        XCTAssertEqual(live.totalWe(), 0)
+        XCTAssertEqual(live.totalThey(), 12)
+        XCTAssertEqual(live.netBoxes(), -1)
+    }
+
+    /// Clearing one cell of a one-sided hand blanks the row (so the trailing-row
+    /// cleanup can drop it) without touching any other hand.
+    @MainActor
+    func testClearingOneSideBlanksAOneSidedHand() throws {
+        let store = freshStore()
+        let game = try liveGame(store)
+        store.setHandScore(gameId: game.id, handId: game.hands[0].id, side: .we, value: 40)
+        store.addHand(to: game.id)
+        let second = try XCTUnwrap(try liveGame(store).hands.last?.id)
+        store.setHandScore(gameId: game.id, handId: second, side: .they, value: 30)
+
+        store.clearHandScore(gameId: game.id, handId: second, side: .they)
+
+        let live = try liveGame(store)
+        let lastHand = try XCTUnwrap(live.hands.last)
+        XCTAssertTrue(lastHand.isBlank)
+        XCTAssertEqual(live.totalWe(), 40)
+        XCTAssertEqual(live.netBoxes(), 1)
+        XCTAssertFalse(store.canAddHand(to: game.id))
+    }
+
+    /// A row of zeroes is on the sheet but nobody won it.
+    func testAllZeroHandCountsForNeitherSide() {
+        let game = finishedGame(weHands: [(130, 0), (0, 0)])
+        XCTAssertEqual(game.weBoxesWon(), 1)
+        XCTAssertEqual(game.theyBoxesWon(), 0)
+        XCTAssertEqual(game.netBoxes(), 1)
+    }
+
+    /// Points on both sides of a row belong to whoever scored more, not to both.
+    func testHandWithPointsOnBothSidesCountsOnce() {
+        let game = finishedGame(weHands: [(30, 10), (0, 95)])
+        XCTAssertEqual(game.weBoxesWon(), 1)
+        XCTAssertEqual(game.theyBoxesWon(), 1)
+        XCTAssertEqual(game.netBoxes(), 0)
+    }
+
     /// A new game starts clean — the previous game's rows don't carry over.
     @MainActor
     func testNewGameStartsWithItsOwnSingleBlankHand() throws {
