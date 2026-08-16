@@ -13,6 +13,7 @@ import {
   type ServerTruth,
 } from "../../rules/src/index.js";
 import { computeTestBotIntent, fallbackTestBotIntent, hasTestBotWork } from "./bot.js";
+import { insertBotGreeting } from "./botGreeting.js";
 import { assertChatRateAllowed, moderateChatText } from "./chatModeration.js";
 import {
   blockedUserIdsFor,
@@ -903,6 +904,12 @@ async function createBotGameInLobby(lobbyId: string, hostUserId: string): Promis
   if (handErr) {
     app.log.error({ err: handErr.message, gameId: game.id }, "bot start: hand insert failed");
   }
+
+  await insertBotGreeting(game.id as string, {
+    admin,
+    botUserId: BOT_USER_ID,
+    log: app.log,
+  });
 
   await processTestBotIfNeeded(game.id as string);
   await syncPlayerGameSnapshots(game.id as string, snapshotDeps());
